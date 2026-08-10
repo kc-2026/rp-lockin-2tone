@@ -19,7 +19,198 @@ import numpy as np
 
 from .constants import ASG_BUFFER_MAX, BASE_SAMPLE_RATE
 
-__all__ = ["TwoTonePlan", "make_am_waveform", "plan_two_tone"]
+__all__ = ["AsgTable", "GridTwoTonePlan", "TwoTonePlan", "asg_grid",
+           "make_am_table", "make_am_waveform", "plan_two_tone",
+           "plan_two_tone_grid", "snap_to_asg_grid"]
+
+
+# ---------------------------------------------------------------------------
+# The real generator model -- measured on the board, 2026-08-10
+# ---------------------------------------------------------------------------
+#
+# The ASG does NOT replay the N samples you load. It always traverses a fixed
+# 16384-entry table, and SOUR:FREQ:FIX sets how many times per second that
+# traversal happens. Entries never written stay zero.
+#
+# So a 50-entry buffer played at fs/50 emits essentially nothing: the phase
+# accumulator steps ~328 entries per clock and skips straight over the data.
+# Measured min -2, max +4 counts -- noise.
+#
+# Setting the frequency to fs/16384 steps exactly one entry per DAC clock,
+# which reproduces the whole table faithfully at the full sample rate. Verified
+# at 0.0153, 80.0018 and 0.9918 MHz, each dominant with the next line >=53 dB
+# down.
+#
+# The consequence is that the table period is fixed at 16384 samples =
+# 65.536 us, so every frequency must be an integer multiple of fs/16384. Buffer
+# length is no longer something to choose -- see make_am_waveform's note.
+
+def asg_grid(fs: float = BASE_SAMPLE_RATE) -> float:
+    """Frequency spacing the ASG can actually emit: fs / 16384.
+
+    At 250 MS/s this is 15258.7890625 Hz. Any drive frequency must be an
+    integer multiple of it, or the table wraps discontinuously every 65.536 us
+    and scatters a spur comb across the baseband.
+    """
+    return fs / ASG_BUFFER_MAX
+
+
+def snap_to_asg_grid(f: float, fs: float = BASE_SAMPLE_RATE) -> tuple[float, int]:
+    """Nearest emittable frequency to f, and its cycle count per table.
+
+    Returns (frequency, cycles). The cycle count is the useful number: it is
+    what actually goes into the table, and being an integer is precisely what
+    makes the wrap seamless.
+    """
+    grid = asg_grid(fs)
+    cycles = int(round(f / grid))
+    if cycles < 1:
+        raise ValueError(
+            f"{f:g} Hz is below the ASG's {grid:.4f} Hz resolution -- the "
+            f"table cannot hold even one cycle."
+        )
+    if cycles >= ASG_BUFFER_MAX // 2:
+        raise ValueError(
+            f"{f:g} Hz is at or above the table's Nyquist "
+            f"({fs / 2:g} Hz). Lower the frequency."
+        )
+    return cycles * grid, cycles
+
+
+@dataclass(frozen=True)
+class AsgTable:
+    """A full 16384-entry ASG table and the frequency to play it at."""
+
+    samples: np.ndarray     # length 16384, normalised to -1..+1
+    play_freq: float        # fs/16384 -- one table entry per DAC clock
+    carrier: float          # the frequency actually emitted, post-snap
+    modulation: float       # ditto
+    carrier_cycles: int     # whole cycles per table -- integer by construction
+    mod_cycles: int
+
+    def describe(self) -> str:
+        return (
+            f"table       {len(self.samples)} entries, "
+            f"played at {self.play_freq:.4f} Hz "
+            f"({1e6 / self.play_freq:.3f} us period)\n"
+            f"carrier     {self.carrier / 1e6:.6f} MHz "
+            f"({self.carrier_cycles} cycles per table)\n"
+            f"modulation  {self.modulation / 1e6:.6f} MHz "
+            f"({self.mod_cycles} cycles per table)"
+        )
+
+
+def make_am_table(carrier: float, modulation: float,
+                  fs: float = BASE_SAMPLE_RATE,
+                  depth: float = 1.0) -> AsgTable:
+    """
+    Build a full 16384-entry AM table for the real ASG.
+
+    Use this, not make_am_waveform, to drive hardware. Both frequencies are
+    snapped to the fs/16384 grid, because that is the only way the table wraps
+    without a discontinuity. The snap is at most half a grid step -- 7.6 kHz at
+    250 MS/s, or 95 ppm of an 80 MHz carrier.
+
+    Cycle counts rather than frequencies are used to build the table, so the
+    whole-cycle property is exact by construction rather than to within
+    floating-point tolerance.
+    """
+    if not 0 < depth <= 1.0:
+        raise ValueError("depth must be in (0, 1]")
+
+    f_c, n_c = snap_to_asg_grid(carrier, fs)
+    f_m, n_m = snap_to_asg_grid(modulation, fs)
+    if n_m >= n_c:
+        raise ValueError("modulation frequency must be below the carrier")
+    if n_c + n_m >= ASG_BUFFER_MAX // 2:
+        raise ValueError(
+            f"upper sideband ({(f_c + f_m) / 1e6:g} MHz) is above Nyquist"
+        )
+
+    k = np.arange(ASG_BUFFER_MAX)
+    env = 1.0 + depth * np.cos(2 * np.pi * n_m * k / ASG_BUFFER_MAX)
+    wave = env * np.cos(2 * np.pi * n_c * k / ASG_BUFFER_MAX)
+    wave = wave / np.max(np.abs(wave))
+    return AsgTable(samples=wave, play_freq=asg_grid(fs), carrier=f_c,
+                    modulation=f_m, carrier_cycles=n_c, mod_cycles=n_m)
+
+
+@dataclass(frozen=True)
+class GridTwoTonePlan:
+    """Two-tone drive frequencies snapped onto the ASG grid."""
+
+    carrier: float
+    f1: float
+    f2: float
+    fs: float
+    carrier_cycles: int
+    f1_cycles: int
+    f2_cycles: int
+
+    @property
+    def difference(self) -> float:
+        """The lock-in frequency. Exact, because it is a whole number of grid
+        steps: (f2_cycles - f1_cycles) * fs / 16384."""
+        return abs(self.f2 - self.f1)
+
+    @property
+    def play_freq(self) -> float:
+        return asg_grid(self.fs)
+
+    def periods_per_tau(self, tau: float) -> float:
+        return tau * self.difference
+
+    def describe(self) -> str:
+        g = asg_grid(self.fs)
+        return "\n".join([
+            f"ASG grid     {g:.4f} Hz  (fs/16384; table period "
+            f"{1e6 * ASG_BUFFER_MAX / self.fs:.3f} us)",
+            f"carrier      {self.carrier / 1e6:.6f} MHz  "
+            f"({self.carrier_cycles} cycles/table)",
+            f"f1           {self.f1 / 1e6:.6f} MHz  "
+            f"({self.f1_cycles} cycles/table)",
+            f"f2           {self.f2 / 1e6:.6f} MHz  "
+            f"({self.f2_cycles} cycles/table)",
+            f"|f2 - f1|    {self.difference / 1e3:.3f} kHz  "
+            f"({self.f2_cycles - self.f1_cycles} cycles/table)  "
+            f"<-- lock-in frequency",
+        ])
+
+
+def plan_two_tone_grid(difference: float = 1e6, f1: float = 5e6,
+                       carrier: float = 80e6,
+                       fs: float = BASE_SAMPLE_RATE) -> GridTwoTonePlan:
+    """
+    Two-tone plan on the ASG's fs/16384 grid.
+
+    This is the hardware-correct planner. `plan_two_tone` solves a different
+    problem -- the shortest exactly-commensurate buffer -- which is sound
+    arithmetic but does not match how this generator works.
+
+    Both tones are snapped independently, which is what puts f2 at 393 cycles
+    (5.996704 MHz) and the difference at 991.821 kHz. Snapping the *difference*
+    instead and adding it to f1 would give 394 cycles and 1.00708 MHz -- also
+    exact, just a different choice about which quantity stays nearest nominal.
+    Neither accumulates error: once both tones are integer cycle counts, their
+    difference is a whole number of grid steps by construction. The values here
+    are the ones agreed with Edwin on 2026-08-10.
+    """
+    _, n_c = snap_to_asg_grid(carrier, fs)
+    _, n_1 = snap_to_asg_grid(f1, fs)
+    _, n_2 = snap_to_asg_grid(f1 + difference, fs)
+    if n_2 == n_1:
+        raise ValueError(
+            f"difference {difference:g} Hz is below the ASG grid "
+            f"({asg_grid(fs):.4f} Hz) -- f1 and f2 would land on the same "
+            f"grid point and there would be no difference frequency."
+        )
+    grid = asg_grid(fs)
+    if n_c + max(n_1, n_2) >= ASG_BUFFER_MAX // 2:
+        raise ValueError("upper sideband is above Nyquist")
+    return GridTwoTonePlan(
+        carrier=n_c * grid, f1=n_1 * grid, f2=n_2 * grid, fs=fs,
+        carrier_cycles=n_c, f1_cycles=n_1, f2_cycles=n_2,
+    )
 
 
 def make_am_waveform(carrier: float, modulation: float,
@@ -27,6 +218,15 @@ def make_am_waveform(carrier: float, modulation: float,
                      depth: float = 1.0) -> tuple[np.ndarray, float]:
     """
     Build the shortest seamless repeating buffer for an AM carrier.
+
+    *** DO NOT USE THIS TO DRIVE THE BOARD. Use make_am_table(). ***
+
+    The arithmetic here is correct and the tests that pin it are worth keeping,
+    but it models a generator that replays exactly the N samples you load at
+    fs/N. The real ASG does not: it always traverses a fixed 16384-entry table.
+    Loading the 50-sample buffer this returns and playing it at 5 MHz produces
+    NO OUTPUT AT ALL -- measured, min -2 max +4 counts. See the module header
+    and docs/05-hardware-notes.md.
 
     The buffer must contain a whole number of cycles of BOTH the carrier and
     the modulation, so the minimal length is the smallest N with N*carrier/fs

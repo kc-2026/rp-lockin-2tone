@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import socket
 import sys
+import time
 
 import numpy as np
 
 from .constants import ANALOG_BANDWIDTH, BASE_SAMPLE_RATE
-from .waveforms import make_am_waveform
+from .waveforms import AsgTable, make_am_table
 
 __all__ = ["RedPitaya"]
 
@@ -101,6 +102,32 @@ class RedPitaya:
         self._read_exact(2)  # trailing \r\n
         return np.frombuffer(raw, dtype=">i2").astype(np.float64)
 
+    def wait_until(self, query: str, expected: str, timeout: float = 10.0,
+                   what: str = "") -> None:
+        """
+        Poll `query` until it returns `expected`, or raise on timeout.
+
+        Every poll costs a full SCPI round trip -- ~50 ms measured on OS 2.00 --
+        so this runs at roughly 20 iterations per second. That is fine for
+        waiting on a trigger and is why no extra sleep is needed.
+
+        The unbounded `while self.query(...) != "TD": pass` this replaces would
+        spin forever when a trigger never arrives, which is precisely H7.2's
+        failure case. A socket timeout does not save you: the board keeps
+        answering promptly, just with the wrong value.
+        """
+        deadline = time.monotonic() + timeout
+        last = None
+        while time.monotonic() < deadline:
+            last = self.query(query)
+            if last == expected:
+                return
+        raise TimeoutError(
+            f"{what or query} did not reach {expected!r} within {timeout:g} s "
+            f"(last value {last!r}). If this is a triggered acquisition, check "
+            f"that the trigger source is actually firing."
+        )
+
     # -- configuration -----------------------------------------------------
 
     @property
@@ -133,34 +160,46 @@ class RedPitaya:
 
     def setup_am_generator(self, carrier: float = 80e6, modulation: float = 5e6,
                            amplitude: float = 1.0, depth: float = 1.0,
-                           channel: int = 1) -> int:
+                           channel: int = 1) -> AsgTable:
         """
-        Output an amplitude-modulated carrier from the arbitrary-waveform buffer.
+        Output an amplitude-modulated carrier from the arbitrary-waveform table.
 
-        For 80 MHz AM'd at 5 MHz this loads a 50-sample buffer and plays it at
-        5 MHz, which advances exactly one buffer sample per DAC clock.
+        VERIFIED against OS 2.00 on 2026-08-10, after the original version was
+        found not to work at all.
 
-        Note the carrier is deliberately allowed above the board's 60 MHz spec
-        here -- with downstream amplification and bandpass filtering that is a
-        legitimate choice, and only the caller can judge it.
+        The ASG always traverses a fixed 16384-entry table; SOUR:FREQ:FIX sets
+        how many times per second. So the table is loaded in full and played at
+        fs/16384, which steps exactly one entry per DAC clock and reproduces it
+        at the full sample rate. The earlier implementation loaded 50 samples
+        and played at 5 MHz on the assumption that the generator replays only
+        what you write -- measured output was min -2, max +4 counts. Nothing.
 
-        VERIFY: SOUR<n>:TRAC:DATA:DATA expects normalised -1..+1 values, and the
-        buffer length is taken from the number of points sent. Confirm your OS
-        accepts a 50-point buffer; if it enforces a longer minimum, pass a
-        multiple of 50 (16350 is the largest under the 16384 limit) and scale
-        the playback frequency down by the same factor.
+        Both frequencies are snapped to the fs/16384 grid by make_am_table;
+        the returned AsgTable reports what will actually be emitted, which is
+        not exactly what was asked for. Check it if the exact value matters.
 
-        Returns the number of samples loaded.
+        The carrier is deliberately allowed above the board's 60 MHz spec --
+        with downstream amplification and filtering that is a legitimate
+        choice, and only the caller can judge it.
         """
-        wave, play_freq = make_am_waveform(carrier, modulation, self.base_rate, depth)
-        data = ",".join(f"{v:.6f}" for v in wave)
+        if carrier > ANALOG_BANDWIDTH:
+            print(
+                f"WARNING: {carrier / 1e6:.1f} MHz exceeds the 250-12 analog "
+                f"output bandwidth of {ANALOG_BANDWIDTH / 1e6:.0f} MHz. The "
+                f"output will be attenuated.",
+                file=sys.stderr,
+            )
+        table = make_am_table(carrier, modulation, self.base_rate, depth)
+        data = ",".join(f"{v:.6f}" for v in table.samples)
         self.write(f"SOUR{channel}:FUNC ARBITRARY")
         self.write(f"SOUR{channel}:TRAC:DATA:DATA {data}")
-        self.write(f"SOUR{channel}:FREQ:FIX {play_freq}")
+        # Not fs/len(table) by coincidence -- see the docstring. These are the
+        # same number only because the table IS the full 16384 entries.
+        self.write(f"SOUR{channel}:FREQ:FIX {table.play_freq:.4f}")
         self.write(f"SOUR{channel}:VOLT {amplitude}")
         self.write(f"OUTPUT{channel}:STATE ON")
         self.write(f"SOUR{channel}:TRig:INT")
-        return len(wave)
+        return table
 
     def setup_acquisition(self, decimation: int = 1, coupling: str = "DC",
                           gain: str = "LV") -> None:
@@ -187,8 +226,7 @@ class RedPitaya:
         """
         self.write("ACQ:START")
         self.write("ACQ:TRig NOW")
-        while self.query("ACQ:TRig:STAT?") != "TD":
-            pass
+        self.wait_until("ACQ:TRig:STAT?", "TD", what="acquisition trigger")
         self.write("ACQ:STOP")
         return self.query_binary_int16(f"ACQ:SOUR{channel}:DATA?")
 
@@ -236,10 +274,12 @@ class RedPitaya:
         self.write("ACQ:AXI:DATA:Units RAW")
         self.write("ACQ:START")
         self.write("ACQ:TRig NOW")
-        while self.query("ACQ:TRig:STAT?") != "TD":
-            pass
-        while self.query(f"ACQ:AXI:SOUR{channels[0]}:TRIG:FILL?") != "1":
-            pass
+        self.wait_until("ACQ:TRig:STAT?", "TD", what="deep acquisition trigger")
+        # Filling the region takes as long as the record itself, so the timeout
+        # has to scale with it rather than being a fixed 10 s.
+        fill_timeout = 30.0 + 4 * n_samples * decimation / self.base_rate
+        self.wait_until(f"ACQ:AXI:SOUR{channels[0]}:TRIG:FILL?", "1",
+                        timeout=fill_timeout, what="deep memory fill")
         self.write("ACQ:STOP")
 
         out = []

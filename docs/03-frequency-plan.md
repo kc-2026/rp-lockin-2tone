@@ -17,8 +17,11 @@
 > multiple of **fs/16384 = 15258.7890625 Hz**. Sections below that pick N are
 > obsolete; the grid is now fixed and the frequencies move onto it.
 >
-> Proposed replacement operating point, all exact on the grid (awaiting a
-> decision — see Q3 in `06-open-questions.md`):
+> **Replacement operating point — decided by Edwin and implemented
+> 2026-08-10.** Built by `plan_two_tone_grid()`, driven by
+> `make_am_table()`, and verified on the board: all three AM lines land at
+> exactly these frequencies, with sideband/carrier ratios of 0.512 and 0.488
+> against 0.500 theoretical at a 20 MHz carrier where the analog path is flat.
 >
 > | Quantity | Grid multiple | Frequency | Was |
 > |---|---:|---:|---:|

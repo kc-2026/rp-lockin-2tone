@@ -122,13 +122,59 @@ changes). OS 2.00 build 37, Ubuntu 22.04.4, kernel 5.15.0-xilinx. AXI region
 transfer returns exactly 16384 int16 big-endian samples. Amplitude accurate to
 0.1% at 1 MHz; ~1818 counts per volt on LV.
 
+**LIMITATION — the drive frequencies are no longer round numbers.**
+
+*Recorded at Edwin's explicit request when he approved the change on
+2026-08-10. Anyone comparing this system against a spec, a commercial lock-in,
+or an earlier dataset that says "1 MHz" needs to read this.*
+
+The ASG can only emit integer multiples of fs/16384 = **15258.7890625 Hz**.
+This is a hardware property, not a software choice: the table period is fixed
+at 65.536 µs, and any frequency off that grid makes the table wrap
+discontinuously and spray a 15.26 kHz spur comb across the baseband where the
+swept trace lives. The nominal frequencies are all off the grid, so:
+
+| Quantity | Nominal | Actual | Offset |
+|---|---:|---:|---:|
+| Carrier | 80 MHz | **80.001831 MHz** | +1831 Hz (+23 ppm) |
+| f1 | 5 MHz | **5.004883 MHz** | +4883 Hz (+977 ppm) |
+| f2 | 6 MHz | **5.996704 MHz** | −3296 Hz (−549 ppm) |
+| \|f2 − f1\| | 1 MHz | **991.821 kHz** | −8179 Hz (−0.82%) |
+
+Consequences to be aware of:
+
+- **The lock-in frequency is 991.821 kHz, not 1 MHz.** Demodulate at the actual
+  value. `plan_two_tone_grid().difference` is the number; do not hardcode 1e6.
+- Cycles per integration time drop from 71 to 70. Immaterial against R4's 5–10.
+- The carrier shift is 23 ppm, agreed as negligible for the AOMs.
+- ADR-0001's remark that 1 MHz is exactly fs/250, which would make an FPGA
+  demodulator a fixed 250-entry table, **no longer holds.** If FPGA work is
+  ever revisited, that convenience is gone.
+- `plan_two_tone_grid` snaps both tones independently. Snapping the difference
+  instead would give 1.00708 MHz with f2 at 6.011963 MHz — equally exact, a
+  different choice about which quantity stays nearest nominal. The independent
+  snap is what was agreed and is pinned by
+  `test_grid_plan_matches_the_agreed_operating_point`.
+
+**Escape hatch:** if the ASG's table size turns out to be settable over SCPI
+(Q3b, unprobed), a 250-entry table would restore exact 80/5/6 MHz and this
+limitation disappears. Worth checking before anyone builds around 991.821 kHz.
+
 **Broke / still broken:**
-- `setup_am_generator()` does not produce a usable signal. Not fixed — the fix
-  changes the frequency plan and needs Edwin's decision (Q3a).
-- `waveforms.make_am_waveform()` embeds the wrong hardware model. Its tests
-  pass and will keep passing; they do not test against hardware.
-- `hardware.py` still has unbounded polling loops (`while ... != "TD"`) with no
-  timeout — H7.2's failure case would spin forever.
+- ~~`setup_am_generator()` does not produce a usable signal.~~ **Fixed and
+  verified.** Rewritten around the real ASG model; `make_am_table()` builds the
+  full 16384-entry table and plays it at fs/16384. Verified through
+  `hardware.py` itself: all three AM lines land at exactly the predicted
+  frequencies, and at a 20 MHz carrier (where the analog path is flat) the
+  sideband/carrier ratios are 0.512 and 0.488 against 0.500 theoretical.
+  H2.3 spur check at the design point: worst spur −48.5 dBc, no comb.
+- `waveforms.make_am_waveform()` embeds the wrong hardware model. Kept, because
+  its arithmetic is sound and its tests are worth having, but its docstring now
+  says in capitals not to drive the board with it. Use `make_am_table()`.
+- ~~`hardware.py` has unbounded polling loops.~~ **Fixed.** Replaced with
+  `wait_until()`, which raises `TimeoutError` with a diagnostic message. The
+  deep-memory fill timeout scales with record length rather than being fixed.
+  Not yet exercised against a trigger that never arrives (H7.2 proper).
 - `acquire_deep_2ch` sets `Trig:Dly` to the full record, leaving no pre-roll,
   which contradicts H6.4. Not yet touched.
 - The `ACQ:AXI:*` deep-memory path is entirely unverified.
@@ -137,9 +183,19 @@ transfer returns exactly 16384 int16 big-endian samples. Amplitude accurate to
   safe.
 
 **Next:**
-1. Get a decision on Q3a (move onto the 15258.789 Hz grid) and probe Q3b
-   (is the ASG table size settable? — would restore the original plan).
-2. Rework `make_am_waveform` / `setup_am_generator` for the real ASG model,
-   with an offline test that pins the traversal-rate relationship.
-3. Then H2.3 spur check, H2.4/H2.5 two-channel start and phase repeatability.
-4. Enlarge the DMA region per the corrected H6.1 before any deep-memory work.
+1. **H2.4 / H2.5** — both channels generating at once, whether `SOUR:TRig:INT`
+   starts them synchronously (Q4), and whether the OUT1/OUT2 relative carrier
+   phase repeats across restarts (Q6). Needs no rewiring; OUT1→IN1 is enough
+   for H2.4, but H2.5 needs a way to see both channels — think about how,
+   given there is no spare input.
+2. Probe Q3b — is the ASG table size settable over SCPI? If so the frequency
+   limitation above disappears and the plan returns to exact 80/5/6 MHz.
+3. Enlarge the DMA region per the corrected H6.1 (base `0x20000000`, size
+   512 MB, back up `dtraw.dts` first) before any deep-memory work. Nothing in
+   H5 or H6 can proceed on the shipped 2 MiB.
+4. Then the `ACQ:AXI:*` path, which is the last wholly unverified part of
+   `hardware.py`, followed by H3 (receive path, noise floor — Q8).
+5. Fix `acquire_deep_2ch`'s trigger delay so pre-roll is possible (H6.4).
+
+**Test suite:** 74 passing, up from 62. The 12 new ones pin the real ASG model
+so it cannot silently regress.

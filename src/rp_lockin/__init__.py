@@ -46,7 +46,17 @@ from .planning import (
     recommended_preroll,
     settling_points,
 )
-from .waveforms import TwoTonePlan, make_am_waveform, plan_two_tone
+from .waveforms import (
+    AsgTable,
+    GridTwoTonePlan,
+    TwoTonePlan,
+    asg_grid,
+    make_am_table,
+    make_am_waveform,
+    plan_two_tone,
+    plan_two_tone_grid,
+    snap_to_asg_grid,
+)
 
 __version__ = "0.1.0"
 
@@ -57,20 +67,26 @@ __all__ = [
     "BOARD_RAM_MB",
     "DMA_REGION_BASE",
     "MAX_DMA_MB",
+    "AsgTable",
     "CaptureOption",
+    "GridTwoTonePlan",
     "LockinResult",
     "SyntheticResponse",
     "TwoTonePlan",
+    "asg_grid",
     "demodulate",
     "describe_capture_plan",
     "estimate_frequency",
     "find_trigger_edges",
     "lorentzian",
+    "make_am_table",
     "make_am_waveform",
     "make_trigger_sequence",
     "min_record_seconds",
     "plan_capture",
     "plan_two_tone",
+    "plan_two_tone_grid",
+    "snap_to_asg_grid",
     "recommended_preroll",
     "settling_points",
     "synthesise_dut_output",
