@@ -261,11 +261,35 @@ limitation disappears. Worth checking before anyone builds around 991.821 kHz.
 trustworthy.** This is the state to pick up from.
 
 The DMA region change worked: `ACQ:AXI:SIZE?` now reports 134217728 (128 MiB),
-up from 2 MiB. 268 ms of two-channel capture at decimation 2. Measured transfer
-rate 3.6–4.3 MB/s, which is far below the 100 MB/s the capture planner assumes
-— **`GBE_MB_PER_S` in `planning.py` is optimistic by ~25×** and its transfer
-estimates should not be believed. At 4 MB/s a 477 MB sweep would take two
-minutes, not 4.8 s.
+up from 2 MiB. 268 ms of two-channel capture at decimation 2.
+
+**Transfer is 5.7 MB/s, and it is a hard limit worth planning around.**
+Measured cleanly: six consecutive 7.6 MB reads, every one within 0.02 s of the
+others. The planner assumed 100 MB/s on the reasoning that a gigabit link sets
+the pace. It does not — the link is essentially idle. The bottleneck is the
+SCPI server on the board's ARM core, moving about 2.9 M samples/s out of DMA
+into a socket. A trivial command round trip is 46 ms.
+
+Ruled out: our receive code (switching the accumulator from repeated
+`bytes +=` concatenation, which is quadratic, to a joined chunk list changed
+nothing at all) and read size. `GBE_MB_PER_S = 100.0` is now
+`SCPI_MB_PER_S = 5.7`.
+
+**A 477 MB one-second sweep therefore takes ~84 s to transfer.** Acceptable for
+a burst measurement with gaps between sweeps, which is what ADR-0001 committed
+to — but H7.1's twenty repeats becomes half an hour of transfers, and anything
+interactive must expect it. If that becomes intolerable the options are
+decimation 4 (238 MB, ~42 s) or moving data off the board by some route other
+than SCPI; demodulating on the board is excluded by R7.
+
+*How this was nearly mis-reported, twice.* First I divided the whole
+`acquire_deep_2ch` call time by the bytes returned and called it a transfer
+rate — that included setup, arming and trigger polling, and gave ~4 MB/s.
+Then an intermediate benchmark showed 55.9 MB/s and I briefly believed the
+transfer was fine; that reading was an artefact of the benchmark consuming
+bytes already sitting in the receive buffer from the previous read. The
+repeated single-size measurement is the trustworthy one, and the fast reading
+never reproduced.
 
 `acquire_deep_2ch` then *appeared* to work: 200000 samples/channel at
 decimation 2, with IN1 showing 1.0000 MHz and IN2 2.0000 MHz — correct counts,

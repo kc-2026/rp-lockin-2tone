@@ -26,13 +26,19 @@ from .dsp import min_record_seconds
 __all__ = ["CaptureOption", "plan_capture", "describe_capture_plan",
            "settling_points", "recommended_preroll"]
 
-# Assumed transfer rate for the estimates below. MEASURED 2026-08-10 at only
-# 3.6-4.3 MB/s pulling deep-memory blocks over SCPI -- about 25x slower than
-# this. The bottleneck is the SCPI server, not the link. Every "transfer"
-# figure this module prints is therefore optimistic by that factor: a 477 MB
-# sweep is ~2 minutes, not 4.8 s. Left at 100 until the deep-memory path is
-# trustworthy enough to characterise properly, but do not quote these numbers.
-GBE_MB_PER_S = 100.0
+# MEASURED 2026-08-10: 5.7 MB/s pulling deep-memory blocks over SCPI, six
+# consecutive 7.6 MB reads within 0.02 s of each other. This was 100.0 on the
+# assumption that a gigabit link sets the pace. It does not -- the link is
+# essentially idle. The bottleneck is the SCPI server on the board's ARM core,
+# which manages about 2.9 M samples/s moving data out of DMA into a socket.
+# Confirmed not to be our receive code: switching the accumulator from repeated
+# bytes concatenation to a joined chunk list changed nothing.
+#
+# Consequence, and it is a big one: a 477 MB one-second sweep takes ~84 s to
+# transfer. Fine for a burst measurement with gaps between sweeps (ADR-0001),
+# but H7.1's twenty repeats is half an hour of transfers, and any interactive
+# workflow needs to expect it.
+SCPI_MB_PER_S = 5.7
 
 
 @dataclass(frozen=True)
@@ -49,7 +55,7 @@ class CaptureOption:
 
     @property
     def transfer_seconds(self) -> float:
-        return self.megabytes / GBE_MB_PER_S
+        return self.megabytes / SCPI_MB_PER_S
 
 
 def plan_capture(sweep_seconds: float, f_lockin: float,
@@ -147,8 +153,9 @@ def describe_capture_plan(sweep_seconds: float, f_lockin: float,
             f"({best.sample_rate / 1e6:g} MS/s, "
             f"{'no aliasing penalty' if best.aliasing_free else 'some folding'}) "
             f"and enlarge the reserved DMA region to {region} MB.",
-            f"     Transfer is ~{best.transfer_seconds:.1f} s per sweep over "
-            f"gigabit Ethernet.",
+            f"     Transfer is ~{best.transfer_seconds:.0f} s per sweep -- "
+            f"limited by the SCPI server at {SCPI_MB_PER_S:g} MB/s, measured, "
+            f"not by the link.",
             "",
             f"     On the board ({BOARD_RAM_MB} MB RAM; Linux is capped at "
             f"512 MB by mem=512M, so the upper half is free for this):",
