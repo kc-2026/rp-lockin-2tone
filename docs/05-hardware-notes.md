@@ -275,6 +275,19 @@ Against a 512 MB ceiling — the size of the upper half:
 Decimation 2 is the operating point, as ADR-0002 always intended. Decimation 1
 does not fit.
 
+**Decimation 2 is right for the real measurement but wrong for loopback
+testing, and this is not a contradiction.** At decimation 2 the Nyquist limit
+is 62.5 MHz, so an 80 MHz carrier aliases down to 45 MHz. In the real
+experiment that never arises: the photodetector returns only the ~1 MHz
+intermodulation response, and the 80 MHz never reaches an input. In loopback we
+wire an output carrying 80 MHz straight into an input, so it does.
+
+**Use decimation 1 for any loopback test that looks at the carrier.** A
+measurement of the 80 MHz carrier at decimation 2 is measuring a 45 MHz alias,
+and it will look entirely plausible — that is how the first drift measurement
+produced a confident fictitious answer. Do not "fix" the operating point in
+response; the plan is correct.
+
 ### Decimation 4 as a fallback
 
 Not needed, but worth keeping in mind if the region cannot be enlarged for some
