@@ -26,12 +26,17 @@ relevant doc and note it in `SESSION_LOG.md`.
 
 | # | Question |
 |---|---|
-| Q10 | Confirm the τ change from 30 µs to 71 µs is acceptable. It is quieter, non-aliasing, and delivers the same 5000 points — but if there is a reason to match a commercial lock-in's convention, it is one parameter. |
 | Q11 | Photodetector output amplitude, to set input range and coupling. |
 | Q12 | Safe drive levels for the amplifier chain and AOMs — Phase 2 gate. |
 | Q13 | Is averaging across repeated sweeps wanted? Changes buffer management and whether phase must stay coherent between sweeps. |
 | Q14 | Is a GUI actually wanted, and what would it show? |
 | Q15 | Output file format for the traces. Currently `.npz`. |
+
+## Resolved
+
+| # | Question | Answer |
+|---|---|---|
+| Q10 | τ = 30 µs or 71 µs? | **71 µs at 5000 points**, decided by Edwin 2026-08-10. Forcing 30 µs at 5000 points would fold 2805 Hz of noise onto every trace for 3.7 dB worse SNR, buying resolution a 5000-point grid cannot represent. The aliasing-free way to reach ~30 µs is 12500 points (τ = 28.3 µs); considered, not taken. Recorded in `01-project-spec.md`. |
 
 ## Deferred
 

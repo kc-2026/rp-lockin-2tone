@@ -54,8 +54,19 @@ corresponds to 5.3 kHz of bandwidth, which is above the 2.5 kHz output Nyquist �
 noise between 2.5 and 5.3 kHz would fold into the trace. Widening τ to 71 µs
 keeps the same 5000 points, removes the folding, and gains about 3.7 dB of
 noise performance. It still gives 71 cycles of the 1 MHz difference frequency
-per integration time, far above the 5–10 that R4 requires. This is configurable
-if the original convention is preferred.
+per integration time, far above the 5–10 that R4 requires.
+
+**Decided 2026-08-10 (Q10, Edwin): keep τ = 71 µs at 5000 points.** The
+alternative that also avoids aliasing is 12500 points at τ = 28.3 µs, which
+would honour the original 30 µs convention but exceed R5's point count; it was
+considered and not taken.
+
+Note this is *not* a free parameter, despite what an earlier draft of this
+section claimed. `dsp.demodulate()` clamps bandwidth to 0.9 × output Nyquist
+whenever `output_rate` is given (`min(bandwidth, honest)`), so requesting a
+wider bandwidth alongside a fixed point count is silently ignored rather than
+honoured. That clamp is deliberate — see ADR-0003. To genuinely shorten τ you
+must raise the point count, which is what the 12500-point option does.
 
 ## Channel allocation
 
