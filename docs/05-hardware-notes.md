@@ -50,7 +50,7 @@ port check, not a ping.
 | `ACQ:AXI:SIZE?` | `2097152` | **2 MiB** |
 | `ACQ:DATA:FORMAT?` | `ASCII` | Default; BIN must be set explicitly |
 
-### H1.2 cannot be satisfied by `*IDN?`
+### H1.2 cannot be satisfied by `*IDN?` — confirmed by label instead
 
 The test plan assumes `*IDN?` distinguishes a 250-12 from a 125-14. It does
 not — the string carries no model name. Since a 125-14 would make every
@@ -58,6 +58,14 @@ frequency in this project wrong *silently*, the model must be confirmed another
 way: the label on the board, `monitor -f` over SSH, or a loopback measurement
 of the actual sample rate. `ACQ:SOUR<n>:COUP` being supported is suggestive
 (it is documented as 250-12 only) but is not proof on its own.
+
+**Resolved 2026-08-10: Edwin read the board's label — it is a SIGNALlab
+250-12.** The 250 MS/s base rate and the whole frequency plan therefore stand.
+H1.3 should still confirm the rate by measurement once loopback is wired, since
+the label proves the hardware but not that the OS is configured for it.
+
+**Update H1.2 in the test plan** to say "confirm the model by label or
+`monitor -f`; `*IDN?` cannot do it."
 
 ### The DMA region is 2 MiB, not 32 MB
 
@@ -90,21 +98,30 @@ H6, and it also constrains H5.2: a 60 ms emulated response does not fit either.
    reconnects (as `tests/hardware/conftest.py` already warned) and returns
    truncated responses.
 
-### Unresolved: the link is pathologically slow
+### A wedged SCPI server looks like a broken network — RESOLVED
 
-Twenty identical `ACQ:DEC?` queries over one warm connection: min 0.078 s,
-**median 5.4 s, max 21.9 s**. Zero adapter receive errors accumulated during
-the burst, so this is not packet corruption at the NIC. The multi-second values
-cluster near TCP retransmission backoff sums, and the occasional 0.078 s proves
-the path can be fast.
+Worth knowing because the symptom is thoroughly misleading.
 
-The adapter does carry 11546 historical receive errors out of 63873 packets,
-but none accrued during measurement — treat as a separate, older event.
+Twenty identical `ACQ:DEC?` queries over one warm connection gave min 0.078 s,
+**median 5.4 s, max 21.9 s**, with the multi-second values clustering near TCP
+retransmission backoff sums. That looks exactly like a failing cable, and the
+adapter's 11546 historical receive errors made it look more so. It was neither.
 
-Suspected cause: the SCPI server was left wedged by an earlier probe that
-opened ten connections in quick succession. Restart the SCPI server and
-re-measure before investigating further. At this latency H6.2's 477 MB transfer
-is not viable, so this must be resolved before Phase 1 can complete.
+The cause was the SCPI server left wedged by a probe that opened ten
+connections in quick succession — the thing `tests/hardware/conftest.py` had
+already warned about. **Stopping and restarting the SCPI server from the web
+interface fixed it completely**: the same 20 queries then ran at min 0.046 s,
+median 0.050 s, max 0.052 s. The historical error counters reset with it.
+
+Takeaways:
+
+- **One persistent connection, always.** Never open a connection per command.
+  The failure is not an error, it is silent latency and truncated responses.
+- **~50 ms is the healthy round trip** for a trivial query on this board — that
+  is the SCPI server's own processing, not the network. Budget accordingly: any
+  polling loop in `hardware.py` runs at roughly 20 iterations per second.
+- If the link ever looks broken again, restart the SCPI server *before*
+  suspecting hardware.
 
 ## Enlarging the reserved DMA region
 
