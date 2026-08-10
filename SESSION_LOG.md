@@ -182,14 +182,45 @@ limitation disappears. Worth checking before anyone builds around 991.821 kHz.
   125 MS/s, so it reports 113 points instead of 108. Overstates, so it errs
   safe.
 
+**Second coax (OUT2 → IN2) fitted; H2.4, H2.5 and Q3b done.**
+
+- **Q3b: no.** `SOUR:TRAC:DATA:LEN?`, `:LENGTH?`, `SOUR:ARB:LEN?`,
+  `SOUR:BUFF:SIZE?`, `SOUR:TRAC:DATA:SIZE?` all return zero bytes. The 16384
+  table is fixed, so **the frequency limitation above is permanent.**
+- **H2.4: passes.** Both channels generate simultaneously; carrier magnitudes
+  201396 and 200157, within 0.6%.
+- **H2.5 / Q6: FAILS, and not in the way expected.** The OUT2−OUT1 carrier
+  phase scatters over 71–82° — *whether or not the generators are restarted*.
+  Leaving them running does not fix it, so it is not injected at start.
+  Ten consecutive captures with the generators untouched gave a 70.9° spread.
+  Both DACs run from one clock; this is unexplained and needs a dedicated
+  session.
+
+  **Measurement trap, for whoever picks this up.** The obvious observable —
+  the phase of the difference-frequency beat, reconstructed from each
+  channel's envelope — is *worthless* here. The two envelopes are at different
+  frequencies (328 and 393 cycles/table), so a common capture-start offset does
+  not cancel: it moves their phase difference by 2π·991821·Δt, and about 1 µs
+  of trigger jitter randomises it completely. I measured 72° that way and
+  briefly believed it. **Use the carrier line instead** — identical on both
+  channels at 5243 cycles, so a common offset cancels exactly. That is the only
+  clean observable available without a third input.
+
+  Also worth knowing: the carrier moves 115° per sample of inter-channel
+  offset, versus 1.43° for the difference frequency. The carrier is an 80×
+  magnifier — useful for detecting the problem, misleading about its size.
+
+  **Impact.** Amplitude is unaffected. Phase *within* a sweep should be fine,
+  since the generators run continuously through it. What is at risk is
+  comparing or averaging phase *across* sweeps (bears directly on Q13).
+
 **Next:**
-1. **H2.4 / H2.5** — both channels generating at once, whether `SOUR:TRig:INT`
-   starts them synchronously (Q4), and whether the OUT1/OUT2 relative carrier
-   phase repeats across restarts (Q6). Needs no rewiring; OUT1→IN1 is enough
-   for H2.4, but H2.5 needs a way to see both channels — think about how,
-   given there is no spare input.
-2. Probe Q3b — is the ASG table size settable over SCPI? If so the frequency
-   limitation above disappears and the plan returns to exact 80/5/6 MHz.
+1. **Q6 is the open question.** Needs Edwin's input on whether the measurement
+   requires absolute phase or only phase structure within a sweep — that
+   decides whether this is a blocker or a documented limitation. Then a
+   dedicated session to explain the scatter; try `SOUR<n>:PHAS`, a combined
+   `OUTPUT:STATE ON`, and check whether the two ADC channels are read from a
+   common buffer pointer (an unequal read offset would fake this exactly).
 3. Enlarge the DMA region per the corrected H6.1 (base `0x20000000`, size
    512 MB, back up `dtraw.dts` first) before any deep-memory work. Nothing in
    H5 or H6 can proceed on the shipped 2 MiB.
