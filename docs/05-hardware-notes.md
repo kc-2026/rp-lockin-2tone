@@ -20,11 +20,91 @@ is aliasing-free because 62.5 MHz Nyquist sits above the rolloff.
 
 ## To be recorded on first contact
 
-- [ ] **OS version** — every SCPI question depends on it
-- [ ] `*IDN?` string
-- [ ] Reserved DMA region size as shipped
+- [ ] **OS version** — every SCPI question depends on it. STILL UNKNOWN; not
+      obtainable over SCPI, needs SSH or the web interface.
+- [x] `*IDN?` string — `REDPITAYA,INSTR2024,0,01-16`
+- [x] Reserved DMA region size as shipped — **2 MiB, not the 32 MB assumed**
 - [ ] Whether Deep Memory Generation is available
-- [ ] `RP_HOST`
+- [x] `RP_HOST` — `169.254.56.245`
+
+## First contact — 2026-08-10
+
+Link-local (APIPA) addressing on a direct Ethernet cable; no DHCP in the path.
+PC side self-assigned `169.254.96.225`, board `169.254.56.245`. Link negotiates
+1 Gbps full duplex. **The address is not stable across reconnects** — link-local
+is negotiated, so re-check `RP_HOST` after any cable or power cycle.
+
+ICMP is blocked (ping fails) but TCP 5000 is open, so test reachability with a
+port check, not a ping.
+
+### Values read back (read-only queries, verified in sync)
+
+| Query | Answer | Note |
+|---|---|---|
+| `*IDN?` | `REDPITAYA,INSTR2024,0,01-16` | **Does not identify the model** — see below |
+| `ACQ:DEC?` | `1` | |
+| `ACQ:SOUR1:COUP?` | `DC` | Command supported — indicative of a 250-12 |
+| `ACQ:SOUR2:COUP?` | `DC` | |
+| `ACQ:SOUR1:GAIN?` | `LV` | 1:1 attenuator |
+| `ACQ:AXI:START?` | `16777216` (0x1000000) | Matches the device-tree `buffer@1000000` |
+| `ACQ:AXI:SIZE?` | `2097152` | **2 MiB** |
+| `ACQ:DATA:FORMAT?` | `ASCII` | Default; BIN must be set explicitly |
+
+### H1.2 cannot be satisfied by `*IDN?`
+
+The test plan assumes `*IDN?` distinguishes a 250-12 from a 125-14. It does
+not — the string carries no model name. Since a 125-14 would make every
+frequency in this project wrong *silently*, the model must be confirmed another
+way: the label on the board, `monitor -f` over SSH, or a loopback measurement
+of the actual sample rate. `ACQ:SOUR<n>:COUP` being supported is suggestive
+(it is documented as 250-12 only) but is not proof on its own.
+
+### The DMA region is 2 MiB, not 32 MB
+
+Sixteen times smaller than this document previously assumed. What that buys:
+
+| Channels | Rate | Samples/ch | Duration |
+|---|---|---:|---:|
+| 1 | 250 MS/s | 1048576 | 4.19 ms |
+| 1 | 125 MS/s (dec 2) | 1048576 | 8.39 ms |
+| 2 | 250 MS/s | 524288 | 2.10 ms |
+| 2 | 125 MS/s (dec 2) | 524288 | 4.19 ms |
+
+A 1 s sweep on two channels at decimation 2 needs 477 MiB — short by a factor
+of **238**. The device-tree enlargement below is therefore mandatory before
+H6, and it also constrains H5.2: a 60 ms emulated response does not fit either.
+
+### SCPI transport behaviour — matters for H1.5
+
+1. **Unsupported commands return zero bytes.** There is no error string. A
+   misspelled *query* blocks until timeout; a misspelled *setting* command is
+   completely silent and indistinguishable from success. Validating the write
+   paths in `hardware.py` therefore requires reading each setting back, not
+   just sending it.
+2. **A read timeout desynchronises the connection permanently.** The unread
+   remainder stays in the socket and every later response is off by one, which
+   looks like plausible-but-wrong values rather than an error. Observed exactly
+   this: `ACQ:AXI:SIZE?` appearing to return the region *base*. Use `*IDN?` as
+   a sync token to confirm alignment after anything suspicious.
+3. **Do not open a connection per command.** The server dislikes rapid
+   reconnects (as `tests/hardware/conftest.py` already warned) and returns
+   truncated responses.
+
+### Unresolved: the link is pathologically slow
+
+Twenty identical `ACQ:DEC?` queries over one warm connection: min 0.078 s,
+**median 5.4 s, max 21.9 s**. Zero adapter receive errors accumulated during
+the burst, so this is not packet corruption at the NIC. The multi-second values
+cluster near TCP retransmission backoff sums, and the occasional 0.078 s proves
+the path can be fast.
+
+The adapter does carry 11546 historical receive errors out of 63873 packets,
+but none accrued during measurement — treat as a separate, older event.
+
+Suspected cause: the SCPI server was left wedged by an earlier probe that
+opened ten connections in quick succession. Restart the SCPI server and
+re-measure before investigating further. At this latency H6.2's 477 MB transfer
+is not viable, so this must be resolved before Phase 1 can complete.
 
 ## Enlarging the reserved DMA region
 
