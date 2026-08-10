@@ -11,7 +11,7 @@
 | Input impedance | 1 MΩ, AC/DC coupling software selectable |
 | Output range | ±1 V @ 50 Ω / ±2 V Hi-Z / ±5 V @ 50 Ω / ±10 V Hi-Z |
 | FPGA | Zynq 7020 |
-| RAM | 1 GB |
+| RAM | **512 MB** (measured — see the DMA section; not the 1 GB often quoted) |
 | Arbitrary buffer | 16384 samples |
 
 The 60 MHz analog bandwidth is central to two things: the 80 MHz carrier is
@@ -163,35 +163,68 @@ Takeaways:
 
 ## Enlarging the reserved DMA region
 
-Default is 32 MB. A 1 s sweep at decimation 2 on two channels needs 477 MB, so
-reserve 512 MB. Ceiling is 924 MB on a 1 GB board — Linux needs the rest.
+**The board has 512 MB, not 1 GB.** Measured 2026-08-10: `/proc/iomem` reports
+`00000000-1fffffff : System RAM` (0x20000000 = 512 MiB) and `MemTotal` is
+470932 kB. Earlier revisions of this file said 1 GB, and the instruction below
+used to read `reg = <0x1000000 0x20000000>` — a 512 MB region based at the
+16 MB mark, i.e. 528 MB on a 512 MB board. **Do not use that.** It claims
+memory that does not exist.
+
+As shipped the region is 2 MiB. The ceiling is `MAX_DMA_MB` = 320 MB, which
+leaves Linux ~190 MB; 256 MB is the comfortable choice and is what the planner
+recommends, since it holds a 1 s two-channel sweep at decimation 4 (238 MB).
 
 ```bash
-ssh root@<board>
+ssh root@rp-fffe42.local
 rw
 nano /opt/redpitaya/dts/$(monitor -f)/dtraw.dts
 #   buffer@1000000 {
-#       reg = <0x1000000 0x20000000>;    # 0x20000000 = 512 MB
+#       reg = <0x1000000 0x10000000>;    # 0x10000000 = 256 MB
 #   };
 cd /opt/redpitaya/dts/$(monitor -f)/
 dtc -I dts -O dtb ./dtraw.dts -o devicetree.dtb
 reboot
 ```
 
-Confirm afterwards with `ACQ:AXI:SIZE?`. Rebooting the board is permitted;
-nobody else uses it.
+Base + size must stay below 512 MB: 0x1000000 + 0x10000000 = 272 MB. Confirm
+afterwards with `ACQ:AXI:SIZE?` — asking for more than exists does not fail
+loudly. Rebooting the board is permitted; nobody else uses it.
 
 ## Memory and transfer budget, 1 s sweep, 2 channels
 
-| Decimation | Rate | Nyquist | Memory | Transfer @ 100 MB/s | Aliasing |
-|---:|---:|---:|---:|---:|---|
-| 1 | 250 MS/s | 125 MHz | 954 MB | 9.5 s | none |
-| **2** | **125 MS/s** | **62.5 MHz** | **477 MB** | **4.8 s** | **none** |
-| 4 | 62.5 MS/s | 31.2 MHz | 238 MB | 2.4 s | 31–60 MHz folds |
-| 8 | 31.2 MS/s | 15.6 MHz | 119 MB | 1.2 s | 16–60 MHz folds |
+Against the 320 MB ceiling, not the 924 MB this table used to assume:
 
-Decimation 2 is the recommended operating point. Decimation 1 exceeds the
-924 MB ceiling.
+| Decimation | Rate | Nyquist | Memory | Fits? | Transfer @ 100 MB/s | Aliasing |
+|---:|---:|---:|---:|:---:|---:|---|
+| 1 | 250 MS/s | 125 MHz | 954 MB | no | 9.5 s | none |
+| 2 | 125 MS/s | 62.5 MHz | 477 MB | **no** | 4.8 s | none |
+| **4** | **62.5 MS/s** | **31.2 MHz** | **238 MB** | **yes** | **2.4 s** | see below |
+| 8 | 31.2 MS/s | 15.6 MHz | 119 MB | yes | 1.2 s | 15.6–60 MHz folds |
+
+**Decimation 2 no longer fits.** This supersedes ADR-0002's recommendation,
+which was written on the 1 GB assumption. A full 1 s two-channel sweep now
+requires decimation 4.
+
+### Does decimation 4 actually hurt?
+
+ADR-0002 rejects it because 31–60 MHz folds into the record. For *this*
+measurement that may not matter, and the reason is worth stating precisely:
+after folding, content at frequency `f` lands at `62.5 − f` MHz, so the energy
+that would contaminate our 1 MHz lock-in frequency comes from 61.5 and
+63.5 MHz. Both sit above the board's 60 MHz analog rolloff.
+
+Two caveats before relying on this:
+
+1. 60 MHz is a −3 dB point, not a wall. At 61.5 MHz the attenuation is modest,
+   so the fold is suppressed but not absent — worst case this costs a few dB of
+   noise at the lock-in frequency.
+2. If `ACQ:AVG` is on, decimation averages N samples, a boxcar whose nulls land
+   at multiples of 62.5 MHz for N = 4 — i.e. almost exactly on the offending
+   band, giving roughly 35 dB of extra rejection. **Whether averaging applies
+   to the `ACQ:AXI:*` deep-memory path is unverified and worth establishing.**
+
+Settle this by measurement in H3.3/H3.4, not by argument: compare the noise
+floor at 1 MHz at decimation 2 and 4 on a short record where both fit.
 
 ## SCPI notes
 

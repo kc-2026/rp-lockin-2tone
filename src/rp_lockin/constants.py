@@ -22,9 +22,20 @@ FINAL_STOPBAND_DB = 60.0
 # 125 MS/s processes in a few hundred MB rather than several GB.
 CHUNK_SAMPLES = 1 << 22
 
-# Largest DMA region Red Pitaya recommends reserving on a 1 GB board; Linux
-# needs the rest. The 250-12 has 1 GB.
-MAX_DMA_MB = 924
+# Physical RAM. MEASURED, not from the datasheet: /proc/iomem on the bench board
+# reports "00000000-1fffffff : System RAM" = 0x20000000 = 512 MiB, and Linux
+# sees 460 MB of it. Earlier versions of this file said 1 GB, which is what the
+# 250-12 is often quoted as having. It is wrong for this unit and it mattered:
+# every capture-size decision derives from it.
+BOARD_RAM_MB = 512
+
+# Largest DMA region it is safe to reserve. The region is carved out of the same
+# 512 MB Linux runs in, so this is a real tradeoff, not a formality. 320 MB
+# leaves ~190 MB for the OS, which is tight but workable. 256 MB is the
+# comfortable choice and still holds a 1 s two-channel sweep at decimation 4
+# (238 MB). Always confirm with ACQ:AXI:SIZE? after a device-tree change --
+# asking for more than exists does not fail loudly.
+MAX_DMA_MB = 320
 
 # Arbitrary-waveform buffer depth of the stock generator.
 ASG_BUFFER_MAX = 16384

@@ -92,9 +92,10 @@ FINAL_STOPBAND_DB = 60.0
 # shot) processes in ~130 MB.
 CHUNK_SAMPLES = 1 << 22
 
-# Largest reserved DMA region Red Pitaya recommends on a 1 GB board; Linux needs
-# the rest. The 250-12 has 1 GB.
-MAX_DMA_MB = 924
+# MAX_DMA_MB used to be duplicated here with a value of 924, on the assumption
+# that the board has 1 GB. It has 512 MB, and this copy was never read -- only
+# constants.py's is imported. Removed rather than corrected: two definitions of
+# the same limit is how they drift apart.
 
 
 def _factorize(d: int, maxf: int = 8) -> list[int]:

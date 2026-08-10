@@ -27,6 +27,7 @@ from .constants import (
     ANALOG_BANDWIDTH,
     ASG_BUFFER_MAX,
     BASE_SAMPLE_RATE,
+    BOARD_RAM_MB,
     MAX_DMA_MB,
 )
 from .dsp import LockinResult, demodulate, estimate_frequency, min_record_seconds
@@ -52,6 +53,7 @@ __all__ = [
     "ANALOG_BANDWIDTH",
     "ASG_BUFFER_MAX",
     "BASE_SAMPLE_RATE",
+    "BOARD_RAM_MB",
     "MAX_DMA_MB",
     "CaptureOption",
     "LockinResult",

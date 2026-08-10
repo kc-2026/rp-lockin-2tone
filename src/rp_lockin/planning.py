@@ -2,9 +2,11 @@
 Capture planning: does one sweep fit in the board's memory, and at what cost?
 
 The binding constraint on this project is not processing speed, it is the
-reserved DMA region. The default is 32 MB, which at 250 MS/s on two channels is
-67 ms -- far short of a 1 s sweep. The region is a device-tree parameter and
-goes to 924 MB on a 1 GB board.
+reserved DMA region. On the bench board it ships at 2 MiB, which at 125 MS/s on
+two channels is 4.2 ms -- far short of a 1 s sweep. The region is a device-tree
+parameter, but it is carved out of the board's 512 MB (measured, not 1 GB as
+the datasheet is often quoted), so it cannot simply be made large: see
+MAX_DMA_MB in constants.py.
 
 The second constraint is aliasing, and it has a pleasant resolution: the
 board's own analog front end rolls off at 60 MHz, so decimating by 2 puts
@@ -18,7 +20,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .constants import ANALOG_BANDWIDTH, BASE_SAMPLE_RATE, MAX_DMA_MB
+from .constants import (ANALOG_BANDWIDTH, BASE_SAMPLE_RATE, BOARD_RAM_MB,
+                        MAX_DMA_MB)
 from .dsp import min_record_seconds
 
 __all__ = ["CaptureOption", "plan_capture", "describe_capture_plan",
@@ -73,7 +76,7 @@ def plan_capture(sweep_seconds: float, f_lockin: float,
 
 
 def recommend(options: list[CaptureOption]) -> CaptureOption | None:
-    """Lowest decimation that is aliasing-free and fits the 924 MB ceiling."""
+    """Lowest decimation that is aliasing-free and fits the MAX_DMA_MB ceiling."""
     viable = [o for o in options if o.megabytes <= MAX_DMA_MB]
     if not viable:
         return None
@@ -142,7 +145,8 @@ def describe_capture_plan(sweep_seconds: float, f_lockin: float,
             f"     Transfer is ~{best.transfer_seconds:.1f} s per sweep over "
             f"gigabit Ethernet.",
             "",
-            f"     On the board (1 GB RAM, {MAX_DMA_MB} MB ceiling):",
+            f"     On the board ({BOARD_RAM_MB} MB RAM, {MAX_DMA_MB} MB ceiling "
+            f"-- the region is carved out of that same RAM):",
             f"       rw",
             f"       nano /opt/redpitaya/dts/$(monitor -f)/dtraw.dts",
             f"         buffer@1000000 {{ reg = <0x1000000 "
