@@ -216,14 +216,22 @@ limitation disappears. Worth checking before anyone builds around 991.821 kHz.
 
   **RESOLVED AS NOT BLOCKING — Edwin, 2026-08-10: the deliverable is
   amplitude only, not amplitude and phase.** `01-project-spec.md` updated.
-  The intermodulation amplitude at |f2−f1| is set by the product of the two
-  modulation depths and does not depend on the relative phase of the envelopes,
-  so the scatter does not touch the deliverable. Do not spend time explaining
-  it unless phase comes back into scope.
+
+  His reasoning, which is the physical argument and worth keeping over my
+  inference: *the 80 MHz is only there to drive the AOM, so its phase carries
+  no information; and the 5/6 MHz modulation phase does not matter either,
+  because the lock-in recovers R.* R is the magnitude of the demodulated
+  phasor and is invariant to a constant phase offset between the two drives —
+  so a scatter in that offset moves the demodulated phasor around the circle
+  without changing its length. Do not spend time explaining the scatter unless
+  phase comes back into scope.
 
   **Concerns to carry forward anyway, recorded at Edwin's request:**
 
-  1. *A relative **drift** would matter even for amplitude.* If the two
+  1. *A relative **drift** would matter even for amplitude* — this is the one
+     concern that survives Edwin's argument, because it is not a constant
+     offset. A constant offset leaves R alone; a steadily advancing one does
+     not. If the two
      channels' table positions slide continuously rather than jumping, that is
      equivalent to a small frequency offset on the beat, and a large enough
      offset walks the signal off the lock-in centre frequency, where the
