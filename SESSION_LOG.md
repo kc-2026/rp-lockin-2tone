@@ -257,8 +257,67 @@ limitation disappears. Worth checking before anyone builds around 991.821 kHz.
      unbiased and quieter. Worth doing before quoting any noise figure from
      H3.3.
 
+**Deep memory: region enlarged successfully, but `acquire_deep_2ch` is NOT
+trustworthy.** This is the state to pick up from.
+
+The DMA region change worked: `ACQ:AXI:SIZE?` now reports 134217728 (128 MiB),
+up from 2 MiB. 268 ms of two-channel capture at decimation 2. Measured transfer
+rate 3.6–4.3 MB/s, which is far below the 100 MB/s the capture planner assumes
+— **`GBE_MB_PER_S` in `planning.py` is optimistic by ~25×** and its transfer
+estimates should not be believed. At 4 MB/s a 477 MB sweep would take two
+minutes, not 4.8 s.
+
+`acquire_deep_2ch` then *appeared* to work: 200000 samples/channel at
+decimation 2, with IN1 showing 1.0000 MHz and IN2 2.0000 MHz — correct counts,
+correct channel mapping, no duplicated buffer. **That result did not hold up.**
+
+On later calls it returns railed data (min −2048, max +2047) and, decisively,
+**byte-identical statistics at decimation 1 and decimation 2** (ch1 mean 193.2,
+rms 865.0 in both). Two different decimations cannot produce identical data
+from a live capture. Confirmed against a silent input: with both outputs off,
+ordinary `acquire()` reads a quiet 25–31 count band while `acquire_deep_2ch`
+on the same input returns full-scale noise. **It is reading stale or
+uninitialised DMA memory, not capturing.**
+
+Two concrete defects found while diagnosing, both worth fixing regardless:
+
+1. **`acquire_deep_2ch` calls `ACQ:RST`, which wipes the coupling and gain that
+   `setup_acquisition` just applied.** Any caller doing the documented
+   setup-then-acquire sequence silently loses its input configuration.
+2. **`ACQ:AXI:DATA:Units RAW` does not take effect.** After the call,
+   `ACQ:DATA:UNITS?` reads `VOLTS`. The set spelling appears to be unsupported
+   and silently ignored — precisely the failure mode documented earlier, where
+   a misspelled setting is indistinguishable from success. (The returned byte
+   count is still consistent with int16, so this may be a separate AXI units
+   setting that is not queryable; either way it is unverified.)
+
+**Consequence: the drift question is still open.** Both attempts to measure it
+were invalidated, and neither by the board:
+
+- First at decimation 2, where the 80 MHz carrier is **above the 62.5 MHz
+  Nyquist** and aliases to 45 MHz, badly attenuated by the decimation filter.
+  145° of scatter, and a straight line through it gave a fictitious 175 Hz
+  offset. **Do not measure the 80 MHz carrier at decimation 2.**
+- Then at decimation 1, which fixed the aliasing but hit the railed-data bug
+  above. Phase from a clipped signal means nothing.
+
+Lesson worth carrying: both runs would have looked plausible if the signal
+levels had not been printed. **Always print min/max/rms alongside any phase
+result** — it is the only thing that distinguishes a measurement from a
+noise measurement.
+
 **Next:**
-1. Deep memory. The DMA region was enlarged from 2 MiB to 128 MB on
+1. **Fix `acquire_deep_2ch` before anything else.** It is the gate for H5, H6
+   and the Phase 1 exit criterion. Start with whether the buffer is genuinely
+   being armed: check `ACQ:AXI:SOUR<n>:TRIG:FILL?` transitions 0→1 rather than
+   reading 1 immediately from a previous run, and whether
+   `ACQ:AXI:SOUR<n>:ENable OFF` in a `finally` block leaves the region in a
+   state that breaks the next capture. Note the *first* call after the reboot
+   worked and later ones did not, which points at leftover state rather than a
+   wrong command.
+2. Re-measure the drift once deep capture is trustworthy — at **decimation 1**,
+   with signal levels printed.
+3. The DMA region was enlarged from 2 MiB to 128 MB on
    2026-08-10 (`reg = <0x1000000 0x8000000>`, staged deliberately: the node
    name and base are unchanged so the `dma_region` alias on line 19 of the DTS
    stays valid, and 144 MB is the hard ceiling before colliding with

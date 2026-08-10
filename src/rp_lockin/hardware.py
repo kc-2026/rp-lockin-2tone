@@ -246,8 +246,35 @@ class RedPitaya:
     def acquire_deep_2ch(self, n_samples: int = 1_000_000, decimation: int = 1,
                          channels: tuple[int, ...] = (1, 2)) -> list[np.ndarray]:
         """
-        Deep capture on both channels simultaneously, so IN2 can carry a
-        pickoff of the drive for phase reference.
+        Deep capture on both channels simultaneously.
+
+        *** NOT TRUSTWORTHY AS OF 2026-08-10. DO NOT BUILD ON THIS YET. ***
+
+        It worked once after a reboot -- 200000 samples/channel at decimation 2,
+        correct counts, IN1 at 1 MHz and IN2 at 2 MHz as driven -- and then
+        began returning railed data (min -2048, max +2047) that is
+        byte-identical at decimation 1 and 2. Two decimations cannot give
+        identical data from a live capture. With both outputs off, ordinary
+        acquire() reads a quiet 25-31 count band on the same input while this
+        returns full-scale noise, so it is reading stale or uninitialised DMA
+        memory rather than capturing. Suspect leftover state between calls
+        rather than a wrong command spelling, since the first call worked.
+
+        Two known defects, independent of that:
+
+        * The ACQ:RST below wipes the coupling and gain that
+          setup_acquisition() just applied. Any caller following the documented
+          setup-then-acquire sequence silently loses its input configuration.
+        * ACQ:AXI:DATA:Units RAW does not take effect -- ACQ:DATA:UNITS? reads
+          VOLTS afterwards. The set spelling is probably unsupported and
+          silently ignored.
+
+        Also note Trig:Dly is set to the full record below, so everything lands
+        after the trigger and there is NO pre-roll. H6.4 requires pre-trigger
+        data so the filter is settled when the sweep starts; this needs to
+        become a parameter.
+
+        See SESSION_LOG.md 2026-08-10 for the diagnosis.
         """
         self.write("ACQ:RST")
         self.write(f"ACQ:AXI:DEC {int(decimation)}")

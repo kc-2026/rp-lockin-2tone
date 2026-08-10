@@ -26,7 +26,13 @@ from .dsp import min_record_seconds
 __all__ = ["CaptureOption", "plan_capture", "describe_capture_plan",
            "settling_points", "recommended_preroll"]
 
-GBE_MB_PER_S = 100.0  # realistic sustained gigabit Ethernet throughput
+# Assumed transfer rate for the estimates below. MEASURED 2026-08-10 at only
+# 3.6-4.3 MB/s pulling deep-memory blocks over SCPI -- about 25x slower than
+# this. The bottleneck is the SCPI server, not the link. Every "transfer"
+# figure this module prints is therefore optimistic by that factor: a 477 MB
+# sweep is ~2 minutes, not 4.8 s. Left at 100 until the deep-memory path is
+# trustworthy enough to characterise properly, but do not quote these numbers.
+GBE_MB_PER_S = 100.0
 
 
 @dataclass(frozen=True)
