@@ -17,8 +17,20 @@ carries the time-to-wavelength calibration, so the trigger train is digitised
 and recorded alongside the signal.
 
 The deliverable per sweep is a 4000–5000 point time series of the demodulated
-response — amplitude and phase — with a time axis accurate enough to map onto
+response — **amplitude only** — with a time axis accurate enough to map onto
 wavelength via the trigger calibration.
+
+**Scope narrowed 2026-08-10 (Edwin): amplitude, not amplitude and phase.**
+Phase is still computed and returned by `demodulate()`, and is still useful
+within a sweep, but it is not a deliverable and nothing should be gated on it.
+This is what downgraded Q6 (the OUT1/OUT2 relative carrier phase is not
+repeatable) from a blocker to a noted limitation.
+
+One consequence worth acting on: with an amplitude-only deliverable, `R =
+sqrt(X² + Y²)` is the obvious estimator and it is **biased upward in noise**.
+Because the phase is steady *within* a sweep, rotating X + jY to a common angle
+and taking the real part is unbiased and quieter. Not yet implemented — see
+`SESSION_LOG.md`.
 
 ## Requirements
 

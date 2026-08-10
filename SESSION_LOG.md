@@ -214,13 +214,51 @@ limitation disappears. Worth checking before anyone builds around 991.821 kHz.
   since the generators run continuously through it. What is at risk is
   comparing or averaging phase *across* sweeps (bears directly on Q13).
 
+  **RESOLVED AS NOT BLOCKING — Edwin, 2026-08-10: the deliverable is
+  amplitude only, not amplitude and phase.** `01-project-spec.md` updated.
+  The intermodulation amplitude at |f2−f1| is set by the product of the two
+  modulation depths and does not depend on the relative phase of the envelopes,
+  so the scatter does not touch the deliverable. Do not spend time explaining
+  it unless phase comes back into scope.
+
+  **Concerns to carry forward anyway, recorded at Edwin's request:**
+
+  1. *A relative **drift** would matter even for amplitude.* If the two
+     channels' table positions slide continuously rather than jumping, that is
+     equivalent to a small frequency offset on the beat, and a large enough
+     offset walks the signal off the lock-in centre frequency, where the
+     2250 Hz bandwidth attenuates it. Amplitude would sag without anything
+     looking wrong. The observed scatter is consistent with drift of order
+     ~1 Hz, which is utterly negligible against 2250 Hz — but my captures were
+     seconds apart, so I cannot distinguish slow drift from fast drift that
+     aliases to look random. **Check once deep memory works:** demodulate a
+     single long capture and confirm the amplitude is steady end to end. That
+     settles it directly and needs no extra hardware.
+  2. *My original alarm was over-stated.* The carrier is ~80× more sensitive
+     to inter-channel misalignment than the beat is (115° vs 1.43° per sample),
+     so 75° of carrier scatter is consistent with anything from a fraction of a
+     degree of beat wobble to complete randomness. I reported the alarming end
+     of that range as the finding. If anyone revisits this, measure the table
+     alignment directly: put the *same* modulation on both channels and
+     cross-correlate the two captures. That has neither the 80× magnifier nor
+     the trigger-jitter confound.
+  3. *Amplitude estimator bias.* With amplitude as the sole deliverable,
+     `R = sqrt(X² + Y²)` is the obvious choice and is biased upward in noise —
+     CLAUDE.md lists this as a known trap. Since phase is steady within a
+     sweep, rotating X + jY to a common angle and taking the real part is
+     unbiased and quieter. Worth doing before quoting any noise figure from
+     H3.3.
+
 **Next:**
-1. **Q6 is the open question.** Needs Edwin's input on whether the measurement
-   requires absolute phase or only phase structure within a sweep — that
-   decides whether this is a blocker or a documented limitation. Then a
-   dedicated session to explain the scatter; try `SOUR<n>:PHAS`, a combined
-   `OUTPUT:STATE ON`, and check whether the two ADC channels are read from a
-   common buffer pointer (an unequal read offset would fake this exactly).
+1. Deep memory. The DMA region was enlarged from 2 MiB to 128 MB on
+   2026-08-10 (`reg = <0x1000000 0x8000000>`, staged deliberately: the node
+   name and base are unchanged so the `dma_region` alias on line 19 of the DTS
+   stays valid, and 144 MB is the hard ceiling before colliding with
+   `labuf@a000000`). That is 0.27 s of two-channel capture at decimation 2 —
+   enough to exercise the whole `ACQ:AXI:*` path and cover H5.2. Going to the
+   full 512 MB needs the upper half of RAM, which means renaming the node
+   *and* updating that alias, and the region would sit above the `mem=512M`
+   cap where the kernel may refuse it. Prove the path at 128 MB first.
 3. Enlarge the DMA region per the corrected H6.1 (base `0x20000000`, size
    512 MB, back up `dtraw.dts` first) before any deep-memory work. Nothing in
    H5 or H6 can proceed on the shipped 2 MiB.

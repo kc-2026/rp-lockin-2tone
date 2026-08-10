@@ -16,7 +16,7 @@ relevant doc and note it in `SESSION_LOG.md`.
 
 | # | Question | Notes |
 |---|---|---|
-| Q6 | Is the OUT1/OUT2 relative carrier phase repeatable? | **Measured 2026-08-10: NO — and not for the reason expected.** Spread is 71–82° whether or not the generators are restarted between captures, so it is not injected at start and leaving them running does not fix it. Both DACs share one clock and were running continuously, so this is unexplained and needs a dedicated session. Details and the measurement confound to avoid are in `SESSION_LOG.md`. **Amplitude is unaffected**; only phase comparisons across sweeps are at risk. Blocking question for Edwin: does the measurement need absolute phase, or only phase structure within a sweep? |
+| Q6 | Is the OUT1/OUT2 relative carrier phase repeatable? | **No — 71–82° spread, unexplained. DOWNGRADED, not blocking.** Edwin confirmed 2026-08-10 that **the deliverable is amplitude only**, and the intermodulation amplitude does not depend on the relative phase of the two envelopes. See `SESSION_LOG.md` for the one residual risk this leaves (a relative *drift* fast enough to offset the beat frequency) and how to check it. Do not spend time explaining the phase scatter unless phase becomes a deliverable again. |
 | Q7 | Are IN1 and IN2 sample-aligned? | A fixed skew between signal and trigger biases every wavelength assignment. Measure, do not assume. |
 | Q8 | What is the real noise floor at 1 MHz? | H3.3. This is the number that predicts whether the measurement works. |
 | Q9 | Does the DUT response roll off at 1 MHz? | Physics, not measurable in loopback. Lower difference frequencies are available — see `03-frequency-plan.md`. |
