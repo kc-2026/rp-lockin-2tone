@@ -22,20 +22,29 @@ FINAL_STOPBAND_DB = 60.0
 # 125 MS/s processes in a few hundred MB rather than several GB.
 CHUNK_SAMPLES = 1 << 22
 
-# Physical RAM. MEASURED, not from the datasheet: /proc/iomem on the bench board
-# reports "00000000-1fffffff : System RAM" = 0x20000000 = 512 MiB, and Linux
-# sees 460 MB of it. Earlier versions of this file said 1 GB, which is what the
-# 250-12 is often quoted as having. It is wrong for this unit and it mattered:
-# every capture-size decision derives from it.
-BOARD_RAM_MB = 512
+# Physical RAM: 1 GB. The device tree reports base 0x0, size 0x40000000.
+#
+# Linux does NOT see all of it. The kernel command line carries mem=512M, so
+# the OS is confined to 0x00000000-0x1FFFFFFF and reports ~460 MB. That is
+# deliberate Red Pitaya configuration, not a fault: it leaves the upper half
+# permanently outside Linux's control for DMA capture buffers.
+#
+# Do not read free memory as installed memory. /proc/iomem and MemTotal both
+# show the capped view and will tell you this is a 512 MB board.
+BOARD_RAM_MB = 1024
 
-# Largest DMA region it is safe to reserve. The region is carved out of the same
-# 512 MB Linux runs in, so this is a real tradeoff, not a formality. 320 MB
-# leaves ~190 MB for the OS, which is tight but workable. 256 MB is the
-# comfortable choice and still holds a 1 s two-channel sweep at decimation 4
-# (238 MB). Always confirm with ACQ:AXI:SIZE? after a device-tree change --
-# asking for more than exists does not fail loudly.
-MAX_DMA_MB = 320
+# Start of the upper half -- the region Linux cannot see. Base the DMA buffer
+# here, not in Linux's half, so a large reservation costs the OS nothing.
+DMA_REGION_BASE = 0x20000000
+
+# Largest DMA region it is safe to reserve: the whole upper half. Bounded by
+# where Linux ends, not by the OS's needs, precisely because reserving from up
+# here takes nothing away from it. A 1 s two-channel sweep at decimation 2
+# needs 477 MB and fits with ~35 MB spare.
+#
+# Confirm with ACQ:AXI:SIZE? after any device-tree change -- asking for more
+# than exists does not fail loudly.
+MAX_DMA_MB = 512
 
 # Arbitrary-waveform buffer depth of the stock generator.
 ASG_BUFFER_MAX = 16384

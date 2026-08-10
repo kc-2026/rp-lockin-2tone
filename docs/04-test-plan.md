@@ -133,15 +133,14 @@ The emulated-DUT test at full sweep length needs a waveform longer than the
 
 **Wiring:** OUT1 → IN1, OUT2 → IN2.
 
-- [ ] H6.1 Enlarge the reserved DMA region to **256 MB, not 512 MB**
-      (`docs/05-hardware-notes.md`). Reboot. Confirm `ACQ:AXI:SIZE?`.
-      **The board has 512 MB of RAM, not 1 GB** — reserving 512 MB is
-      impossible and the old instruction claimed memory that does not exist.
-- [ ] H6.2 Capture 1 s on both channels at **decimation 4** — decimation 2
-      needs 477 MB and no longer fits. Confirm the sample count and measure the
-      transfer time. Check whether the noise floor at 1 MHz differs from
-      decimation 2 on a short record where both fit; see the aliasing note in
-      `05-hardware-notes.md`.
+- [ ] H6.1 Enlarge the reserved DMA region to 512 MB, **based at `0x20000000`,
+      not at `0x1000000`** (`docs/05-hardware-notes.md`). The board has 1 GB but
+      Linux is capped to the lower half by `mem=512M`; basing the region in the
+      upper half costs the OS nothing, whereas the original instruction ran a
+      512 MB region from the 16 MB mark straight through Linux's own memory.
+      Back up `dtraw.dts` first. Reboot. Confirm `ACQ:AXI:SIZE?`.
+- [ ] H6.2 Capture 1 s on both channels at decimation 2. Confirm the sample
+      count and measure the transfer time.
 - [ ] H6.3 Demodulate to exactly 5000 points. Confirm the count and that the
       time axis spans the sweep correctly.
 - [ ] H6.4 **Verify the pre-roll works.** Filter settling costs ~108 output

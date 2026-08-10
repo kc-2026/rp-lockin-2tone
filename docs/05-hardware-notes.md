@@ -11,7 +11,7 @@
 | Input impedance | 1 MΩ, AC/DC coupling software selectable |
 | Output range | ±1 V @ 50 Ω / ±2 V Hi-Z / ±5 V @ 50 Ω / ±10 V Hi-Z |
 | FPGA | Zynq 7020 |
-| RAM | **512 MB** (measured — see the DMA section; not the 1 GB often quoted) |
+| RAM | 1 GB — but Linux only sees the lower 512 MB, see below |
 | Arbitrary buffer | 16384 samples |
 
 The 60 MHz analog bandwidth is central to two things: the 80 MHz carrier is
@@ -161,70 +161,79 @@ Takeaways:
 - If the link ever looks broken again, restart the SCPI server *before*
   suspecting hardware.
 
+## Memory layout — the part that is easy to get wrong
+
+The board has **1 GB**, but the kernel command line carries `mem=512M`, so
+Linux confines itself to the lower half and reports ~460 MB. This is deliberate
+Red Pitaya configuration: it keeps the upper half permanently outside the OS,
+free for DMA capture buffers.
+
+| Range | Size | Owner |
+|---|---:|---|
+| `0x00000000`–`0x1FFFFFFF` | 512 MB | Linux (`MemTotal` 470932 kB) |
+| `0x20000000`–`0x3FFFFFFF` | 512 MB | **unused — reserve the capture buffer here** |
+
+Evidence: `/proc/device-tree/memory/reg` reads `00 00 00 00 40 00 00 00`, i.e.
+base 0, size 0x40000000 = 1 GiB. `cat /proc/cmdline` shows the `mem=512M` cap.
+
+**Do not diagnose installed RAM from `/proc/iomem` or `MemTotal`.** Both show
+the capped view and will convincingly tell you this is a 512 MB board. An
+earlier revision of this document did exactly that and concluded the 1 s
+capture was impossible. It is not.
+
 ## Enlarging the reserved DMA region
 
-**The board has 512 MB, not 1 GB.** Measured 2026-08-10: `/proc/iomem` reports
-`00000000-1fffffff : System RAM` (0x20000000 = 512 MiB) and `MemTotal` is
-470932 kB. Earlier revisions of this file said 1 GB, and the instruction below
-used to read `reg = <0x1000000 0x20000000>` — a 512 MB region based at the
-16 MB mark, i.e. 528 MB on a 512 MB board. **Do not use that.** It claims
-memory that does not exist.
-
-As shipped the region is 2 MiB. The ceiling is `MAX_DMA_MB` = 320 MB, which
-leaves Linux ~190 MB; 256 MB is the comfortable choice and is what the planner
-recommends, since it holds a 1 s two-channel sweep at decimation 4 (238 MB).
+As shipped the region is 2 MiB, based at `0x1000000` — down in Linux's half,
+which is why it is small. Move it to the upper half and it can be the full
+512 MB at no cost to the OS.
 
 ```bash
 ssh root@rp-fffe42.local
 rw
+cp /opt/redpitaya/dts/$(monitor -f)/dtraw.dts ~/dtraw.dts.backup
 nano /opt/redpitaya/dts/$(monitor -f)/dtraw.dts
-#   buffer@1000000 {
-#       reg = <0x1000000 0x10000000>;    # 0x10000000 = 256 MB
+#   buffer@20000000 {
+#       reg = <0x20000000 0x20000000>;   # base 512 MB, size 512 MB
 #   };
 cd /opt/redpitaya/dts/$(monitor -f)/
 dtc -I dts -O dtb ./dtraw.dts -o devicetree.dtb
 reboot
 ```
 
-Base + size must stay below 512 MB: 0x1000000 + 0x10000000 = 272 MB. Confirm
-afterwards with `ACQ:AXI:SIZE?` — asking for more than exists does not fail
-loudly. Rebooting the board is permitted; nobody else uses it.
+`0x20000000 + 0x20000000 = 0x40000000` — exactly the top of RAM. Confirm
+afterwards with `ACQ:AXI:SIZE?`; asking for more than exists does not fail
+loudly. Take the backup first: a device tree that overlaps the running kernel's
+memory will not boot.
+
+**The instruction this replaces was unsafe.** It read
+`buffer@1000000 { reg = <0x1000000 0x20000000>; }` — a 512 MB region based at
+the 16 MB mark, running to 528 MB and straight through the memory Linux is
+running in.
 
 ## Memory and transfer budget, 1 s sweep, 2 channels
 
-Against the 320 MB ceiling, not the 924 MB this table used to assume:
+Against a 512 MB ceiling — the size of the upper half:
 
 | Decimation | Rate | Nyquist | Memory | Fits? | Transfer @ 100 MB/s | Aliasing |
 |---:|---:|---:|---:|:---:|---:|---|
 | 1 | 250 MS/s | 125 MHz | 954 MB | no | 9.5 s | none |
-| 2 | 125 MS/s | 62.5 MHz | 477 MB | **no** | 4.8 s | none |
-| **4** | **62.5 MS/s** | **31.2 MHz** | **238 MB** | **yes** | **2.4 s** | see below |
+| **2** | **125 MS/s** | **62.5 MHz** | **477 MB** | **yes, ~35 MB spare** | **4.8 s** | **none** |
+| 4 | 62.5 MS/s | 31.2 MHz | 238 MB | yes | 2.4 s | 31–60 MHz folds |
 | 8 | 31.2 MS/s | 15.6 MHz | 119 MB | yes | 1.2 s | 15.6–60 MHz folds |
 
-**Decimation 2 no longer fits.** This supersedes ADR-0002's recommendation,
-which was written on the 1 GB assumption. A full 1 s two-channel sweep now
-requires decimation 4.
+Decimation 2 is the operating point, as ADR-0002 always intended. Decimation 1
+does not fit.
 
-### Does decimation 4 actually hurt?
+### Decimation 4 as a fallback
 
-ADR-0002 rejects it because 31–60 MHz folds into the record. For *this*
-measurement that may not matter, and the reason is worth stating precisely:
-after folding, content at frequency `f` lands at `62.5 − f` MHz, so the energy
-that would contaminate our 1 MHz lock-in frequency comes from 61.5 and
-63.5 MHz. Both sit above the board's 60 MHz analog rolloff.
-
-Two caveats before relying on this:
-
-1. 60 MHz is a −3 dB point, not a wall. At 61.5 MHz the attenuation is modest,
-   so the fold is suppressed but not absent — worst case this costs a few dB of
-   noise at the lock-in frequency.
-2. If `ACQ:AVG` is on, decimation averages N samples, a boxcar whose nulls land
-   at multiples of 62.5 MHz for N = 4 — i.e. almost exactly on the offending
-   band, giving roughly 35 dB of extra rejection. **Whether averaging applies
-   to the `ACQ:AXI:*` deep-memory path is unverified and worth establishing.**
-
-Settle this by measurement in H3.3/H3.4, not by argument: compare the noise
-floor at 1 MHz at decimation 2 and 4 on a short record where both fit.
+Not needed, but worth keeping in mind if the region cannot be enlarged for some
+reason. ADR-0002 rejects it because 31–60 MHz folds in, but for *this*
+measurement the fold may be tolerable: content at `f` lands at `62.5 − f` MHz,
+so the energy reaching our 1 MHz lock-in frequency comes from 61.5 and
+63.5 MHz, both above the 60 MHz analog rolloff. Caveats: 60 MHz is a −3 dB
+point rather than a wall, and if `ACQ:AVG` applies to the AXI path its boxcar
+nulls fall near 62.5 MHz, which would suppress the fold further. Both are
+unverified — measure in H3.3/H3.4 before relying on any of it.
 
 ## SCPI notes
 

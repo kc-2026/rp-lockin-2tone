@@ -4,9 +4,8 @@ Capture planning: does one sweep fit in the board's memory, and at what cost?
 The binding constraint on this project is not processing speed, it is the
 reserved DMA region. On the bench board it ships at 2 MiB, which at 125 MS/s on
 two channels is 4.2 ms -- far short of a 1 s sweep. The region is a device-tree
-parameter, but it is carved out of the board's 512 MB (measured, not 1 GB as
-the datasheet is often quoted), so it cannot simply be made large: see
-MAX_DMA_MB in constants.py.
+parameter and goes to 512 MB, which is the size of the upper half of RAM that
+mem=512M keeps outside Linux. Reserving from up there costs the OS nothing.
 
 The second constraint is aliasing, and it has a pleasant resolution: the
 board's own analog front end rolls off at 60 MHz, so decimating by 2 puts
@@ -21,7 +20,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .constants import (ANALOG_BANDWIDTH, BASE_SAMPLE_RATE, BOARD_RAM_MB,
-                        MAX_DMA_MB)
+                        DMA_REGION_BASE, MAX_DMA_MB)
 from .dsp import min_record_seconds
 
 __all__ = ["CaptureOption", "plan_capture", "describe_capture_plan",
@@ -145,12 +144,12 @@ def describe_capture_plan(sweep_seconds: float, f_lockin: float,
             f"     Transfer is ~{best.transfer_seconds:.1f} s per sweep over "
             f"gigabit Ethernet.",
             "",
-            f"     On the board ({BOARD_RAM_MB} MB RAM, {MAX_DMA_MB} MB ceiling "
-            f"-- the region is carved out of that same RAM):",
+            f"     On the board ({BOARD_RAM_MB} MB RAM; Linux is capped at "
+            f"512 MB by mem=512M, so the upper half is free for this):",
             f"       rw",
             f"       nano /opt/redpitaya/dts/$(monitor -f)/dtraw.dts",
-            f"         buffer@1000000 {{ reg = <0x1000000 "
-            f"0x{region * 1024 * 1024:X}>; }};",
+            f"         buffer@{DMA_REGION_BASE:x} {{ reg = "
+            f"<0x{DMA_REGION_BASE:X} 0x{region * 1024 * 1024:X}>; }};",
             f"       cd /opt/redpitaya/dts/$(monitor -f)/",
             f"       dtc -I dts -O dtb ./dtraw.dts -o devicetree.dtb",
             f"       reboot",
