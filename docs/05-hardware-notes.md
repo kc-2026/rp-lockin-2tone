@@ -120,6 +120,57 @@ keep format and units consistent.
 same value, so the normal and AXI paths appear to share one units setting.
 `hardware.py` sets it on both paths, which is redundant but harmless.
 
+### The arbitrary generator does not work the way `waveforms.py` assumes
+
+**This is the most consequential finding of the first hardware session, and it
+invalidates `make_am_waveform`'s model of the hardware.** Measured 2026-08-10
+on OS 2.00.
+
+`make_am_waveform()` returns `(samples, fs/N)` on the assumption that loading N
+samples and setting `SOUR:FREQ:FIX` to `fs/N` replays exactly those N samples,
+one per DAC clock. **It does not.** The generator always traverses a fixed
+16384-entry table; `SOUR:FREQ:FIX` sets how many times per second that table is
+traversed. Entries never written stay zero.
+
+Evidence — three tables loaded in full and played at `fs/16384` =
+15258.789 Hz, which steps exactly one entry per clock:
+
+| Table contents | Predicted output | Measured | Purity |
+|---|---:|---:|---|
+| 1 cycle | 0.0153 MHz | 0.0153 MHz | next line −76 dBc |
+| 5243 cycles | 80.0018 MHz | 80.0018 MHz | next line −53 dBc |
+| 65 cycles | 0.9918 MHz | 0.9918 MHz | next line −76 dBc |
+
+And the failure mode of the current code, measured directly:
+
+| What `setup_am_generator` does today | Result |
+|---|---|
+| 50-sample buffer, `FREQ = 5 MHz` | **min −2, max 4 counts — no output at all** |
+| 250-sample buffer, `FREQ = 1 MHz` | strong signal, but dominant content near 7 MHz; the 75/80/85 MHz lines are 54–89 dB down |
+
+The 50-sample case produces nothing because the phase accumulator steps
+`16384 × 5e6 / 250e6` ≈ 328 entries per clock, so the 50 non-zero entries are
+almost never sampled. The 250-sample case aliases the sparse table into junk.
+
+**Consequences.**
+
+1. `setup_am_generator()` cannot drive the board as written. It is not a
+   spelling error — the frequency argument means something different.
+2. The commensurability rule changes. The buffer period is fixed at
+   16384 samples = 65.536 µs, so **every frequency must be an integer multiple
+   of fs/16384 = 15258.7890625 Hz**. Buffer length is no longer a free
+   parameter, which is what `_minimal_buffer()` exists to choose.
+3. 80 MHz is not on that grid: 80e6 / 15258.789 = 5242.88. Nor are 5 and 6 MHz.
+   The frequency plan needs moving onto the grid — see `03-frequency-plan.md`.
+
+**Why the offline tests did not catch this.** They verify the commensurability
+arithmetic, which is correct, against a model of the generator that is not.
+No amount of offline testing could have found it; only the board could.
+
+**Still open:** whether the ASG's table size is settable (the FPGA has such a
+register). If SCPI exposes it, setting it to 250 would restore the original
+plan unchanged. Not yet probed.
+
 ### SCPI transport behaviour — matters for H1.5
 
 1. **Unsupported commands return zero bytes.** There is no error string. A

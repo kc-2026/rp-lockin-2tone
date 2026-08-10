@@ -1,5 +1,39 @@
 # Frequency plan
 
+> **SUPERSEDED IN PART, 2026-08-10 — read this first.**
+>
+> This document derives a 250-sample buffer from the assumption that the
+> generator replays exactly the N samples you load. **Measured on the board,
+> it does not.** The ASG always traverses a fixed 16384-entry table, and
+> `SOUR:FREQ:FIX` sets the traversal rate. See "The arbitrary generator does
+> not work the way waveforms.py assumes" in `05-hardware-notes.md` for the
+> evidence.
+>
+> What survives: the *reasoning* about commensurability, the lock-in cycle
+> count constraint, and the point-count constraint. All still apply.
+>
+> What changes: buffer length is no longer a free parameter. The period is
+> fixed at 16384 samples = 65.536 µs, so every frequency must be an integer
+> multiple of **fs/16384 = 15258.7890625 Hz**. Sections below that pick N are
+> obsolete; the grid is now fixed and the frequencies move onto it.
+>
+> Proposed replacement operating point, all exact on the grid (awaiting a
+> decision — see Q3 in `06-open-questions.md`):
+>
+> | Quantity | Grid multiple | Frequency | Was |
+> |---|---:|---:|---:|
+> | Carrier | 5243 | 80.0018 MHz | 80 MHz |
+> | f1 | 328 | 5.004883 MHz | 5 MHz |
+> | f2 | 393 | 5.996704 MHz | 6 MHz |
+> | \|f2 − f1\| | 65 | **991.821 kHz** | 1 MHz |
+>
+> The carrier moves by 23 ppm, which is nothing to an AOM. The difference
+> frequency lands at 991.821 kHz instead of 1 MHz, giving 70 cycles per 71 µs
+> integration time instead of 71 — no material change against R4's 5–10. Being
+> exactly on the grid matters far more than being a round number: off-grid, the
+> table wraps discontinuously every 65.536 µs and sprays a 15.26 kHz spur comb
+> straight across the baseband where the trace lives.
+
 Why f1 = 5 MHz, f2 = 6 MHz, and a 250-sample buffer. This is the most
 constraint-driven part of the design, and the constraints are not obvious.
 

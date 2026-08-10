@@ -7,9 +7,9 @@ relevant doc and note it in `SESSION_LOG.md`.
 
 | # | Question | Where it gets answered |
 |---|---|---|
-| Q1 | Red Pitaya OS version | H1.1 |
-| Q2 | Are the SCPI commands in `hardware.py` correct for that version? | H1.5 |
-| Q3 | Does the generator accept a 250-sample arbitrary buffer? | H2.1 |
+| Q2 | Are the SCPI commands in `hardware.py` correct for that version? | H1.5 — acquisition and generator commands verified; `setup_am_generator` and the `ACQ:AXI:*` path still open |
+| Q3a | **Needs a decision:** move the frequency plan onto the 15258.789 Hz grid (carrier 80.0018 MHz, f1 5.004883, f2 5.996704, difference 991.821 kHz)? | See `03-frequency-plan.md` |
+| Q3b | Is the ASG's 16384-entry table size settable over SCPI? If so, the original 250-sample plan works unchanged. | Not yet probed |
 | Q4 | Does `SOUR:TRig:INT` start both channels synchronously? | H2.4 |
 | Q5 | Is Deep Memory Generation available on this OS? | H5.1 |
 
@@ -36,6 +36,8 @@ relevant doc and note it in `SESSION_LOG.md`.
 
 | # | Question | Answer |
 |---|---|---|
+| Q1 | Red Pitaya OS version | **2.00, build 37** (Ubuntu 22.04.4, kernel 5.15.0-xilinx, commit `a0457d3aa`). In `/opt/redpitaya/version.txt`; `/etc/redpitaya_version` does not exist on this image. |
+| Q3 | Does the generator accept a 250-sample arbitrary buffer? | **No — and the question was based on a wrong model.** The ASG always traverses a fixed 16384-entry table; `SOUR:FREQ:FIX` sets the traversal rate, not a per-sample clock. A 50-sample buffer produces no output at all. Superseded by Q3a/Q3b above. |
 | Q10 | τ = 30 µs or 71 µs? | **71 µs at 5000 points**, decided by Edwin 2026-08-10. Forcing 30 µs at 5000 points would fold 2805 Hz of noise onto every trace for 3.7 dB worse SNR, buying resolution a 5000-point grid cannot represent. The aliasing-free way to reach ~30 µs is 12500 points (τ = 28.3 µs); considered, not taken. Recorded in `01-project-spec.md`. |
 
 ## Deferred
