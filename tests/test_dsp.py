@@ -7,6 +7,8 @@ bug was actually present and produced plausible-looking wrong answers. Do not
 delete them to make a refactor pass.
 """
 
+import tracemalloc
+
 import numpy as np
 import pytest
 
@@ -154,18 +156,43 @@ def test_chunked_equals_single_shot(monkeypatch):
 
 @pytest.mark.slow
 def test_long_record_memory_bounded():
-    import resource
+    """Streaming must bound peak memory. A 0.30 s record at 250 MS/s is 300 MB
+    of input; demodulating it in one piece instead of in chunks costs several
+    GB. Measured at 346 MB with CHUNK_SAMPLES = 1<<22 against 4295 MB at 1<<26,
+    so the 800 MB bound below sits an order of magnitude clear of both.
+
+    Uses tracemalloc rather than resource.getrusage because `resource` is
+    Unix-only and most machines running this are Windows -- a skip there would
+    leave the property unguarded on the primary platform. It is also the better
+    probe: reset_peak() scopes the measurement to this one call, whereas
+    ru_maxrss is a process-lifetime high-water mark, so any earlier test that
+    peaked higher would mask a regression here and pass silently.
+
+    Caveat: tracemalloc sees numpy's allocations (numpy registers its own
+    domain) but not raw mallocs inside scipy's compiled kernels, so this reads
+    slightly under true RSS. That is fine for what is being guarded -- a
+    non-streaming regression materialises a whole-record numpy array, which is
+    precisely what tracemalloc does see.
+    """
     n = int(0.30 * FS)
     big = np.zeros(n, dtype=np.float32)
     step = 1 << 22
     for s in range(0, n, step):
         e = min(s + step, n)
         big[s:e] = np.cos(2 * np.pi * F_REF * np.arange(s, e) / FS).astype(np.float32)
-    before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    r = demodulate(big, FS, F_REF, bandwidth=20e3)
-    grew_mb = (resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - before) / 1024
+
+    # Started after the record is built, so `big` itself is untraced and the
+    # peak reflects only what demodulate allocates on top of it.
+    tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        r = demodulate(big, FS, F_REF, bandwidth=20e3)
+        peak_mb = tracemalloc.get_traced_memory()[1] / 1024**2
+    finally:
+        tracemalloc.stop()
+
     assert abs(r.R.mean() - 1.0) < 1e-3
-    assert grew_mb < 800, f"peak RSS grew {grew_mb:.0f} MB"
+    assert peak_mb < 800, f"peak tracked allocation {peak_mb:.0f} MB"
 
 
 # --------------------------------------------------------------------------
