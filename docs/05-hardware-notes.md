@@ -20,12 +20,23 @@ is aliasing-free because 62.5 MHz Nyquist sits above the rolloff.
 
 ## To be recorded on first contact
 
-- [ ] **OS version** — every SCPI question depends on it. STILL UNKNOWN; not
-      obtainable over SCPI, needs SSH or the web interface.
+- [x] **OS version — 2.00, build 37** (commit `a0457d3aa`, Ubuntu 22.04.4,
+      U-Boot `redpitaya-v2022.1`, kernel `branch-redpitaya-v2024.1`,
+      `5.15.0-xilinx`). This is the 2.x line, which is what `hardware.py` was
+      written against. Not in `/etc/redpitaya_version` (absent on this image) —
+      it is in `/opt/redpitaya/version.txt`.
 - [x] `*IDN?` string — `REDPITAYA,INSTR2024,0,01-16`
 - [x] Reserved DMA region size as shipped — **2 MiB, not the 32 MB assumed**
 - [ ] Whether Deep Memory Generation is available
-- [x] `RP_HOST` — `169.254.56.245`
+- [x] `RP_HOST` — `rp-fffe42.local` (preferred) or `169.254.56.245`
+- [x] Board model — `monitor -f` returns `z20_250`, confirming the 250-12
+      independently of the case label
+
+## Use the hostname, not the IP
+
+`rp-fffe42.local` resolves over mDNS from Windows and reaches port 5000. The
+link-local IP is negotiated and changes on reconnect, so prefer the hostname
+in `RP_HOST`. The board's own hostname derives from its MAC (`ff:fe:42`).
 
 ## First contact — 2026-08-10
 
@@ -81,6 +92,33 @@ Sixteen times smaller than this document previously assumed. What that buys:
 A 1 s sweep on two channels at decimation 2 needs 477 MiB — short by a factor
 of **238**. The device-tree enlargement below is therefore mandatory before
 H6, and it also constrains H5.2: a 60 ms emulated response does not fit either.
+
+### H1.5 progress — `setup_acquisition` is fully verified
+
+Validated by set-then-read-back on OS 2.00, because a misspelled setting
+command returns zero bytes exactly like a correct one. Every command in
+`setup_acquisition()` is correct as written:
+
+| Command | Verified |
+|---|---|
+| `ACQ:DEC <n>` | yes, readback via `ACQ:DEC?` |
+| `ACQ:SOUR<n>:COUP AC\|DC` | yes, both values |
+| `ACQ:SOUR<n>:GAIN LV\|HV` | yes, both values |
+| `ACQ:DATA:FORMAT BIN` | yes, readback via `ACQ:DATA:FORMAT?` |
+| `ACQ:DATA:Units RAW` | yes — see below |
+| `ACQ:AXI:DEC <n>` | yes, readback via `ACQ:AXI:DEC?` |
+
+**The units setting is a trap worth understanding.** It defaults to `VOLTS`,
+and `query_binary_int16()` decodes replies as big-endian int16. In `VOLTS` the
+board returns floats, so reinterpreting them as int16 gives the correct sample
+*count* and plausible magnitudes while being complete nonsense — a
+believable-wrong-answer failure. `ACQ:DATA:Units RAW` does take effect
+(confirmed by readback), so the code is right, but any future change here must
+keep format and units consistent.
+
+`ACQ:DATA:UNITS?`, `ACQ:DATA:Units?` and `ACQ:AXI:DATA:UNITS?` all return the
+same value, so the normal and AXI paths appear to share one units setting.
+`hardware.py` sets it on both paths, which is redundant but harmless.
 
 ### SCPI transport behaviour — matters for H1.5
 
