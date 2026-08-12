@@ -311,24 +311,106 @@ class RedPitaya:
         """
         return self.acquire_deep_2ch(n_samples, decimation, channels=(channel,))[0]
 
+    def acquire_deep_fast(self, n_samples: int = 1_000_000,
+                          decimation: int = 1,
+                          channels: tuple[int, ...] = (1, 2),
+                          port: int = 9999) -> list[np.ndarray]:
+        """
+        Deep capture, read back over the fast path. USE THIS, not
+        acquire_deep_2ch.
+
+        Verified 2026-08-10: driving 1 MHz then 2 MHz and capturing each gave
+        1.0000 and 2.0000 MHz back, amplitude 361 counts against 362 measured
+        independently, rms exactly amplitude/sqrt(2). Each capture tracks its
+        own drive, so this is live data rather than leftovers.
+
+        That result also settled what was wrong with acquire_deep_2ch: the DMA
+        capture itself was always fine, and the SCPI read of the AXI region is
+        what returns garbage. Same trigger and arming sequence here, different
+        read.
+
+        Requires scripts/rp_fastread.py running on the board.
+
+        TRIG:DLY IS A POST-TRIGGER SAMPLE COUNT, not a delay before starting.
+        It has to be at least n_samples or the tail of what you read is
+        whatever occupied the region beforehand -- which looks like a partly
+        corrupted capture rather than an error.
+
+        LIMITATION: reads from the start of each channel's region, which is
+        correct only because ACQ:TRig NOW fires immediately, so the capture
+        begins there. A laser-triggered capture with pre-roll (H6.4) writes
+        into a ring and the data will NOT start at offset 0; that needs
+        ACQ:AXI:SOUR<n>:Trig:Pos?, which currently returns 2139095040
+        (0x7F800000) and is evidently broken. Resolve before H6.
+        """
+        if not self.fast_read_available(port=port):
+            raise ConnectionError(
+                f"fast-read helper not running on {self.host}:{port}. Start it "
+                f"with: python3 /dev/shm/rp_fastread.py"
+            )
+
+        self.write("ACQ:RST")
+        self.write(f"ACQ:AXI:DEC {int(decimation)}")
+        self.decimation = int(decimation)
+
+        start = int(self.query("ACQ:AXI:START?"))
+        size = int(self.query("ACQ:AXI:SIZE?"))
+        per_ch = size // len(channels)
+        max_samples = per_ch // 2
+        if n_samples > max_samples:
+            print(
+                f"NOTE: requested {n_samples} samples, reserved region allows "
+                f"{max_samples} per channel. Truncating.",
+                file=sys.stderr,
+            )
+            n_samples = max_samples
+
+        for i, ch in enumerate(channels):
+            self.write(f"ACQ:AXI:SOUR{ch}:Trig:Dly {n_samples}")
+            self.write(f"ACQ:AXI:SOUR{ch}:SET:Buffer {start + i * per_ch},{per_ch}")
+            self.write(f"ACQ:AXI:SOUR{ch}:ENable ON")
+
+        self.write("ACQ:START")
+        self.write("ACQ:TRig NOW")
+        self.wait_until("ACQ:TRig:STAT?", "TD", what="deep acquisition trigger")
+        fill_timeout = 30.0 + 4 * n_samples * decimation / self.base_rate
+        self.wait_until(f"ACQ:AXI:SOUR{channels[0]}:TRIG:FILL?", "1",
+                        timeout=fill_timeout, what="deep memory fill")
+        self.write("ACQ:STOP")
+
+        out = []
+        try:
+            for i, ch in enumerate(channels):
+                out.append(self.fast_read(i * per_ch, n_samples * 2, port=port))
+        finally:
+            for ch in channels:
+                self.write(f"ACQ:AXI:SOUR{ch}:ENable OFF")
+        return out
+
     def acquire_deep_2ch(self, n_samples: int = 1_000_000, decimation: int = 1,
                          channels: tuple[int, ...] = (1, 2)) -> list[np.ndarray]:
         """
-        Deep capture on both channels simultaneously.
+        Deep capture on both channels, read back over SCPI.
 
-        *** NOT TRUSTWORTHY AS OF 2026-08-10. DO NOT BUILD ON THIS YET. ***
+        *** THE SCPI READ IS BROKEN. Use acquire_deep_fast() instead. ***
 
-        It worked once after a reboot -- 200000 samples/channel at decimation 2,
-        correct counts, IN1 at 1 MHz and IN2 at 2 MHz as driven -- and then
-        began returning railed data (min -2048, max +2047) that is
-        byte-identical at decimation 1 and 2. Two decimations cannot give
-        identical data from a live capture. With both outputs off, ordinary
-        acquire() reads a quiet 25-31 count band on the same input while this
-        returns full-scale noise, so it is reading stale or uninitialised DMA
-        memory rather than capturing. Suspect leftover state between calls
-        rather than a wrong command spelling, since the first call worked.
+        The arming and triggering below are correct -- acquire_deep_fast()
+        performs the identical sequence and returns good data. What fails is
+        the SCPI read of the AXI region at the end of this method. Reading the
+        same physical bytes directly gave a clean sine at the commanded
+        frequency while this returned structureless values, so the fault is in
+        the SCPI read path, not in the capture.
 
-        Two known defects, independent of that:
+        Kept for reference and in case the SCPI read is ever fixed or needed
+        on a board without the helper. Do not build on it.
+
+        Symptoms, for whoever revisits it: it worked once after a reboot, then
+        returned railed data (min -2048, max +2047) byte-identical at
+        decimation 1 and 2 -- which a live capture cannot produce. With both
+        outputs off, ordinary acquire() read a quiet 25-31 count band on the
+        same input while this returned full-scale noise.
+
+        Two further defects, independent of the read:
 
         * The ACQ:RST below wipes the coupling and gain that
           setup_acquisition() just applied. Any caller following the documented
@@ -340,7 +422,7 @@ class RedPitaya:
         Also note Trig:Dly is set to the full record below, so everything lands
         after the trigger and there is NO pre-roll. H6.4 requires pre-trigger
         data so the filter is settled when the sweep starts; this needs to
-        become a parameter.
+        become a parameter in acquire_deep_fast() too.
 
         See SESSION_LOG.md 2026-08-10 for the diagnosis.
         """

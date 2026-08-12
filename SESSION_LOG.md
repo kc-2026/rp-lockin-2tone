@@ -257,8 +257,35 @@ limitation disappears. Worth checking before anyone builds around 991.821 kHz.
      unbiased and quieter. Worth doing before quoting any noise figure from
      H3.3.
 
-**Deep memory: region enlarged successfully, but `acquire_deep_2ch` is NOT
-trustworthy.** This is the state to pick up from.
+**RESOLVED LATER THE SAME DAY — the DMA capture was always fine; the SCPI
+read was the broken part.** Read the section below for the diagnosis, then
+this correction: `acquire_deep_fast()` performs the identical arming and
+trigger sequence and returns good data. Verified by driving 1 MHz and then
+2 MHz and capturing each — recovered 1.0000 and 2.0000 MHz, amplitude 361
+counts against 362 measured independently, rms exactly amplitude/√2. Each
+capture tracks its own drive, so it is live data, not leftovers.
+
+So the fast read path fixed a correctness problem, not just a speed one. That
+was not the reason for building it and was not anticipated.
+
+**Two things learned while getting there, both of which cost time:**
+
+- **`ACQ:AXI:SOUR<n>:Trig:Dly` is a post-trigger SAMPLE COUNT, not a delay.**
+  Set it below the number of samples you intend to read and the tail of the
+  read is whatever occupied the region beforehand. My first attempt set it to
+  1000 and read a million samples; the result had the right min/max but an rms
+  of 63.6 where a full sine gives 255, and no coherent tone. It looked like a
+  broken capture and was a broken test.
+- **`ACQ:AXI:SOUR<n>:Trig:Pos?` returns 2139095040 = 0x7F800000**, the float32
+  bit pattern for infinity. Evidently broken. It does not matter yet because
+  `ACQ:TRig NOW` fires immediately and the capture starts at the region base,
+  so reading from offset 0 is correct. **It will matter for H6.4**, where a
+  laser-triggered capture with pre-roll writes into a ring and the data will
+  not start at offset 0.
+
+---
+
+**Original diagnosis, kept because the reasoning is still useful:**
 
 The DMA region change worked: `ACQ:AXI:SIZE?` now reports 134217728 (128 MiB),
 up from 2 MiB. 268 ms of two-channel capture at decimation 2.
