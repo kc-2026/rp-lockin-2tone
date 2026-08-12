@@ -275,12 +275,44 @@ Ruled out: our receive code (switching the accumulator from repeated
 nothing at all) and read size. `GBE_MB_PER_S = 100.0` is now
 `SCPI_MB_PER_S = 5.7`.
 
-**A 477 MB one-second sweep therefore takes ~84 s to transfer.** Acceptable for
-a burst measurement with gaps between sweeps, which is what ADR-0001 committed
-to — but H7.1's twenty repeats becomes half an hour of transfers, and anything
-interactive must expect it. If that becomes intolerable the options are
-decimation 4 (238 MB, ~42 s) or moving data off the board by some route other
-than SCPI; demodulating on the board is excluded by R7.
+**A 477 MB one-second sweep therefore takes ~84 s over SCPI — but this is
+fixable, and the fix is worth taking.**
+
+Edwin pushed back on the claim that the board's CPU was the limit, and he was
+right. Measured on the same cable, same board:
+
+| Path | Rate |
+|---|---:|
+| SCPI binary block | 5.7 MB/s |
+| Board writing its own RAM (`dd` to tmpfs) | 151 MB/s |
+| **Raw TCP, board RAM → this PC** | **87 MB/s** |
+
+**15× faster over a raw socket.** Neither the hardware nor the network is the
+constraint; it is something inside the SCPI server's data path. Note the SCPI
+payload is *already* raw binary — `FORMAT BIN`, 2 bytes per sample, verified by
+byte count — so this is not a text-encoding cost, which was my first guess and
+was wrong.
+
+At 87 MB/s a 477 MB sweep transfers in **5.5 s instead of 84 s**.
+
+**Proposed fast read path** (not yet built, needs a scope decision — see
+below). Keep SCPI for what it is good at: configuration, arming, triggering,
+all small commands where the 46 ms round trip is irrelevant. Replace only the
+bulk read. The captured samples sit at a known physical address
+(`ACQ:AXI:START?` = 0x1000000), so a small board-side helper can `mmap`
+`/dev/mem` and stream the region over a socket.
+
+Two things to work out when building it: the region is a ring buffer, so the
+wrap has to be handled using `ACQ:AXI:SOUR<n>:Trig:Pos?`; and each channel has
+its own contiguous sub-region, set by `ACQ:AXI:SOUR<n>:SET:Buffer`, so they do
+not need de-interleaving.
+
+**Scope decision needed.** `CLAUDE.md` says "Code and this agent both run on
+the control PC," and this would put a small data-pump script on the board.
+It is not FPGA work so R7 is untouched, but it is a genuine deviation from the
+stated architecture and should be agreed rather than assumed. The alternative
+is to accept 84 s per sweep, which is survivable for a burst measurement but
+makes H7.1 half an hour of transfers.
 
 *How this was nearly mis-reported, twice.* First I divided the whole
 `acquire_deep_2ch` call time by the bytes returned and called it a transfer

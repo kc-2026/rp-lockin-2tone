@@ -27,17 +27,20 @@ __all__ = ["CaptureOption", "plan_capture", "describe_capture_plan",
            "settling_points", "recommended_preroll"]
 
 # MEASURED 2026-08-10: 5.7 MB/s pulling deep-memory blocks over SCPI, six
-# consecutive 7.6 MB reads within 0.02 s of each other. This was 100.0 on the
-# assumption that a gigabit link sets the pace. It does not -- the link is
-# essentially idle. The bottleneck is the SCPI server on the board's ARM core,
-# which manages about 2.9 M samples/s moving data out of DMA into a socket.
-# Confirmed not to be our receive code: switching the accumulator from repeated
-# bytes concatenation to a joined chunk list changed nothing.
+# consecutive 7.6 MB reads within 0.02 s of each other.
 #
-# Consequence, and it is a big one: a 477 MB one-second sweep takes ~84 s to
-# transfer. Fine for a burst measurement with gaps between sweeps (ADR-0001),
-# but H7.1's twenty repeats is half an hour of transfers, and any interactive
-# workflow needs to expect it.
+# This is a limitation of the SCPI SERVER, not of the board or the link, and
+# the difference matters because it is fixable. Raw TCP from the board's RAM to
+# this PC measures 87 MB/s -- 15x faster -- over the same cable, and the board
+# writes its own RAM at 151 MB/s. Neither the hardware nor the network is the
+# constraint. Note the SCPI payload is already raw binary (FORMAT BIN, 2 bytes
+# per sample, verified by byte count), so this is not a text-encoding cost; it
+# is something inside the server's own data path.
+#
+# So a 477 MB one-second sweep is ~84 s over SCPI but would be ~5.5 s over a
+# raw socket. If the transfer time ever matters -- H7.1's twenty repeats is
+# half an hour over SCPI -- the fix is a raw read of the DMA region rather than
+# a change of decimation. See SESSION_LOG.md 2026-08-10.
 SCPI_MB_PER_S = 5.7
 
 
