@@ -216,6 +216,74 @@ class RedPitaya:
         self.write("ACQ:DATA:FORMAT BIN")
         self.write("ACQ:DATA:Units RAW")
 
+    # -- fast bulk read ----------------------------------------------------
+
+    def fast_read(self, offset: int, n_bytes: int, port: int = 9999,
+                  timeout: float = 120.0) -> np.ndarray:
+        """
+        Read raw samples straight from the capture buffer over a plain socket.
+
+        Requires scripts/rp_fastread.py to be running on the board. Measured
+        87 MB/s against 5.7 MB/s for the same bytes over SCPI -- a 477 MB sweep
+        is 5.5 s instead of 84 s. The SCPI payload is already raw binary, so
+        the difference is in the SCPI server's data path, not the encoding.
+
+        `offset` is relative to the AXI region base (ACQ:AXI:START?), not an
+        absolute physical address -- the board-side helper owns the base and
+        refuses anything outside its region.
+
+        Read only AFTER the capture has stopped. Reading while the DMA engine
+        is still writing returns torn data: not dangerous, just wrong.
+
+        Raises ConnectionError if the helper is not running, rather than
+        falling back to SCPI. A silent fallback would turn "the fast path
+        broke" into "everything got mysteriously slower", which is much harder
+        to notice.
+        """
+        try:
+            s = socket.create_connection((self.host, port), timeout=timeout)
+        except OSError as e:
+            raise ConnectionError(
+                f"no fast-read helper on {self.host}:{port} ({e}). Start it "
+                f"with: python3 /dev/shm/rp_fastread.py"
+            ) from e
+        with s:
+            s.settimeout(timeout)
+            s.sendall(f"GET {offset} {n_bytes}\n".encode("ascii"))
+            parts, have = [], 0
+            while have < n_bytes:
+                chunk = s.recv(1 << 20)
+                if not chunk:
+                    break
+                parts.append(chunk)
+                have += len(chunk)
+        if have != n_bytes:
+            raise ConnectionError(
+                f"fast read returned {have} of {n_bytes} bytes. The helper "
+                f"refuses out-of-range requests -- check offset + length "
+                f"against ACQ:AXI:SIZE?."
+            )
+        # LITTLE-endian here, BIG-endian in query_binary_int16. Not a typo and
+        # not yet proven: these are different things. SCPI hands over an
+        # IEEE 488.2 block in network byte order, whereas this reads the DMA
+        # region as the FPGA wrote it, and the ARM is little-endian. Verify by
+        # reading the same region both ways and comparing sample for sample --
+        # a wrong guess here does not fail, it returns byte-swapped values that
+        # still look like a plausible waveform.
+        return np.frombuffer(b"".join(parts), dtype="<i2").astype(np.float64)
+
+    def fast_read_available(self, port: int = 9999,
+                            timeout: float = 3.0) -> bool:
+        """Is the board-side helper running? Cheap PING, no data moved."""
+        try:
+            with socket.create_connection((self.host, port),
+                                          timeout=timeout) as s:
+                s.settimeout(timeout)
+                s.sendall(b"PING\n")
+                return s.recv(16).startswith(b"PONG")
+        except OSError:
+            return False
+
     # -- acquisition -------------------------------------------------------
 
     def acquire(self, channel: int = 1) -> np.ndarray:
