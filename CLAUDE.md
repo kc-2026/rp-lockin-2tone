@@ -55,9 +55,13 @@ This distinction matters more than usual here.
 
 | Area | Status |
 |---|---|
-| `src/rp_lockin/dsp.py` | **Trusted.** 62 offline tests. Do not change without re-running them. |
-| `waveforms.py`, `planning.py`, `emulator.py` | **Trusted.** Same suite. |
-| `src/rp_lockin/hardware.py` | **NEVER RUN AGAINST HARDWARE.** Written from docs. Expect SCPI spellings to be wrong. |
+| `src/rp_lockin/dsp.py` | **Trusted.** 74 offline tests. Do not change without re-running them. |
+| `planning.py`, `emulator.py` | **Trusted.** Same suite. |
+| `waveforms.py` — `make_am_table`, `plan_two_tone_grid` | **Trusted and hardware-verified.** Use these to drive the board. |
+| `waveforms.py` — `make_am_waveform`, `plan_two_tone` | **Sound arithmetic, WRONG hardware model.** Kept because their tests are worth having. Driving the board with them produces no output at all. |
+| `hardware.py` — SCPI transport, generator, `acquire`, `acquire_deep_fast` | **Verified against the board 2026-08-10.** |
+| `hardware.py` — `acquire_deep_2ch` | **The SCPI read is broken.** Arming is fine; the read returns garbage. Use `acquire_deep_fast`. |
+| `scripts/rp_fastread.py` | **Runs ON THE BOARD**, not the control PC. The one deliberate exception to "everything runs on the PC". |
 
 `hardware.py` is deliberately isolated from the maths so a wrong command string
 produces a connection error rather than corrupted physics. **Keep it that way.**
@@ -128,9 +132,10 @@ wrong answers rather than crashes:
   server → Run. Port 5000.
 - SSH access to the board is available for the device-tree change described in
   `docs/05-hardware-notes.md`. Rebooting the board is permitted.
-- **The OS version is not yet recorded.** Establish it in your first hardware
-  session and write it into `docs/05-hardware-notes.md` — every SCPI question
-  depends on it.
+- **OS version: 2.00, build 37** (Ubuntu 22.04.4, kernel 5.15.0-xilinx).
+  Recorded in `docs/05-hardware-notes.md`. It is in
+  `/opt/redpitaya/version.txt`, not `/etc/redpitaya_version`, which does not
+  exist on this image.
 
 ## Quick orientation
 
@@ -140,10 +145,60 @@ python -c "from rp_lockin import describe_capture_plan; print(describe_capture_p
 pytest -q
 ```
 
-## Current state
+## Current state — updated 2026-08-10
 
-Phase 0 (offline) is complete: 62 tests pass, no hardware touched.
-Phase 1 (H1, transport validation) has not started.
+Phase 0 complete. **Phase 1 substantially advanced**: H1 done, H2 done except
+the phase items, H5/H6 unblocked. 74 offline tests pass.
+
+| Test | State |
+|---|---|
+| H1 transport | done — OS 2.00, 250 MS/s confirmed by measurement, binary transfer verified |
+| H2.1–H2.3 transmit | done — AM lines exact, modulation depth 0.512/0.488 vs 0.500, worst spur −48.5 dBc |
+| H2.4 both channels | done |
+| H2.5 / Q6 phase | fails, **downgraded** — deliverable is amplitude only, see `06-open-questions.md` |
+| H3 receive / noise floor | **not started — do this next**, it predicts whether the real measurement works |
+| H4 trigger digitisation | not started |
+| H5 / H6 long capture | unblocked by `acquire_deep_fast`, not yet run at full length |
+
+**Three things bit hard this session and are worth knowing before you start:**
+
+1. The generator never worked as written — `make_am_waveform` models a device
+   this board is not. Fixed by `make_am_table`; see `03-frequency-plan.md`.
+2. **The drive frequencies are not round numbers.** The lock-in frequency is
+   **991.821 kHz, not 1 MHz.** Never hardcode `1e6`; use
+   `plan_two_tone_grid().difference`.
+3. Deep captures need `scripts/rp_fastread.py` running on the board. It lives
+   in `/dev/shm`, which is RAM, so **it disappears on every reboot.**
 
 `docs/06-open-questions.md` lists what is still undecided. If you resolve one,
 move it into the relevant doc and note it in the session log.
+
+## Getting the environment up
+
+`.venv/` is gitignored, so a fresh clone needs:
+
+```bash
+python -m venv .venv
+.venv/Scripts/python -m pip install -e ".[dev]"     # Windows
+.venv/bin/python -m pip install -e ".[dev]"         # Linux
+pytest -q                                            # expect 74 passed
+```
+
+Most machines here run Windows; keep the suite passing on it. One test uses
+`tracemalloc` rather than the Unix-only `resource` module for exactly that
+reason — do not "simplify" it back.
+
+## Talking to the board
+
+```bash
+export RP_HOST=rp-fffe42.local     # mDNS; the link-local IP changes on reconnect
+```
+
+- **SCPI does not auto-start after a reboot.** Web interface → Development →
+  SCPI server → Run. Port 5000.
+- **One persistent connection, always.** Opening a connection per command
+  wedges the server, and the symptom is multi-second latency that looks
+  exactly like a failing cable, not an error.
+- For deep captures, start the helper first:
+  `python3 /dev/shm/rp_fastread.py` (copy it over with `scp` if the board has
+  rebooted).
