@@ -55,7 +55,7 @@ This distinction matters more than usual here.
 
 | Area | Status |
 |---|---|
-| `src/rp_lockin/dsp.py` | **Trusted.** 74 offline tests. Do not change without re-running them. |
+| `src/rp_lockin/dsp.py` | **Trusted.** 76 offline tests. Do not change without re-running them. |
 | `planning.py`, `emulator.py` | **Trusted.** Same suite. |
 | `waveforms.py` — `make_am_table`, `plan_two_tone_grid` | **Trusted and hardware-verified.** Use these to drive the board. |
 | `waveforms.py` — `make_am_waveform`, `plan_two_tone` | **Sound arithmetic, WRONG hardware model.** Kept because their tests are worth having. Driving the board with them produces no output at all. |
@@ -145,10 +145,14 @@ python -c "from rp_lockin import describe_capture_plan; print(describe_capture_p
 pytest -q
 ```
 
-## Current state — updated 2026-08-10
+## Current state — updated 2026-08-12
 
-Phase 0 complete. **Phase 1 substantially advanced**: H1 done, H2 done except
-the phase items, H5/H6 unblocked. 74 offline tests pass.
+Phase 0 complete. **Phase 1 substantially advanced**: H1 done, H2 done (H2.5
+failed but was downgraded), H3.3 and H3.4 done. 76 offline tests pass.
+
+The fast-read helper on the board is what gates most of what is left. It lives
+in `/dev/shm` and so is gone after every reboot; there is no SSH key on the
+control PC, so restoring it currently needs a human.
 
 | Test | State |
 |---|---|
@@ -156,9 +160,25 @@ the phase items, H5/H6 unblocked. 74 offline tests pass.
 | H2.1–H2.3 transmit | done — AM lines exact, modulation depth 0.512/0.488 vs 0.500, worst spur −48.5 dBc |
 | H2.4 both channels | done |
 | H2.5 / Q6 phase | fails, **downgraded** — deliverable is amplitude only, see `06-open-questions.md` |
-| H3 receive / noise floor | **not started — do this next**, it predicts whether the real measurement works |
+| H3.1 / H3.2 amplitude, phase | **not started — do these next.** `acquire_deep_fast` is proven, so both are now straightforward |
+| H3.3 noise floor / Q8 | **done 2026-08-12 — σ = 2.96 µV per trace point; ≥30 µV of signal gives SNR 10** |
+| H3.4 √bandwidth law | **done 2026-08-12 — holds to 2–4% over 8× in bandwidth** |
+| H3.5 offset response | offline half done; board half not started |
 | H4 trigger digitisation | not started |
 | H5 / H6 long capture | unblocked by `acquire_deep_fast`, not yet run at full length |
+
+**Two numbers from H3.3 not to re-derive or guess at:**
+
+- **The demodulator's noise gain is 4232.7 Hz, 1.88× the nominal 2250 Hz
+  bandwidth.** Converting an input noise density to output scatter with the
+  −3 dB bandwidth instead understates the noise by 37%. Pinned by
+  `test_quadrature_noise_gain_matches_filter_chain`.
+- **A switching-supply harmonic sits 17.9 kHz from the lock-in frequency, and
+  it is ~32 µV — 11× the noise floor.** Rejected by >200 dB today, but only
+  **1.77%** of switcher drift from landing on it, where it would look like a
+  strong, clean, steady DUT response rather than interference.
+  **504.868 kHz and its multiples are off limits for any future
+  difference frequency**, with several kHz of margin.
 
 **Three things bit hard this session and are worth knowing before you start:**
 
@@ -199,6 +219,26 @@ export RP_HOST=rp-fffe42.local     # mDNS; the link-local IP changes on reconnec
 - **One persistent connection, always.** Opening a connection per command
   wedges the server, and the symptom is multi-second latency that looks
   exactly like a failing cable, not an error.
-- For deep captures, start the helper first:
-  `python3 /dev/shm/rp_fastread.py` (copy it over with `scp` if the board has
-  rebooted).
+- For deep captures, start the helper first. It lives in `/dev/shm`, which is
+  RAM, so **it is gone after every reboot** and these two commands are the
+  routine. Key-based SSH was installed on the control PC on 2026-08-12, so this
+  needs no password and no human:
+
+  ```bash
+  scp scripts/rp_fastread.py root@rp-fffe42.local:/dev/shm/
+  ssh -n root@rp-fffe42.local "nohup setsid python3 /dev/shm/rp_fastread.py > /dev/shm/rp_fastread.log 2>&1 < /dev/null &"
+  ```
+
+  `setsid` and the redirects matter: without them the helper dies when the SSH
+  session closes, which looks identical to "the helper was never started".
+  Confirm with `RedPitaya.fast_read_available()`, and read
+  `/dev/shm/rp_fastread.log` if it says False. Stop it cleanly by sending
+  `QUIT\n` to port 9999.
+
+- **The board's root filesystem is currently mounted read-write**, apparently
+  left that way by the 2026-08-10 device-tree edit. That is why the documented
+  `rw` step appears unnecessary — and note `rw`/`ro` are interactive shell
+  shortcuts that do not exist in a one-shot `ssh host "..."` command; use
+  `mount -o remount,rw /` there. A permanently writable root on an SD card is a
+  mild corruption risk on power loss; worth putting back with
+  `mount -o remount,ro /` once the device-tree work is finished.

@@ -299,6 +299,120 @@ point rather than a wall, and if `ACQ:AVG` applies to the AXI path its boxcar
 nulls fall near 62.5 MHz, which would suppress the fold further. Both are
 unverified — measure in H3.3/H3.4 before relying on any of it.
 
+## Measured noise floor and the on-board spur family — 2026-08-12 (H3.3)
+
+Outputs off, loopback cables fitted, DC coupled, decimation 2.
+
+| | IN1 | IN2 |
+|---|---:|---:|
+| Density at 991.821 kHz, ±1 V range | **45.6 nV/√Hz** | 52.5 nV/√Hz* |
+| σ per quadrature at operating bandwidth | **2.96 µV** | 3.42 µV* |
+| Density at 991.821 kHz, ±20 V range | 697 nV/√Hz* | 624 nV/√Hz* |
+| σ per quadrature, ±20 V range | 45.4 µV* | 40.6 µV* |
+
+IN1 on ±1 V is **measured directly** off a 256 ms deep capture: demodulate the
+record, take the scatter of X and Y (2.961 and 2.957 µV, agreeing to 0.1%). A
+second, independent route — measure the noise density and convert it with the
+demodulator's noise gain — gave 3.16 µV, agreeing to 6%. \*Starred figures come
+from the density route only and are likely ~6% high for the same reason.
+
+Repeatable to 0.2%. Raw record σ is 0.68 counts against 0.289 counts for ideal
+12-bit quantisation, so the floor is analog, not quantisation — though
+quantisation is ~18% of the variance and not negligible.
+
+**σ scales as √ENBW to ~1.5%**, confirmed on real data across a factor of 8 in
+bandwidth (H3.4). Scale by √ENBW, not √(nominal bandwidth), which is only good
+to 4% because the ENBW/bandwidth ratio drifts with bandwidth.
+
+### The switching-supply spur family — the one real hazard H3.3 found
+
+Present on both inputs **with the outputs off**. Measured at 59.6 Hz resolution,
+with the amplitude estimator validated against an injected tone of known size
+(recovered to 0.2%):
+
+| | Centre | FWHM | Amplitude | vs σ | Offset from f_lockin |
+|---|---:|---:|---:|---:|---:|
+| Fundamental | **504 867.6 Hz** | 335 Hz | **33.7 µV** | 11.4× | −486.95 kHz |
+| 2nd harmonic | **1 009 737.7 Hz** | 451 Hz | **32.2 µV** | 10.9× | **+17.92 kHz** |
+| 3rd harmonic | 1 514 602.7 Hz | 750 Hz | 18.0 µV | 6.1× | +522.78 kHz |
+
+**Nothing reaches the trace today** — the demodulator rejects a component
+17.9 kHz off frequency by more than 200 dB, and at 59.6 Hz resolution there is
+no line at all inside the ±2250 Hz measurement band (worst in-band bin 1.44× the
+local floor, which is just what the maximum of 75 noise bins looks like).
+
+**But the margin is a frequency margin, not a rejection margin, and the stakes
+are higher than they look.** A **−1.77% drift** of the fundamental (504.868 →
+495.911 kHz) puts the second harmonic exactly on 991.821 kHz, where there is no
+rejection at all. It would then read as a **32 µV steady amplitude — 11× the
+noise floor, and squarely inside the 30 µV range we would call a healthy real
+signal.** It would not look like interference; it would look like a strong,
+clean, steady DUT response. So:
+
+- **504.868 kHz and its multiples are a forbidden zone for any future choice of
+  difference frequency**, with several kHz of margin (relevant to Q9, which
+  contemplates lower values). The present 991.821 kHz is safe by luck, not by
+  design.
+- Short-term the line is stable: it held to within one 476 Hz bin across all
+  eight sub-segments of a 256 ms record, and its 335 Hz width implies only
+  ~0.07% jitter — 25× less than the 1.77% needed. **But 256 ms says nothing
+  about hours, load, or temperature**, and a switcher moving a few percent over
+  its full range is ordinary. **Re-measure the fundamental after the board has
+  been warm and loaded for some hours** and confirm it has not walked toward
+  495.9 kHz.
+
+An earlier coarse-resolution pass put this family at 505.447 kHz with a ~4 µV
+amplitude. Both were wrong: a 450 Hz-wide line smeared across a 7.6 kHz bin
+reads about 8× too low, and the frequencies were bin centres rather than
+measurements. **Do not size a narrow line from a coarse spectrum.**
+
+### Do not read broadband noise at high decimation
+
+Measured at the same input on the same afternoon, the floor near 991.8 kHz
+"improved" on IN1 from 52 to 17 nV/√Hz going from decimation 2 to 64, while on
+IN2 it "worsened" from 54 to 134. At decimation 2 the two channels agree within
+5%; at decimation 64 they disagree by 60×. Both trends are artefacts — folding
+of 2–60 MHz into the reduced band, plus whatever averaging the FPGA applies at
+high decimation. **This settles the "unverified" caveat on the decimation 4
+fallback above: do not use a high-decimation noise measurement to justify it.**
+
+High decimation *is* good for one thing: locating discrete lines. A 16384-sample
+buffer at decimation 64 covers 4.19 ms and so resolves 238 Hz, and a real line
+holds its frequency as fs changes whereas a folded one moves. That is how the
+505.447 kHz family above was pinned without any deep capture.
+
+### `ACQ:RST` resets gain to LV and coupling to DC — measured
+
+Forced `ACQ:SOUR1:GAIN HV`, sent `ACQ:RST`, read back `LV`. It also resets
+`ACQ:DEC` to 1, `ACQ:DATA:FORMAT` to `ASCII` and units to `VOLTS`.
+
+This makes the documented defect precise: `acquire_deep_fast` and
+`acquire_deep_2ch` both call `ACQ:RST` and so discard whatever
+`setup_acquisition` applied. **For LV/DC work that is harmless, because LV/DC is
+exactly what the reset lands on.** It would silently ruin an HV or AC-coupled
+deep capture — the capture would succeed and be wrong by 20×. `ACQ:AXI:DEC` is
+set explicitly after the reset, so the decimation survives.
+
+### The fast-read path's little-endian decode is proven
+
+`fast_read()` decodes little-endian while `query_binary_int16()` decodes
+big-endian, and `hardware.py` flagged this as "not yet proven". It is now
+proven, and the method matters: a byte-swapped *noise* record still looks like
+noise, just with the wrong amplitude, so a waveform test proves less than you
+would think. The check is to compare the deep record's raw σ against a plain
+`acquire()` on the same quiet input — 0.6797 against 0.6781 counts, a ratio of
+1.002, where a byte swap would be off by ~100×. **Re-check it that way after any
+change to that decode.**
+
+### Use a median, not a mean, for a noise floor
+
+A mean density over a window around the lock-in frequency silently absorbs any
+spur in that window. The first pass of H3.3 averaged over ±38 kHz, swallowed the
+1010.895 kHz harmonic, and reported 6.2 µV instead of 3.16 µV — wrong by 2×,
+with nothing looking wrong. A median ignores lines. The mean/median ratio is
+itself the useful diagnostic: it ran 2.1–2.4 at decimation 2, which is the tell
+that a line is present.
+
 ## SCPI notes
 
 Enable the server: web interface → Development → SCPI server → Run. Port 5000.

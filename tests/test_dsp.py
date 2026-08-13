@@ -279,6 +279,78 @@ def test_reference_channel_removes_capture_start_phase():
 
 
 # --------------------------------------------------------------------------
+# Noise gain -- the conversion H3.3's noise floor depends on
+# --------------------------------------------------------------------------
+
+def test_quadrature_noise_gain_matches_filter_chain():
+    """Input noise density -> quadrature variance must stay predictable.
+
+    H3.3 measures a noise DENSITY on the board and converts it to the scatter
+    on one demodulated quadrature, which is what limits an amplitude reading.
+    The conversion factor is fs * sum(h_eff^2) for the cascaded impulse
+    response: with a one-sided input density S, var(X) = S * fs * sum(h_eff^2).
+
+    At the operating point (125 MS/s, 5000 Sa/s out) that factor is 4233 Hz --
+    1.88x the nominal 2250 Hz bandwidth, so anyone assuming the two are equal
+    understates the noise by 37%. This test exists because a change to the
+    filter design would silently move the factor and quietly invalidate every
+    noise figure derived from it, with nothing failing.
+    """
+    from scipy import signal as sps
+
+    fs, output_rate = 125e6, 5000.0
+    bandwidth = 0.9 * output_rate / 2
+    decim = int(round(fs / output_rate))
+
+    stages, _ = dsp_mod._design_filter_chain(fs, bandwidth, decim)
+    h, upsample = np.array([1.0]), 1
+    for taps, f in stages:
+        if upsample > 1:
+            stuffed = np.zeros((len(taps) - 1) * upsample + 1)
+            stuffed[::upsample] = taps
+        else:
+            stuffed = taps
+        h = sps.fftconvolve(h, stuffed)
+        upsample *= f
+    analytic = fs * float(np.sum(h ** 2))
+
+    assert analytic == pytest.approx(4232.7, rel=1e-3), (
+        f"quadrature noise gain moved to {analytic:.1f} Hz from 4232.7 Hz. The "
+        f"filter chain changed; H3.3's noise floor and any SNR derived from it "
+        f"must be recomputed. See SESSION_LOG.md 2026-08-12."
+    )
+
+    # Independently: push known white noise through the real demodulate() call.
+    rng = np.random.default_rng(20260812)
+    sigma_in = 100.0
+    n = (108 + 900) * decim
+    r = demodulate(rng.normal(0.0, sigma_in, n), fs, 991821.2890625,
+                   output_rate=output_rate)
+    empirical = 0.5 * (r.X.var(ddof=1) + r.Y.var(ddof=1)) / (
+        sigma_in ** 2 / (fs / 2))
+    assert empirical == pytest.approx(analytic, rel=0.06)
+
+
+def test_magnitude_is_biased_upward_in_pure_noise():
+    """R = hypot(X, Y) reads ~1.25 sigma with NO signal present.
+
+    X and Y are independent and zero-mean in noise, so R is Rayleigh: its mean
+    is sigma*sqrt(pi/2), never zero. Quoting mean(R) from a signal-free record
+    therefore reports an amplitude that does not exist, and quoting it as the
+    noise floor overstates the uncertainty on a real amplitude by 25%. The
+    honest figure is the per-quadrature standard deviation.
+    """
+    rng = np.random.default_rng(7)
+    fs, output_rate = 125e6, 5000.0
+    decim = int(round(fs / output_rate))
+    r = demodulate(rng.normal(0.0, 50.0, (108 + 900) * decim), fs,
+                   991821.2890625, output_rate=output_rate)
+    sigma = 0.5 * (r.X.std(ddof=1) + r.Y.std(ddof=1))
+    assert r.R.mean() == pytest.approx(np.sqrt(np.pi / 2) * sigma, rel=0.05)
+    assert r.R.min() > 0
+
+
+# --------------------------------------------------------------------------
 # Input validation
 # --------------------------------------------------------------------------
 

@@ -418,3 +418,312 @@ noise measurement.
 
 **Test suite:** 74 passing, up from 62. The 12 new ones pin the real ASG model
 so it cannot silently regress.
+
+---
+
+## 2026-08-12 — Claude (Claude Code) — H3.3 done: noise floor measured, Q8 answered
+
+**Goal:** H3.3 — the noise floor at the lock-in frequency, the number that
+predicts whether the real measurement can work. Loopback only; both cables
+(OUT1→IN1, OUT2→IN2) fitted; nothing else connected; outputs off throughout.
+
+**Answer, and it is good news.** At the operating point (decimation 2, DC
+coupled, LV range, outputs off, loopback cables attached):
+
+| | IN1 (signal) | IN2 (trigger) |
+|---|---:|---:|
+| Input noise density @ 991.821 kHz | **45.6 nV/√Hz** | 52.5 nV/√Hz* |
+| σ per quadrature, operating bandwidth | **2.96 µV** | 3.42 µV* |
+| As a fraction of the ±1 V range | 2.96 ppm | 3.42 ppm* |
+
+IN1 is the number that matters and is **measured directly** off a 256 ms
+deep capture. *IN2's figures come from the short-capture density route only
+and are likely ~6% high, for the same reason IN1's first pass was — see the
+deep-capture section at the end of this entry. IN2 carries the trigger
+train, where a few percent of amplitude noise is irrelevant, so it was not
+re-measured.
+
+Repeat-to-repeat spread 0.2%, so this is a stable property of the instrument,
+not one lucky moment. On the HV (±20 V) range: 697 nV/√Hz → σ = 45 µV, which is
+14× worse in absolute volts but slightly *better* as a fraction of range
+(2.3 ppm), so choosing HV costs nothing in relative precision — it only matters
+if the signal is small enough to fit in ±1 V, where LV wins outright.
+
+**What it means in one line: an intermodulation signal of ≥30 µV amplitude at
+the ADC input gives SNR 10 on every one of the 5000 trace points, with no
+averaging across sweeps.** That is the number to hand whoever answers Q11.
+Below ~3 µV a single sweep cannot see it at all.
+
+**Did:**
+- Confirmed the offline suite green (74) before touching hardware, and again
+  after (76 — two new tests, below).
+- Probed board state read-only. Region is still the 128 MB from 2026-08-10.
+  `ACQ:DATA:FORMAT?` read `ASCII` and units `VOLTS` on connect, i.e. a fresh
+  SCPI server since the reboot; `setup_acquisition` correctly sets BIN/RAW.
+- Measured the floor with averaged Welch periodograms of many short captures,
+  at decimations 2/8/16/32/64, both channels, LV and HV.
+- Measured the demodulator's off-frequency rejection offline (the offline half
+  of **H3.5**).
+
+**Learned (the parts worth keeping):**
+
+1. **The demodulator's noise gain is 4232.7 Hz, not the nominal 2250 Hz
+   bandwidth — a factor of 1.88.** With a one-sided input density S,
+   var(X) = S · fs · Σh_eff² where h_eff is the cascaded impulse response.
+   Anyone equating noise bandwidth with the −3 dB bandwidth understates the
+   noise by √1.88 = 37%. Established three independent ways that agree to
+   1.5%: analytically, empirically through the real `demodulate()` on
+   known-density white noise, and by Welch periodogram (which recovers a known
+   input density to 0.2%). **Now pinned by
+   `test_quadrature_noise_gain_matches_filter_chain`** — if the filter design
+   ever changes, that test fails and says to recompute this section, because
+   nothing else would notice.
+
+2. **There is a switching-supply spur family on both inputs, with the outputs
+   off: 505.447 kHz fundamental, harmonics at 1010.895 and 1516.342 kHz.**
+   Present on IN1 and IN2 alike, stable in frequency, 20–60× the local noise
+   floor in density. The second harmonic sits **+19.073 kHz from the lock-in
+   frequency**. It is *not* a problem now: measured offline, the demodulator
+   attenuates a component at that offset by **−204 dB**. Nothing reaches the
+   trace.
+
+   **But record the margin, because it is thinner than −204 dB suggests.** The
+   rejection is a property of the *offset*, not of the spur. If the switching
+   frequency drifted 1.9% (505.447 → 495.91 kHz) its second harmonic would land
+   exactly on 991.821 kHz, where there is no rejection at all. Integrating the
+   observed line power over the measurement bandwidth, it would then appear as
+   a **~4 µV steady amplitude — comparable to the 3.16 µV noise floor, and it
+   would look like a real, constant DUT response rather than noise.** Two
+   consequences:
+   - **Anyone who changes the difference frequency must avoid 505.447 kHz and
+     its multiples.** `03-frequency-plan.md` offers lower difference
+     frequencies for Q9; 505.447 kHz is now a forbidden zone. The current
+     991.821 kHz is safe by luck, not by design.
+   - Worth a re-check under different thermal/load conditions before trusting
+     the margin, since switcher frequencies move with both.
+
+3. **My own first pass got the floor wrong by 2×, in the believable direction.**
+   I averaged the density over ±38 kHz around the lock-in frequency, which
+   swallowed the 1010.895 kHz spur, and reported 6.2 µV instead of 3.16 µV.
+   Nothing looked wrong. **Use a median, not a mean, for a noise floor** — a
+   median ignores discrete lines and a mean silently absorbs them. Both are
+   printed side by side in the scan output for exactly this reason (the
+   mean/median ratio ran 2.1–2.4 at decimation 2, which is the tell).
+
+4. **Do not read broadband noise at high decimation.** The floor "improved" on
+   IN1 (52 → 17 nV/√Hz from decimation 2 to 64) and "worsened" on IN2
+   (54 → 134) over the same range. Both are artefacts of folding and of
+   whatever averaging the FPGA applies at high decimation; they diverge by 60×
+   at decimation 64 while agreeing within 5% at decimation 2. High decimation
+   is still perfectly good for *locating discrete lines* — that is how the spur
+   family above was pinned to 505.447 kHz from a 16384-sample buffer — because
+   a real line keeps its frequency as fs changes whereas a folded one moves.
+   Use it for that and nothing else.
+
+5. **The Rayleigh bias flagged in the 2026-08-10 log is real and confirmed to
+   0.7%.** With no signal, mean(R) reads 1.2533σ and never zero — on IN1 that
+   is an apparent 3.96 µV "signal" that does not exist. The honest noise figure
+   is the per-quadrature σ, which is also exactly what limits a real amplitude
+   reading. Pinned by `test_magnitude_is_biased_upward_in_pure_noise`.
+
+6. Quantisation is a real but minor contributor, not the limit: raw σ is
+   0.68 counts at decimation 2 against 0.289 counts for ideal 12-bit
+   quantisation, so quantisation is ~18% of the variance. The floor is analog.
+
+7. DC offsets, for reference: IN1 sits at +27 counts, IN2 at +2 counts on LV.
+   Irrelevant at 991 kHz, but a large offset would matter for H4's edge
+   thresholds.
+
+**Board facts unchanged:** `RP_HOST=rp-fffe42.local`, port 5000 open, SCPI
+healthy at ~50 ms round trip, DMA region 128 MB at 0x1000000.
+
+**Broke / still broken:**
+- Nothing broken this session. No code changed except two added tests.
+- `tests/hardware/test_loopback.py` **is stale and would mislead.** It still
+  imports `plan_two_tone` and `make_am_waveform` — the pair CLAUDE.md marks as
+  the wrong hardware model — and `PLAN = plan_two_tone(difference=1e6)` at
+  module scope hardcodes the 1 MHz that the 2026-08-10 session established is
+  actually 991.821 kHz. Its H3 test also calls `acquire_deep`, which routes to
+  the broken `acquire_deep_2ch`. Not touched, because fixing it is a task in
+  its own right and it is skipped without `RP_HOST`. **Do not trust it as a
+  record of what passes.**
+- `scripts/plan.py` still computes settling at 250 MS/s (reports 113 points
+  instead of 108). Errs safe, unchanged from 2026-08-10.
+
+**What H3.3 does NOT cover — read this before quoting the number:**
+
+1. **The end-to-end confirmation is not done.** The floor was measured as a
+   density and converted to a per-quadrature σ using the noise gain above. That
+   conversion is validated three ways against the real `demodulate()` code
+   path, but it has not been confirmed by demodulating one long contiguous
+   board capture and measuring the scatter directly. That needs deep memory,
+   which needs `scripts/rp_fastread.py` running on the board, which needs SSH —
+   and **there is no SSH key installed on this PC, so the helper could not be
+   restored** (`Permission denied (publickey,password)`, and a password cannot
+   be typed non-interactively). Left for whoever has credentials. Everything
+   else in H3.3 was achievable without it because noise statistics do not need
+   a contiguous record.
+2. **The input was not 50 Ω terminated.** H3.3 as written says "input
+   terminated"; what was measured is the input with the **loopback cable
+   fitted and the output commanded off**, since that is the wiring in place and
+   changing it needs a human. **Edwin accepted this as the operative
+   configuration on 2026-08-12** rather than spend a rewiring round trip on a
+   50 Ω terminator, on the grounds that it is the wiring the rest of Phase 1
+   runs in. So the question below stays open by choice, not by oversight. So the figure includes whatever the OUT1 stage
+   emits when off. It is the right number for the rest of Phase 1, which runs
+   with those cables on. Separating the receiver's own floor from DAC leakage
+   needs a 50 Ω terminator in place of the cable. That IN1 and IN2 agree within
+   8% is weak evidence the floor is front-end dominated rather than
+   output-stage dominated.
+3. **Spur resolution inside the measurement band is limited to 238 Hz**, from
+   4.19 ms at decimation 64. No line was found within ±2250 Hz of the lock-in
+   frequency at any decimation (in-band peaks ran 0.9–1.4× the local floor,
+   i.e. nothing). A line narrower than 238 Hz and weaker than ~5× the floor
+   could still hide. A deep capture would settle it.
+4. **AC coupling unmeasured.** DC was used throughout, matching
+   `setup_acquisition`'s default and the operating point.
+5. **Absolute volts carry ~13% unresolved uncertainty.** Counts were converted
+   at the nominal 2048 counts/V for LV. The 2026-08-10 log records a measured
+   round-trip figure of ~1818 counts/V, 13% away. That figure conflates the
+   DAC's real output amplitude with the ADC's scale, so it is not necessarily
+   the ADC scale — but until someone measures the ADC scale against a
+   calibrated source, every absolute voltage here inherits that uncertainty.
+   **All the counts figures, and every SNR ratio, are unaffected.**
+
+**Next:**
+1. **H3.1 and H3.2**, which H3.3 skipped ahead of and which need no new
+   hardware: amplitude linearity across a decade, and phase stability within a
+   capture. Both run off `acquire_deep_fast`, so both want the helper too.
+2. **Restore `scripts/rp_fastread.py`** (`scp` to `/dev/shm`, then
+   `python3 /dev/shm/rp_fastread.py`) and either install an SSH key on this PC
+   or have a human start it. This now gates H3.1, H3.2, H3.4, H5 and H6 — it is
+   the single highest-value unblock available.
+3. **H3.4** — the √bandwidth law on real data. Straightforward once a long
+   capture exists: demodulate one record at several bandwidths and confirm σ
+   halves per 4× bandwidth reduction. The offline half is already covered by
+   the existing noise-scaling test.
+4. **H3.5** — the offline half is done (rejection table below); confirm on the
+   board by driving a tone offset from the lock-in frequency.
+5. Re-check the 505.447 kHz switcher frequency when the board has been running
+   under different load/temperature, per finding 2.
+
+**Measured off-frequency rejection of the demodulator** (offline, operating
+point, unit-amplitude tone at f_lockin + offset). Note the response is already
+−12 dB at the nominal 2250 Hz "bandwidth", so the effective passband is
+narrower than the nominal figure even though the *noise* bandwidth is wider:
+
+| Offset | Recovered | Attenuation |
+|---:|---:|---:|
+| 0 Hz | 1.0000 | 0.0 dB |
+| 1 kHz | 0.9999 | −0.0 dB |
+| 2.25 kHz | 0.2500 | −12.0 dB |
+| 3 kHz | 6.5e−7 | −124 dB |
+| 10 kHz | 1.9e−7 | −134 dB |
+| **19.073 kHz** | **6.1e−11** | **−204 dB** ← the supply harmonic |
+| 38.146 kHz | 7.6e−13 | −242 dB |
+
+### CONFIRMED BY DEEP CAPTURE, LATER THE SAME DAY — and one figure above was badly wrong
+
+Edwin started `rp_fastread.py` by hand, which unblocked everything the section
+above listed as pending. One contiguous 32 M-sample capture (256 ms, IN1,
+decimation 2, LV, DC, outputs off) settled all of it. **The headline table above
+has been updated to these numbers; what follows is what changed and why.**
+
+**1. The noise floor is confirmed, and slightly better than reported: σ = 2.96 µV
+measured DIRECTLY, against 3.16 µV predicted via the density route.** The direct
+measurement demodulates the real record and takes the scatter of X and Y, with
+no conversion factor at all: σ_X = 2.961 µV, σ_Y = 2.957 µV — agreeing with each
+other to 0.1%, which is itself a good sign. The 6% gap from the density route is
+explained: the short-capture median was taken over only ~16 bins of 7.6 kHz and
+sat slightly high on spur skirts, whereas the deep record gives ~2000 bins of
+59.6 Hz and a clean median of **45.6 nV/√Hz** against the earlier 48.5. **Use
+2.96 µV and 45.6 nV/√Hz.** The density route was right to 6%, which is a fair
+validation of the method, but the direct number is the one to quote.
+
+**2. H3.4 passes on real data.** Demodulating the same record at four
+bandwidths:
+
+| Bandwidth | ENBW | σ (µV) | σ ratio | √(bandwidth ratio) | agreement |
+|---:|---:|---:|---:|---:|---:|
+| 2250 Hz | 4232.7 | 2.96 | 1.0000 | 1.0000 | — |
+| 1125 Hz | 2009.0 | 2.01 | 0.6778 | 0.7071 | 0.959 |
+| 562.5 Hz | 1027.4 | 1.45 | 0.4908 | 0.5000 | 0.982 |
+| 281.25 Hz | 507.5 | 1.02 | 0.3453 | 0.3536 | 0.977 |
+
+So σ ∝ √bandwidth holds to 2–4%. The residual is not error: ENBW does not scale
+exactly with the nominal bandwidth (the ratio drifts from 1.881 to 1.804 across
+this range), and σ tracks **√ENBW** to ~1.5%, better than it tracks √bandwidth.
+If you need the noise at some other bandwidth, scale by √ENBW, not by
+√bandwidth.
+
+**3. The Rayleigh bias is confirmed on real board noise, not just synthetic:**
+mean(R) = 3.723 µV against 1.2533σ = 3.708 µV, a ratio of 1.0039.
+
+**4. `fast_read`'s little-endian decode is now PROVEN, and the way it was proven
+is worth reusing.** `hardware.py` said the little-endian/big-endian split
+between `fast_read` and `query_binary_int16` was "not a typo and not yet
+proven" — and a byte-swapped *noise* record still looks exactly like noise, just
+with the wrong amplitude, so nothing would have complained. The check: the deep
+record's raw σ is 0.6797 counts against 0.6781 from a plain `acquire()` on the
+same quiet input, a ratio of 1.002. A byte swap would be off by ~100×, not 0.2%.
+The docstring has been updated. **Any future change to that decode should be
+re-checked the same way — against `acquire()` on a quiet input, not against a
+waveform, where a plausible-looking result proves less.**
+
+**5. `ACQ:RST` resets gain to LV and coupling to DC** (measured: forced HV, then
+`ACQ:RST`, then read back LV). It also resets `ACQ:DEC` to 1, the format to
+ASCII and units to VOLTS. So the documented defect — that `acquire_deep_fast`
+and `acquire_deep_2ch` wipe what `setup_acquisition` applied — **is harmless for
+LV/DC work, because that is exactly what it resets to.** It would silently ruin
+an HV or AC-coupled deep capture. `ACQ:AXI:DEC` is set after the reset, so the
+decimation is fine. Recorded in `05-hardware-notes.md`.
+
+**6. Nothing is inside the measurement band.** At 59.6 Hz resolution the worst
+in-band bin is 1.44× the local floor, which is what the maximum of 75 noise bins
+looks like with 15 averages. Integrating the in-band excess as if it were a line
+gives 1.09 µV, which is what integrating positive noise scatter always gives —
+not a detection. Caveat 3 of the section above is now closed.
+
+**7. THE SPUR IS ~8× BIGGER THAN I REPORTED, and this is the one finding here
+that raises the stakes rather than lowering them.** With the line properly
+resolved and its power integrated (estimator validated against an injected tone
+of known amplitude, recovered to 0.2%):
+
+| | Centre | FWHM | Amplitude | vs σ | Offset from f_lockin |
+|---|---:|---:|---:|---:|---:|
+| Fundamental | **504 867.6 Hz** | 335 Hz | **33.7 µV** | 11.4× | −486.95 kHz |
+| 2nd harmonic | **1 009 737.7 Hz** | 451 Hz | **32.2 µV** | 10.9× | **+17.92 kHz** |
+| 3rd harmonic | 1 514 602.7 Hz | 750 Hz | 18.0 µV | 6.1× | +522.78 kHz |
+
+The earlier "~4 µV" estimate came from a coarse-resolution density and was wrong
+by a factor of 8: a 450 Hz-wide line smeared across a 7.6 kHz bin reads far
+lower than it is. **Correct figure: ~32 µV.** The offset also moves from the
+estimated +19.07 kHz to a measured **+17.92 kHz**, and the fundamental from
+505.447 to 504.868 kHz — the coarse values were bin centres, not measurements.
+
+**Why this matters more than the first pass suggested.** The rejection is
+unchanged and still total (>200 dB at this offset — the offline table brackets
+it at −277 dB by 17.5 kHz), so **nothing reaches the trace today.** But the
+consequence *if* it ever landed in band is now much worse than recorded: a
+32 µV apparent amplitude is **11× the noise floor and squarely in the middle of
+the 30 µV range we would call a healthy real signal.** It would not look like
+interference. It would look like a strong, clean, steady DUT response. Combined
+with the drift figure below, this is the single most dangerous failure mode H3.3
+has turned up:
+
+- **A −1.77% drift of the fundamental** (504.868 → 495.911 kHz) puts the second
+  harmonic exactly on 991.821 kHz. The third harmonic needs −34.5% and is not a
+  concern.
+- Short-term the line is stable: the peak held to within one 476 Hz bin across
+  all eight sub-segments of the 256 ms record, and the 335 Hz FWHM implies
+  jitter of only ~0.07%. That is 25× smaller than the 1.77% needed. **But
+  256 ms says nothing about hours, load, or temperature**, and a switching
+  regulator moving a few percent over its full range is ordinary.
+
+**Recommended, and not done here:** re-measure the fundamental after the board
+has been powered for some hours and while something is loading it (a long deep
+capture running, say), and confirm it has not walked toward 495.9 kHz. If it
+ever does, the fix is cheap and known — move the difference frequency, which
+`plan_two_tone_grid` can re-snap — but only if someone is watching for it.
+**Anyone choosing a new difference frequency must avoid 504.868 kHz and its
+multiples, with a margin of several kHz.**

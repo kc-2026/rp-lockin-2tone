@@ -263,13 +263,18 @@ class RedPitaya:
                 f"refuses out-of-range requests -- check offset + length "
                 f"against ACQ:AXI:SIZE?."
             )
-        # LITTLE-endian here, BIG-endian in query_binary_int16. Not a typo and
-        # not yet proven: these are different things. SCPI hands over an
-        # IEEE 488.2 block in network byte order, whereas this reads the DMA
-        # region as the FPGA wrote it, and the ARM is little-endian. Verify by
-        # reading the same region both ways and comparing sample for sample --
-        # a wrong guess here does not fail, it returns byte-swapped values that
-        # still look like a plausible waveform.
+        # LITTLE-endian here, BIG-endian in query_binary_int16. Not a typo:
+        # these are different things. SCPI hands over an IEEE 488.2 block in
+        # network byte order, whereas this reads the DMA region as the FPGA
+        # wrote it, and the ARM is little-endian.
+        #
+        # VERIFIED 2026-08-12. A wrong guess here does not fail -- it returns
+        # byte-swapped values that still look like a plausible waveform -- so
+        # the check was made against a QUIET input rather than a waveform:
+        # this path's raw sigma was 0.6797 counts against 0.6781 from
+        # acquire() on the same silent channel, a ratio of 1.002, where a byte
+        # swap would be off by ~100x. Re-check it the same way if this changes;
+        # a byte-swapped noise record still looks exactly like noise.
         return np.frombuffer(b"".join(parts), dtype="<i2").astype(np.float64)
 
     def fast_read_available(self, port: int = 9999,
