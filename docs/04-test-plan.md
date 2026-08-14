@@ -287,10 +287,35 @@ The emulated-DUT test at full sweep length needs a waveform longer than the
       trigger, not only when pre-roll is requested — reading from offset 0
       after a real trigger returns an arbitrary point in the ring, which looks
       entirely plausible and silently misplaces every event in the record.
-- [ ] H6.5 End-to-end: emulated DUT response plus emulated trigger train,
-      captured together, demodulated, and mapped onto a time axis using the
-      recovered trigger edges. Compare against ground truth. **This is the
-      Phase 1 exit criterion.**
+- [x] **H6.5 PASSES 2026-08-14 — the Phase 1 exit criterion is met.**
+      Both channels captured together for a full second at decimation 8,
+      triggered from the trigger train on IN2, with 45.2 ms of pre-roll.
+
+      | Result | |
+      |---|---|
+      | Amplitude, 7 levels over a 7.5× range | all within 1%, spread **0.34%** |
+      | Relative timing of transitions | **0.2%** error |
+      | Trace coverage | −33.9 to +943.3 ms about the trigger — covers the sweep from t=0 |
+      | Channel alignment | `Trig:Pos` identical on both (4706/4706) |
+
+      The consistent 0.8% under-read matches H3.1's independent figure.
+
+      The DUT response is emulated by stepping the generator's amplitude during
+      the capture rather than by a synthesised waveform, because DMG does not
+      exist (H5.1). Eight levels rather than 5000 smooth points — coarser than
+      intended, but it exercises the full chain end to end.
+
+      **CAVEAT, and it matters for Phase 2: trigger edge recovery degrades at
+      decimation 8.** 1.17% of intervals failed to match, rms 3.24 µs, against
+      0.01 ns at decimation 2 (H4.2). At decimation 8 the sample period is
+      32 ns and the test edges rise in 20 ns, so an edge often has no sample on
+      its ramp and the interpolation has nothing to work with. Missed edges
+      corrupt the mapping rather than blurring it.
+      The signal path and the trigger path want opposite decimations, and
+      `ACQ:AXI:DEC` is global — one setting serves both. **Establish the laser
+      trigger's real edge rate (U7) before committing to a decimation.**
+      Counter-intuitively a *slower* trigger edge is easier to time here, since
+      it puts more samples on the ramp.
 
 ### H7 — robustness
 

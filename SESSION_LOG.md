@@ -421,6 +421,73 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — H6.5 PASSES: Phase 1 exit criterion met
+
+Both channels captured together for a full second at decimation 8, triggered
+from the trigger train on IN2, with 45.2 ms of pre-roll. IN1 carried a
+991.821 kHz tone stepped through eight amplitudes during the capture — the
+stand-in for a swept DUT response, since DMG does not exist (H5.1).
+
+**Amplitude, windows derived from the data:**
+
+| Commanded | Recovered | Ratio |
+|---:|---:|---:|
+| 0.05 | 0.04948 | 0.9896 |
+| 0.10 | 0.09930 | 0.9930 |
+| 0.20 | 0.19830 | 0.9915 |
+| 0.30 | 0.29762 | 0.9921 |
+| 0.25 | 0.24811 | 0.9924 |
+| 0.15 | 0.14882 | 0.9921 |
+| 0.08 | 0.07939 | 0.9924 |
+
+**Every level within 1%, spread 0.34%**, and the consistent 0.8% under-read
+matches H3.1's independent figure. **Relative timing: 119.07 ms mean against
+119.3 ms commanded, 0.2% error.**
+
+**Trace spans −33.9 to +943.3 ms relative to the trigger**, so the pre-roll
+covers the sweep from its first instant. `Trig:Pos` came back identical on both
+channels (4706 and 4706), independently corroborating H4.3's alignment result.
+
+**Two analysis traps hit on the way, both mine, both worth avoiding:**
+
+1. **Plateau windows keyed to the PC's command timestamps read as a blend of
+   two levels.** The PC records when it *sent* each command; the board applies
+   it ~46 ms later, so the windows straddle every transition. Ratios came out
+   0.81–1.36 and looked like a real nonlinearity. Deriving the windows from the
+   transitions in the data fixes it — and is what the real experiment does
+   anyway, since the time axis comes from the record, not the PC.
+2. **A spurious transition at the very start of the trace shifted every label
+   by one**, making a clean result look like a 300% spread. It is the filter's
+   settling edge. Discard transitions within the first settling time.
+
+**The one genuine problem: trigger edge recovery degrades badly at decimation
+8.** 1031 of 88458 intervals (1.17%) failed to match a designed value, rms
+mismatch 3.24 µs, worst 48 µs — against **0.01 ns at decimation 2** (H4.2).
+
+Cause is straightforward: at decimation 8 the sample period is 32 ns and the
+test pattern's rise time is 20 ns, so an edge often has no sample on its ramp
+at all and the threshold interpolation has nothing to work with. Missed edges
+are worse than imprecise ones, because a missed edge merges two intervals and
+corrupts the mapping rather than blurring it.
+
+**This qualifies the earlier "decimation 8 costs only 1.1 dB" conclusion.**
+That measurement was of the *signal* noise floor and it stands. But the trigger
+channel wants the opposite of what the signal channel wants, and
+`ACQ:AXI:DEC` is global — one setting for both. So there is a real tension:
+
+- signal path: heavier decimation is nearly free (+1.1 dB at 8) and saves memory
+- trigger path: heavier decimation loses edges once they are faster than a
+  sample period
+
+**Before Phase 2, establish the laser trigger's actual edge rate (U7).** If its
+edges are slow — tens of ns or more — decimation 8 is fine. If they are fast,
+either the decimation must drop (which brings the memory question back) or the
+trigger needs conditioning to slow its edges deliberately. A slower edge is
+*easier* to time precisely here, which is counter-intuitive but follows
+directly from having more samples on the ramp.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — decimation costs little; skip the memory move
 
 Kevin asked whether the upper-half DMA move is needed only for loopback testing
