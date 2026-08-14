@@ -161,13 +161,19 @@ pytest -q
 
 ## Current state — updated 2026-08-14
 
-Phase 0 complete. **Phase 1's exit criterion is met** — H6.5 captured a full
-second on both channels, triggered, with pre-roll, and recovered seven amplitude
-levels to within 1%. 76 offline tests pass. **But Phase 1 is not finished:** all
-of H7, H3.5's board half, and H5.2/H5.3 remain.
+**Phase 0 and Phase 1 are both COMPLETE.** 102 offline tests pass. Every
+loopback test in `04-test-plan.md` has been run against the board, except two
+that were deliberately skipped and are recorded as such (H6.1, H5.2/H5.3).
+
+**Phase 2 has not started and is gated on a planning session with Kevin.** Do not
+connect anything.
+
+A step-by-step status of every H item, in plain language, is at the top of
+`SESSION_LOG.md` under "STATUS AT A GLANCE". Start there.
 
 Key-based SSH is installed, so the board helper no longer needs a human — see
-"Talking to the board" below.
+"Talking to the board" below. **Restarting the SCPI server is Kevin's job, not
+the agent's** (asked 2026-08-14).
 
 | Test | State |
 |---|---|

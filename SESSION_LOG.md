@@ -17,6 +17,114 @@ Template:
 
 ---
 
+## STATUS AT A GLANCE — updated 2026-08-14
+
+Read this before the entries below. They are chronological and long; this is
+where things actually stand.
+
+**Phase 0 (offline) — COMPLETE. Phase 1 (loopback) — COMPLETE.**
+102 offline tests pass. Phase 2 has not started and is gated on a planning
+session with Kevin.
+
+### Phase 0 — everything that needed no hardware
+
+| Step | In plain words | State |
+|---|---|---|
+| Signal processing | Turn a raw recording into an amplitude trace (the lock-in maths) | done |
+| Waveform construction | Build the drive signals the board will play | done |
+| Capture planning | Work out how long, how fast, and how much memory a sweep needs | done |
+| DUT emulator | Fake the experiment's physics so the maths can be checked against a known answer | done |
+| Test suite | 102 tests, no hardware needed | done, must stay green |
+
+### Phase 1 — loopback: the board wired to itself, nothing else connected
+
+**H1 — can we talk to the board, and are our commands right?**
+
+| Step | In plain words | State |
+|---|---|---|
+| H1.1 | Write down which operating system the board runs | done — OS 2.00, build 37 |
+| H1.2 | Make sure it is the 250-12 model, not the 125-14 | done — but `*IDN?` cannot tell you; confirmed by label and `monitor -f` |
+| H1.3 | Confirm it really samples at 250 million times a second | done, by measurement |
+| H1.4 | Find out how much capture memory is reserved | done — 2 MiB as shipped, enlarged to 128 MiB |
+| H1.5 | Check every command we send actually works | done — one whole function had to be rewritten, not just corrected |
+| H1.6 | Confirm bulk data comes back correctly | done |
+
+**H2 — can the board produce the drive signals?**
+
+| Step | In plain words | State |
+|---|---|---|
+| H2.1 | Make a modulated 80 MHz signal, check the three expected tones appear | done — all three exactly where predicted |
+| H2.2 | Check the modulation depth is the right size, not just present | done — 0.512 / 0.488 against 0.500 ideal |
+| H2.3 | Check the looping waveform does not glitch each time it wraps | done — worst junk 48 dB down |
+| H2.4 | Run both output channels at once | done — within 0.6% of each other |
+| H2.5 | Check the two outputs keep a repeatable phase relationship | **FAILED** — scatters 71–82°. Kevin ruled it does not matter, because we only deliver amplitude. Its one surviving risk was later killed by H3.2 |
+
+**H3 — can we measure what comes back?**
+
+| Step | In plain words | State |
+|---|---|---|
+| H3.1 | Does a bigger signal read as proportionally bigger? | done — linear over 2.4 decades |
+| H3.2 | Does the phase stay steady during one recording? | done — 0.002° over 28 ms |
+| H3.3 | How small a signal is lost in the noise? | done — **σ = 3.57 µV per point; a real signal needs ≥36 µV to be clearly visible.** Revised twice; do not quote the older 2.96 µV |
+| H3.4 | Does narrowing the filter reduce noise by the expected amount? | done — holds to 2–4% across 8× |
+| H3.5 | Does the filter reject signals at the wrong frequency? | done — **matches the design to 0.0 dB** |
+
+**H4 — can we find the laser's trigger in the recording?**
+
+| Step | In plain words | State |
+|---|---|---|
+| H4.1 | Play a known pulse pattern and recover it | done — zero of 732 intervals wrong |
+| H4.2 | How precisely can we time an edge? | done — 0.01 ns, but that is the *board's* contribution only |
+| H4.3 | Do the two inputs record at exactly the same instant? | done — aligned to 0.0005 of a sample |
+| H4.4 | Start a recording from the trigger, and know where the trigger sits in it | done — **this is the one that matters now** (see below) |
+
+**H5 — can the board play a waveform longer than its buffer?**
+
+| Step | In plain words | State |
+|---|---|---|
+| H5.1 | Is "Deep Memory Generation" available? | done — **NO, and permanently.** The ceiling is 16384 points = 65.5 µs |
+| H5.2 / H5.3 | Play a long fake DUT response | **superseded** — H6.5 instead stepped the amplitude during the capture |
+| H5.4 | Fall back to short waveforms and record the limit | done, by taking that route |
+
+**H6 — a full one-second sweep**
+
+| Step | In plain words | State |
+|---|---|---|
+| H6.1 | Enlarge the capture memory to 512 MB | **deliberately not done.** Buys 1.1 dB for a risk of a non-booting board, and the reason it was wanted has since evaporated |
+| H6.2 | Record a full second on both channels | done — 32.8 M samples each, 97.8% of the available memory |
+| H6.3 | Turn that into exactly 5000 trace points | done — **exactly 5000, at exactly 200.000 µs spacing** |
+| H6.4 | Start recording *before* the trigger, so the filter is ready | done — and proved that without it the trace silently starts late |
+| H6.5 | The whole chain end to end | done — **seven amplitude levels all within 1%** |
+
+**H7 — does it survive things going wrong?**
+
+| Step | In plain words | State |
+|---|---|---|
+| H7.1 | Repeat the whole sweep 20 times and see how much it varies | done — **20/20, amplitude repeats to 0.003%** |
+| H7.2 | What if the trigger never comes? | done — fails cleanly after 8 s. **Fixing it also fixed a defect that left the board unusable** |
+| H7.3 | What if the connection drops mid-recording? | done — all three ways of dropping it fail cleanly, board stays healthy |
+| H7.4 | Are the outputs off after a crash? | **FAILED, then fixed.** They used to stay on. `close()` now switches them off |
+
+### What is NOT done, and is not meant to be
+
+- **H6.1** — the memory move. Rejected, and no longer needed.
+- **H5.2 / H5.3** — superseded by how H6.5 was done.
+- **U1–U12** — the list of things loopback physically cannot test. Enumerated in
+  `04-test-plan.md`, and the whole point of the Phase 2 planning session.
+
+### What comes next
+
+1. **The Santec laser driver.** This is the critical path and it is **blocked on
+   Q22**: the TSL-770/775 command set, the port settings, and whether the
+   wavelength table streams during the sweep or is dumped afterwards. Everything
+   that does *not* need the command set is already written and tested
+   (`wavelength.py`). **Do not guess the commands** — on this board a wrong
+   command returns zero bytes exactly like a right one.
+2. **The Phase 2 planning session**, with Kevin, before anything is physically
+   connected. This is a hard gate.
+
+---
+
 ## 2026-08-07 — Claude (Cowork, scoping session) — project bootstrap
 
 **Goal:** Establish feasibility, fix the measurement architecture, and hand a
