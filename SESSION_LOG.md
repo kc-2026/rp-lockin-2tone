@@ -421,6 +421,55 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — H3.3 independently re-measured
+
+**Kevin asked for the H3.3 numbers below to be verified.** Re-measured from a
+fresh 100 ms capture, with a different estimator, via two routes chosen to be
+independent of each other. **The findings hold; the magnitudes are ~15%
+optimistic.**
+
+| Quantity | Logged below | Re-measured | Ratio |
+|---|---:|---:|---:|
+| Density @ 991.821 kHz | 45.6 nV/√Hz | **51.7** | 1.13× |
+| σ per quadrature | 2.96 µV | **3.57** (Y: 3.47) | 1.21× |
+| Implied noise gain | 4232.7 Hz | **4763 Hz** | 1.13× |
+| Spur fundamental | 505.447 kHz | 503.5, 8.5× floor | present |
+| Spur 2nd harmonic | 1010.895 kHz | 1009.0, 9.4× floor | present |
+| Spur 3rd harmonic | 1516.342 kHz | 4.5× floor | marginal |
+
+**Confirmed, and this is the part that matters: the noise gain is not the
+nominal bandwidth.** Predicting σ from the nominal 2250 Hz gives 2.45 µV
+against 3.57 measured — 46% low. Predicting from the claimed 4232.7 Hz gives
+3.36 µV, within 6%. Anyone reaching for the −3 dB bandwidth to estimate noise
+will be badly wrong, in the dangerous direction.
+
+The two routes — spectral density, and σ straight out of `demodulate()` —
+agree with each other to 6%. That mutual agreement is what makes them
+trustworthy; a shared calibration error would have moved both together and
+this cross-check would not have caught it, but the ENBW consistency would.
+
+**The 13–21% gap is real, not statistical** (σ from 392 output points carries
+only ~4% uncertainty). Candidate causes, unresolved: the 100 ms record here
+versus 256 ms below, the inherited 1817.7 counts/V calibration, or conditions
+on the day. **Use the pessimistic figure.** The practical consequence is that
+SNR 10 per trace point needs roughly **36 µV**, not 30 µV — that is the number
+to hand whoever answers Q11.
+
+**Do NOT read the spur frequencies as evidence of drift.** They came out
+~1.9 kHz below the values logged below, which looks like exactly the switcher
+drift warned about — but the Welch resolution here was 1907 Hz, so the offset
+is one bin and establishes nothing. Settling whether the switcher actually
+moves needs a longer record with finer resolution. The warning below stands on
+its own merits; this measurement neither supports nor undermines it.
+
+**Also fixed this session:** `scripts/rp_fastread.py` built the entire
+requested slice in memory before sending. A 50 MB request killed the helper
+outright and left the SCPI server degraded to multi-second latencies until it
+was restarted. Now sends in 1 MB chunks. Reads up to ~4 MB had always worked,
+which is why it survived first verification.
+
+---
+
 ## 2026-08-12 — Claude (Claude Code) — H3.3 done: noise floor measured, Q8 answered
 
 **Goal:** H3.3 — the noise floor at the lock-in frequency, the number that
