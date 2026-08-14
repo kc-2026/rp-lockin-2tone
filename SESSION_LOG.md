@@ -421,6 +421,162 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — stale numbers fixed; two recorded explanations do not hold
+
+No hardware measurements this session. Kevin asked where each H step stood, and
+checking turned up three documents quoting superseded numbers plus two recorded
+explanations that do not survive arithmetic. Read-only board probes only;
+outputs were off throughout and left off.
+
+### The optimistic noise figure was still in every summary document
+
+`04-test-plan.md`, `06-open-questions.md` (Q8 and Q11) and `CLAUDE.md` all still
+carried **45.6 nV/√Hz → σ = 2.96 µV → ≥30 µV for SNR 10**, superseded twice: by
+the independent re-measurement (~15% optimistic → 51.7 → 3.57 µV) and by the
+terminated measurement (the cable adds ~50%). The log had the corrections; the
+documents anyone would actually read did not. **All four now say 51.7 nV/√Hz,
+σ = 3.57 µV, ≥36 µV.**
+
+Worth a general note: a correction recorded only in the session log is
+half-applied. The log is append-only history; the summaries are what get read.
+
+Also fixed: Phase 0 said 62 tests and the setup section said 74; both are 76.
+H3.5's `[~]` checkbox became a plain unticked box marked "(half done)". The
+duplicated H4 block — a checked-off section followed by the original wording
+with four *unticked* boxes — made H4 look untouched at a glance; the second copy
+is now clearly labelled reference-only with the boxes removed.
+
+### The memory picture is worse than recorded, and the recorded risk is wrong
+
+Probed the board directly rather than trusting the notes:
+
+| | Recorded | Actual (2026-08-14) |
+|---|---|---|
+| `MemTotal` | 470932 kB (460 MB) | **341908 kB (334 MB)** |
+| `MemAvailable` | not recorded | **144756 kB (141 MB)** |
+| Buffer node | `buffer@1000000` | confirmed: base `0x01000000`, size `0x08000000` |
+
+The 460 MB figure was measured when the region was 2 MiB. **The 128 MB region is
+carved out of Linux's own half, not taken from the free upper half** — it sits at
+the 16 MB mark. That is very likely why `rp_fastread.py` died on a 50 MB request
+and left SCPI degraded: with ~141 MB available it was an out-of-memory kill, and
+the 1 MB chunking fix treated the symptom. Moving the region to the upper half
+would hand those 128 MB back to Linux **regardless of how big the region is then
+made** — a robustness gain the "skip the move" decision never counted.
+
+**The recorded reason for skipping the move is factually wrong.** It reads
+"recovery requiring an ext4 reader". Measured: `/dev/mmcblk0p1` is **vfat
+(FAT16)**, mounted at *both* `/boot` and `/opt/redpitaya`, so the device tree
+files under `/opt/redpitaya/dts/` are on the FAT partition. **Recovery is: pull
+the SD card, open it on any Windows machine, copy the backup back.** No ext4
+tooling involved. The move is far less risky than recorded.
+
+**Two corrections to my own earlier arithmetic in this project's favour and
+against it:**
+
+1. Capture sizes were quoted in MiB and the region size in "MB", which made the
+   comparison look wrong. 1 s × 2 ch at decimation 2 is exactly **500,000,000
+   bytes** = 476.8 MiB; the region is **134,217,728 bytes** = 128 MiB exactly.
+   Use bytes when comparing.
+2. **Moving to the upper half buys no headroom, only the decimation.**
+   `0x20000000` = 536,870,912 bytes; decimation 2 with 45 ms pre-roll needs
+   522,600,000 — **97.3% full, the identical margin** to decimation 8 in the
+   current 128 MiB region, because both sides scale by four. Anyone expecting
+   512 MiB to feel roomy at decimation 2 will be disappointed.
+
+**If the move is ever done, do it in two steps.** Nobody has demonstrated the
+FPGA can DMA to `0x20000000` — every capture so far used `0x1000000`. Move the
+region up but keep it at 128 MB first and confirm a quiet-input capture still
+returns σ ≈ 0.68 counts; only then enlarge. A region that reports the right size
+and returns zeros is this project's signature failure mode, and the notes
+already warn that asking for more than exists does not fail loudly.
+
+### The decimation-8 missed-edge explanation does not survive arithmetic
+
+Recorded cause: at decimation 8 the sample period is 32 ns and the test pattern
+rises in 20 ns, so an edge has no sample on its ramp and interpolation has
+nothing to work with.
+
+**That bounds the error at one sample period — 32 ns. The observed error is
+3.24 µs rms, worst 48 µs.** A hundred to fifteen hundred times larger.
+Interpolation error cannot produce it. With designed intervals of 7–11 µs, an
+rms of 3.24 µs and a worst case of 48 µs is what **lost edges** look like —
+48 µs is roughly five intervals fused into one. It is structural, not a
+precision problem.
+
+Two further reasons to doubt the recorded cause. `find_trigger_edges`
+(`emulator.py:187`) detects a crossing as a sign change in `x > threshold`,
+which registers **however fast the edge is** — detection cannot miss a fast
+edge. And the board applies its own anti-alias filter when decimating (that is
+established elsewhere in this log, correcting a 6 dB estimate to 1.1 dB), which
+*smooths* edges and should make interpolation **better** at decimation 8.
+
+The only mechanism in that function that can delete an edge is the **1 µs
+debounce**, which fires only if spurious extra crossings appear. Two unconfirmed
+candidates: filter ringing crossing the threshold near an edge, or the
+`threshold=0.0` default sitting in the middle of a trigger signal that looks
+unipolar (H4.4 used `ACQ:TRig:LEV 0.1` against a 0.5 V signal), so that noise
+chatters across zero during every low period. The second would be a plain bug
+rather than a physical limit.
+
+**Not resolved. Do not quote 1.17% as a decimation-8 property until it is.**
+
+### The wavelength calibration does not exist yet, which changes the stakes
+
+`find_trigger_edges` returns edge times and **nothing in the repo consumes
+them.** The time-to-wavelength calibration is referenced in comments in `dsp.py`
+and `emulator.py` but is unwritten. So "a missed edge corrupts the mapping" is a
+claim about software nobody has designed, and the severity is a **design choice**:
+
+- **Counting** edges (edge N ⇒ N·Δλ) makes one missed edge shift every
+  wavelength after it. 1.17% would be ruinous.
+- **Gap detection** makes it trivial: in a regular train a missing edge leaves
+  one interval at twice the normal length, which is blatant and correctable.
+  Two in a row gives 3×, also obvious.
+- **Fitting** a smooth λ(t) through the edge times absorbs a missing point
+  almost entirely, since a swept laser's wavelength-versus-time is smooth.
+
+The H4.1 test pattern's deliberately uneven intervals (11.0, 8.0, 10.536,
+7.0 µs) and H4.4's use of that signature to locate absolute position suggest a
+gap-tolerant design was already intended. **Write the calibration to detect
+double-length gaps.** The hard residual case is an *irregular* train with
+missing edges, where a genuinely short interval cannot be told from a merged
+one without a signature to lock onto — and whether that applies depends
+entirely on U7.
+
+**Consequently the fix order for the missed edges is:** (1) write gap-tolerant
+calibration — offline, free, no hardware risk; (2) establish U7 from the laser's
+datasheet, which may make it a non-issue; (3) only then consider the memory
+move. I had this backwards earlier in the session, treating the memory move as
+the fix for a trigger problem that is mostly unwritten software plus an
+unmeasured signal.
+
+### U7 is the highest-value open question in the project
+
+What the laser's trigger output actually is: pulse rate, amplitude, rise time,
+logic family, and whether intervals are uniform. **None of it is documented
+anywhere** — not in the spec, not in the open questions. Everything tested so
+far used a stand-in whose 7–11 µs intervals and 20 ns rise came from the ASG's
+fixed 16384-entry table at 4 ns per step, not from any laser. It is a pattern
+designed to exercise the code, not to resemble the instrument.
+
+It gates the decimation, which gates the memory question. **Answerable from a
+datasheet. Ask Kevin for the make and model before doing anything
+memory-related.**
+
+### Repo structure hazard
+
+The project lives at `.../rp-lockin-2tone/rp-lockin-2tone` — one level below the
+directory of the same name. The **outer directory is an empty git repo with zero
+commits** that has snagged the real repo as an unregistered gitlink (mode
+160000, pinned at `801c4a8`). It is almost certainly accidental. Nothing was
+committed there; doing so would cement a nested-repo structure nobody chose.
+Relative paths run from the wrong level fail confusingly — `scp
+scripts/rp_fastread.py` from the outer directory reports "No such file". **Use
+absolute paths, or check `git rev-parse --show-toplevel` first.**
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — H6.5 PASSES: Phase 1 exit criterion met
 
 Both channels captured together for a full second at decimation 8, triggered

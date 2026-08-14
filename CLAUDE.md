@@ -145,33 +145,47 @@ python -c "from rp_lockin import describe_capture_plan; print(describe_capture_p
 pytest -q
 ```
 
-## Current state — updated 2026-08-12
+## Current state — updated 2026-08-14
 
-Phase 0 complete. **Phase 1 substantially advanced**: H1 done, H2 done (H2.5
-failed but was downgraded), H3.3 and H3.4 done. 76 offline tests pass.
+Phase 0 complete. **Phase 1's exit criterion is met** — H6.5 captured a full
+second on both channels, triggered, with pre-roll, and recovered seven amplitude
+levels to within 1%. 76 offline tests pass. **But Phase 1 is not finished:** all
+of H7, H3.5's board half, and H5.2/H5.3 remain.
 
-The fast-read helper on the board is what gates most of what is left. It lives
-in `/dev/shm` and so is gone after every reboot; there is no SSH key on the
-control PC, so restoring it currently needs a human.
+Key-based SSH is installed, so the board helper no longer needs a human — see
+"Talking to the board" below.
 
 | Test | State |
 |---|---|
 | H1 transport | done — OS 2.00, 250 MS/s confirmed by measurement, binary transfer verified |
-| H2.1–H2.3 transmit | done — AM lines exact, modulation depth 0.512/0.488 vs 0.500, worst spur −48.5 dBc |
-| H2.4 both channels | done |
-| H2.5 / Q6 phase | fails, **downgraded** — deliverable is amplitude only, see `06-open-questions.md` |
-| H3.1 / H3.2 amplitude, phase | **not started — do these next.** `acquire_deep_fast` is proven, so both are now straightforward |
-| H3.3 noise floor / Q8 | **done 2026-08-12 — σ = 2.96 µV per trace point; ≥30 µV of signal gives SNR 10** |
-| H3.4 √bandwidth law | **done 2026-08-12 — holds to 2–4% over 8× in bandwidth** |
-| H3.5 offset response | offline half done; board half not started |
-| H4 trigger digitisation | not started |
-| H5 / H6 long capture | unblocked by `acquire_deep_fast`, not yet run at full length |
+| H2.1–H2.4 transmit | done — AM lines exact, depth 0.512/0.488 vs 0.500, worst spur −48.5 dBc |
+| H2.5 / Q6 phase | failed, **downgraded, and its residual risk is now closed** by H3.2 |
+| H3.1 amplitude linearity | done — linear over 2.4 decades; 0.3% spread above 20 mV |
+| H3.2 phase stability | done — 0.002° over 28 ms |
+| H3.3 noise floor / Q8 | **done, revised twice — σ = 3.57 µV per trace point; ≥36 µV of signal gives SNR 10.** Do not quote the earlier 2.96 µV |
+| H3.4 √bandwidth law | done — holds to 2–4% over 8× in bandwidth |
+| H3.5 offset response | **offline half only**; board half not started |
+| H4.1–H4.4 trigger | done — edges recovered exactly, inputs aligned to 0.0005 samples, `Trig:Pos` solved |
+| H5.1 Deep Memory Gen | **answered: NOT AVAILABLE.** 16384-point ceiling is permanent |
+| H5.2 / H5.3 | superseded — H6.5 emulated the DUT by stepping amplitude instead |
+| H6.1 memory move | **deliberately not done** — see the memory section in `05-hardware-notes.md` |
+| H6.4 pre-roll | done — and two real `acquire_deep_fast` defects fixed getting there |
+| H6.5 full capture | **PASSES** — the Phase 1 exit criterion |
+| H7.1–H7.4 robustness | **none started. This is the main remaining Phase 1 work.** |
+
+**The largest open question is not on this list.** It is U7 — what the laser's
+trigger output actually looks like electrically. Nothing about it is documented:
+no pulse rate, amplitude, rise time or logic family. It decides the decimation,
+which decides whether 128 MB is enough, which decides whether the device-tree
+move is needed at all. **It is answerable from the laser's datasheet, not from a
+measurement.** Ask before doing anything memory-related.
 
 **Two numbers from H3.3 not to re-derive or guess at:**
 
-- **The demodulator's noise gain is 4232.7 Hz, 1.88× the nominal 2250 Hz
-  bandwidth.** Converting an input noise density to output scatter with the
-  −3 dB bandwidth instead understates the noise by 37%. Pinned by
+- **The demodulator's noise gain is NOT the nominal bandwidth.** 4232.7 Hz
+  analytically, **4763 Hz measured** — both about 1.9× the nominal 2250 Hz.
+  Using the −3 dB bandwidth instead gives 2.45 µV against 3.57 measured,
+  **46% low, in the dangerous direction.** Pinned by
   `test_quadrature_noise_gain_matches_filter_chain`.
 - **A switching-supply harmonic sits 17.9 kHz from the lock-in frequency, and
   it is ~32 µV — 11× the noise floor.** Rejected by >200 dB today, but only
@@ -201,7 +215,7 @@ move it into the relevant doc and note it in the session log.
 python -m venv .venv
 .venv/Scripts/python -m pip install -e ".[dev]"     # Windows
 .venv/bin/python -m pip install -e ".[dev]"         # Linux
-pytest -q                                            # expect 74 passed
+pytest -q                                            # expect 76 passed
 ```
 
 Most machines here run Windows; keep the suite passing on it. One test uses
@@ -235,7 +249,8 @@ export RP_HOST=rp-fffe42.local     # mDNS; the link-local IP changes on reconnec
   `/dev/shm/rp_fastread.log` if it says False. Stop it cleanly by sending
   `QUIT\n` to port 9999.
 
-- **The board's root filesystem is currently mounted read-write**, apparently
+- **The board's root filesystem is mounted read-write** (confirmed
+  2026-08-14: `/dev/root / ext4 rw,relatime,errors=remount-ro`), apparently
   left that way by the 2026-08-12 device-tree edit. That is why the documented
   `rw` step appears unnecessary — and note `rw`/`ro` are interactive shell
   shortcuts that do not exist in a one-shot `ssh host "..."` command; use

@@ -31,7 +31,7 @@ Together these cover everything except the DUT physics and the analog chain.
 
 ## Phase 0 — offline (COMPLETE)
 
-`pytest` — 62 tests, no hardware. Must stay green.
+`pytest` — 76 tests, no hardware. Must stay green.
 
 Covers: demodulation accuracy, noise scaling, filter settling, streaming block
 equality, time-axis correctness, waveform commensurability, capture planning,
@@ -134,23 +134,47 @@ once, and its `VERIFY:` note either removed or replaced with a confirmation.
 - [x] H3.3 Measure the noise floor with the output off and the input
       terminated. Convert to an equivalent input noise density. Record it —
       this is the number that predicts whether the real measurement will work.
-      **Done 2026-08-12: 45.6 nV/√Hz on IN1 at 991.821 kHz → σ = 2.96 µV per
-      quadrature at the operating bandwidth; ≥30 µV of signal gives SNR 10 per
-      trace point.** Measured directly off a 256 ms deep capture, and
-      independently via a density route that agreed to 6%. One departure from
-      the wording above: the input carried the **loopback cable with the output
-      commanded off**, not a 50 Ω terminator — **Kevin accepted this as the
-      operative configuration on 2026-08-12**, on the grounds that it is the
-      wiring the rest of Phase 1 runs in. Also found a switching-supply spur
-      family at 504.868 kHz, ~32 µV per line, harmless at its present frequency
-      but a real hazard if it drifts — see `05-hardware-notes.md`.
+      **Done 2026-08-12, then revised TWICE. Use these numbers:
+      51.7 nV/√Hz on IN1 at 991.821 kHz → σ = 3.57 µV per quadrature; ≥36 µV of
+      signal gives SNR 10 per trace point.**
+
+      | Configuration | Density | σ per quadrature | For SNR 10 |
+      |---|---:|---:|---:|
+      | 50 Ω terminated — board's own floor | 34.6 nV/√Hz | 2.39 µV | 24 µV |
+      | **Loopback cable, output off — plan with this** | **51.7** | **3.57** | **36 µV** |
+
+      **The cable adds ~50%**, and that is pickup, not artefact. The real input
+      is a longer cable from a photodetector in a noisier place, so 34.6 is a
+      floor the real system will never see and 24 µV is an unreachable best
+      case. **Hand 36 µV to whoever answers Q11.**
+
+      Two supersessions, both worth knowing about:
+      **(1)** the original 45.6 nV/√Hz → 2.96 µV was **~15% optimistic** — an
+      independent re-measurement from a fresh capture, by two routes agreeing
+      with each other to 6%, gave 51.7 → 3.57. The gap is real, not statistical
+      (σ from 392 output points carries only ~4% uncertainty); cause unresolved,
+      candidates being record length, the inherited 1817.7 counts/V calibration,
+      or conditions on the day. **Use the pessimistic figure.**
+      **(2)** the input carried the loopback cable with the output commanded
+      off, not a terminator — Kevin accepted that on 2026-08-12 as the wiring
+      Phase 1 runs in, and the terminated measurement above later quantified
+      what that choice costs.
+
+      **The noise gain is NOT the nominal bandwidth** — 4763 Hz measured against
+      2250 Hz nominal. Predicting σ from the −3 dB bandwidth gives 2.45 µV
+      against 3.57 measured, 46% low, in the dangerous direction.
+
+      Also found a switching-supply spur family at 504.868 kHz, ~32 µV per line,
+      harmless at its present frequency but a real hazard if it drifts, and
+      **partly conducted** so cabling alone cannot remove it — see
+      `05-hardware-notes.md`.
 - [x] H3.4 Confirm the √bandwidth law holds on real data, not just synthetic:
       halving the bandwidth should drop the noise by √2. **Done 2026-08-12 —
       holds to 2–4% across a factor of 8 in bandwidth, on one real capture.**
       σ tracks √ENBW to ~1.5%, better than it tracks √(nominal bandwidth),
       because the ENBW/bandwidth ratio drifts slightly with bandwidth. Scale by
       √ENBW if you need the noise at some other setting.
-- [~] H3.5 Deliberately offset the demodulation frequency by a few kHz and
+- [ ] H3.5 **(half done)** Deliberately offset the demodulation frequency by a few kHz and
       confirm the response falls off as the filter predicts. **Offline half done
       2026-08-12** (rejection table in `SESSION_LOG.md`: −12 dB at the nominal
       2250 Hz bandwidth, −124 dB by 3 kHz, −204 dB at 19 kHz). Still to do on
@@ -212,19 +236,22 @@ once, and its `VERIFY:` note either removed or replaced with a confirmation.
       settling H6.4 needs is 2.75 M samples at decimation 2, comfortably
       within the region.
 
-### H4 — trigger digitisation (original wording)
+### H4 — original wording, for reference only
 
-**Wiring:** OUT2 → IN2.
+**Wiring:** OUT2 → IN2 (H4.3 additionally needs OUT1 through a BNC tee).
 
-- [ ] H4.1 Play a known edge pattern via `make_trigger_sequence`. Recover it
-      with `find_trigger_edges`. Confirm intervals to within a sample or two.
-- [ ] H4.2 Establish timing resolution at the intended decimation and confirm
-      it is adequate for the wavelength calibration.
-- [ ] H4.3 Confirm IN1 and IN2 are sample-aligned — a fixed skew between the
-      signal and trigger channels would bias every wavelength assignment.
-      **This is worth measuring explicitly, not assuming.**
-- [ ] H4.4 Confirm triggering the acquisition from IN2 works, and determine
-      where the trigger lands in the record.
+**All four are DONE — see the section above.** The wording is kept because it
+states the intent more plainly than the results do; the unticked boxes were
+removed because they made H4 look untouched at a glance.
+
+- H4.1 Play a known edge pattern via `make_trigger_sequence`. Recover it with
+  `find_trigger_edges`. Confirm intervals to within a sample or two.
+- H4.2 Establish timing resolution at the intended decimation and confirm it is
+  adequate for the wavelength calibration.
+- H4.3 Confirm IN1 and IN2 are sample-aligned — a fixed skew between the signal
+  and trigger channels would bias every wavelength assignment.
+- H4.4 Confirm triggering the acquisition from IN2 works, and determine where
+  the trigger lands in the record.
 
 ### H5 — long waveform generation
 

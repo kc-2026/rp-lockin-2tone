@@ -221,8 +221,25 @@ free for DMA capture buffers.
 
 | Range | Size | Owner |
 |---|---:|---|
-| `0x00000000`–`0x1FFFFFFF` | 512 MB | Linux (`MemTotal` 470932 kB) |
-| `0x20000000`–`0x3FFFFFFF` | 512 MB | **unused — reserve the capture buffer here** |
+| `0x00000000`–`0x1FFFFFFF` | 512 MiB | Linux — **and the capture buffer is in here too** |
+| `0x20000000`–`0x3FFFFFFF` | 512 MiB | **unused — reserve the capture buffer here** |
+
+**The capture buffer is NOT in the free upper half.** Confirmed on the board
+2026-08-14: `buffer@1000000` has base `0x01000000` and size `0x08000000` —
+128 MiB at the 16 MB mark, carved straight out of Linux's own half.
+
+| | Recorded here previously | Measured 2026-08-14 |
+|---|---|---|
+| `MemTotal` | 470932 kB (460 MB) | **341908 kB (334 MB)** |
+| `MemAvailable` | — | **144756 kB (141 MB)** |
+
+The 460 MB figure dates from when the region was 2 MiB. **Enlarging the region to
+128 MiB took that memory from the OS.** This is very likely why
+`rp_fastread.py` died on a 50 MB request and left the SCPI server degraded — with
+~141 MB available it was an out-of-memory kill, and the 1 MB chunking fix
+addressed the symptom. Moving the region to the upper half returns 128 MiB to
+Linux **whatever size the region is then given**, which is an argument for the
+move independent of capture length.
 
 Evidence: `/proc/device-tree/memory/reg` reads `00 00 00 00 40 00 00 00`, i.e.
 base 0, size 0x40000000 = 1 GiB. `cat /proc/cmdline` shows the `mem=512M` cap.
@@ -255,6 +272,29 @@ reboot
 afterwards with `ACQ:AXI:SIZE?`; asking for more than exists does not fail
 loudly. Take the backup first: a device tree that overlaps the running kernel's
 memory will not boot.
+
+**Recovery is easy, contrary to what was recorded elsewhere.** `/dev/mmcblk0p1`
+is **vfat (FAT16)**, mounted at *both* `/boot` and `/opt/redpitaya` — so the
+files under `/opt/redpitaya/dts/` sit on the FAT partition. If the board will not
+boot: pull the SD card, open it on any Windows machine, copy the backup back.
+**No ext4 tooling is needed.** An earlier note claiming recovery "requires an
+ext4 reader" overstated the risk considerably.
+
+**Do it in two steps, not one.** Nobody has shown the FPGA can DMA to
+`0x20000000` — every capture so far has used `0x1000000`. Move the region up but
+keep it at **128 MB first**, and confirm a quiet-input capture still returns
+σ ≈ 0.68 counts. Only then enlarge to 512 MB. A region that reports the right
+size and returns zeros or plausible garbage is this project's signature failure,
+and the two possible faults — "cannot reach the upper half" and "region too
+big" — are indistinguishable if you change both at once.
+
+**The move buys the decimation, not headroom.** `0x20000000` = 536,870,912
+bytes; a 1 s two-channel capture at decimation 2 with 45 ms of pre-roll needs
+522,600,000 — **97.3% full, the same margin** as decimation 8 in the present
+128 MiB region, since both sides scale by four. Quote sizes in bytes when
+comparing: 1 s × 2 ch at decimation 2 is exactly 500,000,000 bytes = 476.8 MiB,
+and the region is 134,217,728 bytes = 128 MiB exactly. Mixing MB and MiB across
+the two makes the comparison look wrong.
 
 **The instruction this replaces was unsafe.** It read
 `buffer@1000000 { reg = <0x1000000 0x20000000>; }` — a 512 MB region based at
