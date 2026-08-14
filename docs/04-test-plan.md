@@ -31,11 +31,13 @@ Together these cover everything except the DUT physics and the analog chain.
 
 ## Phase 0 — offline (COMPLETE)
 
-`pytest` — 76 tests, no hardware. Must stay green.
+`pytest` — 96 tests, no hardware. Must stay green.
 
 Covers: demodulation accuracy, noise scaling, filter settling, streaming block
 equality, time-axis correctness, waveform commensurability, capture planning,
-emulator round-trip against ground truth, trigger edge recovery.
+emulator round-trip against ground truth, trigger edge recovery, and — added
+2026-08-14 — the wavelength mapping, the laser/board clock measurement, and the
+off-by-one-trigger guard (`test_wavelength.py`, 20 tests).
 
 ---
 

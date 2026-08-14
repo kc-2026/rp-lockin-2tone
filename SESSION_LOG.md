@@ -421,6 +421,96 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — wavelength mapping built; the serial half deliberately not
+
+Kevin: the lasers are a **Santec TSL-770 and TSL-775**, not connected during
+loopback, and no manual to hand. So the work split in two, and only one half was
+written.
+
+### What was built: `src/rp_lockin/wavelength.py`, 20 tests
+
+Everything that does not depend on the laser's command set. It works from data
+already in hand — the digitised trigger train, and whatever table a future driver
+returns.
+
+| Function | Does |
+|---|---|
+| `map_to_wavelength` | attaches a wavelength to every trace point by lookup against the laser's table |
+| `analyse_trigger_train` | recovers the trigger step and **measures the laser's clock against the board's in ppm** |
+| `check_alignment` | the off-by-one-trigger guard (Q21/U12) |
+
+Usage, once a driver exists:
+
+```python
+edges = find_trigger_edges(in2_record, fs)          # same time base as result.t
+assert check_alignment(edges, table_t).ok            # Q21 guard, do not skip
+train = analyse_trigger_train(edges, nominal_step)   # free clock check (U11)
+sweep = map_to_wavelength(result.t, amplitude, edges[0], table_t, table_wl)
+wl, amp = sweep.dropna()
+```
+
+Design points worth keeping:
+
+- **Locate the first edge in the recorded IN2 data, not from `Trig:Pos`.**
+  `LockinResult.t` and `find_trigger_edges` are both referenced to the start of
+  the input record, so using the recorded edge keeps one time base and sidesteps
+  the fixed 1.14-sample offset `Trig:Pos` carries. `Trig:Pos` is still what arms
+  and positions the capture; it is just not what defines t = 0.
+- **The step comes from a line fit against corrected ordinals, not a mean of the
+  intervals.** A single lost pulse inflates a mean and would report a step wrong
+  by 1/N, quietly corrupting the clock measurement. Missing pulses are found
+  from intervals near an integer multiple of the step — what a lost edge actually
+  looks like — and the ordinals skip accordingly. Pinned by
+  `test_a_missing_pulse_does_not_bias_the_step`.
+- **Nothing extrapolates.** Points outside the laser's table get NaN and are
+  counted, split into *before* (pre-roll — normal, never an error) and *after*
+  (suspicious — raises unless `overrun_tol` is passed). Interpolating past the
+  table end would invent a wavelength.
+- **A grossly wrong t = 0 refuses rather than mapping.** If barely any of the
+  trace falls inside the table, that is a misalignment, not a mapping.
+
+**A lost edge and a late arm are now distinguishable**, which matters because
+both show up as a short pulse count. A lost edge leaves a double-length gap; a
+late arm does not. `test_lost_edge_and_late_arm_are_distinguishable` pins it.
+That is the difference between a harmless recovery slip and a corrupted
+wavelength axis.
+
+**The tests earned their keep immediately.** `test_mapping_is_exact_on_the_table_
+points` failed on the first run: a trace sampled exactly at the table times gives
+`t_rel = (t0 + tt) - t0`, which floating-point leaves a few parts in 1e16 off
+`tt`, putting the final point "past the end of the table" and tripping the
+zero-tolerance overrun check on a *perfectly aligned* sweep. Fixed with an
+epsilon scaled to the table span. Left as a comment in the code, because the
+obvious reading of "no overrun allowed" is the buggy one.
+
+### What was NOT built, on purpose
+
+**No serial transport, and none should be added until someone has the manual.**
+This project's recorded history is a list of SCPI commands that were misspelled
+and returned zero bytes exactly like correct ones — `setup_am_generator`, the
+`ACQ:DATA:Units` trap, the nine Deep Memory Generation spellings. A guessed
+Santec command set would fail the same way: silently.
+
+And the wavelength axis is the *worst* possible place for a silent failure,
+because a mislabelled sweep looks exactly like a correct one. There is no
+internal evidence in the data. So the module contains no command strings at all,
+and takes the laser's table as an argument rather than fetching it.
+
+Raised as **Q22**: the TSL-770/775 command set, whether the two models differ,
+the port settings, and whether the wavelength table streams live during the sweep
+or is dumped after it. That last one decides whether the driver runs alongside
+the capture or after it, which is a structural choice, not a detail.
+
+### State
+
+96 offline tests pass, up from 76. No hardware touched this session; the board
+was probed read-only earlier and outputs were off throughout.
+
+Still open in Phase 1 and independent of all the laser work: **H7 robustness
+(none of the four started)** and **H3.5's board half**. Either can proceed now.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — Q18–Q20 answered; one new silent failure found
 
 Kevin answered all three questions raised in the entry below. Summary, then the

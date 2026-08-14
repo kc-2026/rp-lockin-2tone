@@ -63,13 +63,14 @@ This distinction matters more than usual here.
 
 | Area | Status |
 |---|---|
-| `src/rp_lockin/dsp.py` | **Trusted.** 76 offline tests. Do not change without re-running them. |
+| `src/rp_lockin/dsp.py` | **Trusted.** 96 offline tests. Do not change without re-running them. |
 | `planning.py`, `emulator.py` | **Trusted.** Same suite. |
 | `waveforms.py` — `make_am_table`, `plan_two_tone_grid` | **Trusted and hardware-verified.** Use these to drive the board. |
 | `waveforms.py` — `make_am_waveform`, `plan_two_tone` | **Sound arithmetic, WRONG hardware model.** Kept because their tests are worth having. Driving the board with them produces no output at all. |
 | `hardware.py` — SCPI transport, generator, `acquire`, `acquire_deep_fast` | **Verified against the board 2026-08-12.** |
 | `hardware.py` — `acquire_deep_2ch` | **The SCPI read is broken.** Arming is fine; the read returns garbage. Use `acquire_deep_fast`. |
 | `scripts/rp_fastread.py` | **Runs ON THE BOARD**, not the control PC. The one deliberate exception to "everything runs on the PC". |
+| `wavelength.py` | **Trusted, 20 offline tests, but never run against a real laser.** Maps a trace onto wavelength and guards the off-by-one trigger. Contains NO serial code — see below. |
 
 `hardware.py` is deliberately isolated from the maths so a wrong command string
 produces a connection error rather than corrupted physics. **Keep it that way.**
@@ -181,11 +182,21 @@ Key-based SSH is installed, so the board helper no longer needs a human — see
 | H6.5 full capture | **PASSES** — the Phase 1 exit criterion |
 | H7.1–H7.4 robustness | **none started. This is the main remaining Phase 1 work.** |
 
-**The largest open work is not on this list.** The wavelength axis now comes from
-the Santec laser over serial (Kevin, 2026-08-14), and **no driver for that exists**
-— not a line of it. Q18–Q20 are answered, so its shape is now known; what remains
-is the serial command set, the port settings, and whether the wavelength table
-streams live or is dumped after the sweep.
+**The largest open work is not on this list: the Santec transport.** The lasers are
+a **TSL-770 and a TSL-775** (Kevin, 2026-08-14) and are not connected during
+loopback.
+
+`wavelength.py` implements everything that does **not** depend on the command
+set — the mapping, the clock measurement, and the alignment guards — with 20
+tests. **The serial transport is deliberately absent, and must stay absent until
+someone has the manual.** On this project a misspelled SCPI command returns zero
+bytes exactly like a correct one (see `05-hardware-notes.md`), so a guessed
+Santec command set would fail *silently* and the wavelength axis is the one place
+where a silent failure is invisible in the output. Do not write it from memory.
+
+What is still needed: the TSL-770/775 command set, the port settings, and whether
+the wavelength table streams live during the sweep or is dumped afterwards — that
+last one decides whether the driver runs alongside the capture or after it.
 
 That change also **defused the decimation/memory question.** It was live only
 because the wavelength axis depended on recovering trigger intervals exactly; it
@@ -226,7 +237,7 @@ move it into the relevant doc and note it in the session log.
 python -m venv .venv
 .venv/Scripts/python -m pip install -e ".[dev]"     # Windows
 .venv/bin/python -m pip install -e ".[dev]"         # Linux
-pytest -q                                            # expect 76 passed
+pytest -q                                            # expect 96 passed
 ```
 
 Most machines here run Windows; keep the suite passing on it. One test uses
