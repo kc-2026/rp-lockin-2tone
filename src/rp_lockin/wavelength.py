@@ -2,12 +2,25 @@
 Map a demodulated trace onto laser wavelength.
 
 The wavelength axis comes from the laser, not from trigger-edge intervals
-(Kevin, 2026-08-14). A Santec TSL-770/775 sweeps, emits a trigger pulse at fixed
-TIME steps, and reports its own wavelength against time measured from its first
-trigger. So the mapping is a lookup, with no sweep-rate assumption anywhere:
+(Kevin, 2026-08-14). A Santec TSL-770/775 sweeps, emits a trigger pulse per step,
+and logs its own wavelength at each pulse.
 
-    t_rel = trace time - time of the first trigger edge
-    wavelength = interp(t_rel, table_time, table_wavelength)
+**The log is wavelength ONLY -- one value per trigger pulse, with no timestamps.**
+Confirmed against both manuals 2026-08-14; an earlier note here said the laser
+reported wavelength against time, and it does not. `:READout:DATa?` returns a
+bare array and `:READout:POINts?` returns its length.
+
+So the pairing is **by index**: the laser's Nth logged wavelength belongs to the
+Nth trigger pulse in the record. Feed that in by passing the recorded edge times
+as `table_t` and the laser's array as `table_wavelength`:
+
+    edges = find_trigger_edges(in2_record, fs)
+    sweep = map_to_wavelength(result.t, amplitude,
+                              edges[0], edges - edges[0], laser_wavelengths)
+
+Pairing by index rather than by time is why `check_alignment` matters so much
+here. A miscount does not degrade the answer gradually -- it shifts every
+wavelength after the miscount by one step, silently.
 
 Nothing here talks to the laser. The serial command set is not known yet and
 **must not be guessed** -- on this project a misspelled SCPI command returns zero
@@ -198,11 +211,12 @@ def check_alignment(edges: np.ndarray, table_t: np.ndarray,
     """
     Guard against the off-by-one-trigger error (Q21/U12).
 
-    Assumes the laser emits one pulse per row of its wavelength table, which is
-    the natural reading of "triggers at set time steps and reports wavelength
-    against time from the first trigger" -- but it is an ASSUMPTION and this
-    returns a diagnosis rather than enforcing it, so a caller can override on
-    hardware that turns out to behave differently.
+    One pulse per row of the laser's log is not an assumption -- it is how the
+    instrument is documented to work, and `:READout:POINts?` returns that row
+    count directly, so the comparison below is against a number the laser itself
+    reports rather than an inferred one. This still returns a diagnosis rather
+    than raising, so a caller can override if a particular setup behaves
+    differently.
 
     The tell for a late start is that the record holds fewer pulses than the
     table holds rows, and the edges span a correspondingly shorter interval.

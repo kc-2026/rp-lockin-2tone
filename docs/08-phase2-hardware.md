@@ -165,8 +165,16 @@ no optics, and the Red Pitaya switched off.
 | P1.4 | Confirm whether the table streams during the sweep or is dumped after it |
 | P1.5 | Run the same sweep twice and compare the tables — sweep repeatability (**U8**) |
 
-**Needs:** the programming manual (**Q22**), the serial cable/adapter, and the
-laser powered. Nothing else.
+**Needs:** the serial cable/adapter and the laser powered. **The manuals are read
+and the command set is recorded** in `04-hardware-reference.md` — Q22 answered
+2026-08-14 — so P1 is unblocked.
+
+**Settle Q24 here.** Set `:TRIGger:OUTPut:SETTing` and read it back: the two
+manuals document it with inverted encodings, and the wrong value still produces a
+trigger train, just periodic in the wrong variable. Also decide `:TRIGger:OUTPut`
+deliberately — 3 (Step) gives the train the index pairing needs; 2 (Start) gives
+one pulse and no way to index the log — and record which the laser was actually
+in rather than inheriting it.
 **Pass:** a wavelength table read reliably, with its format confirmed rather than
 assumed.
 **Closes:** Q22, U8, most of U10.

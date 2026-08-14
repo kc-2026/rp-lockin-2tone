@@ -529,6 +529,115 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — Santec manuals read; Q22 answered, Q20 was WRONG
+
+Kevin supplied the TSL-775 operation manual v1.0 and a link to the TSL-770's.
+Both read in full. **Q22 is answered and the driver is unblocked.** Everything is
+recorded in `04-hardware-reference.md` under "The Santec lasers"; the important
+findings are below, and two of them are corrections rather than additions.
+
+The manuals would not render as pages here (no poppler), so the text was
+extracted with `pypdf` installed into the scratchpad rather than the project
+venv, which is untouched.
+
+### Q20's recorded answer was wrong, and the error mattered
+
+The log said, on Kevin's description: *"the laser reports wavelength against
+RELATIVE TIME FROM THE FIRST TRIGGER"*. **It does not.**
+
+`:READout:DATa?` returns **a bare array of wavelengths — one value per trigger
+pulse, with no timestamps at all.** `:READout:POINts?` returns its length.
+
+So the pairing to time is **by INDEX against the recorded trigger pulses**, not
+by interpolating against a time column. `wavelength.py` still has the right
+shape — pass the recorded edge times as the table's time axis and the laser's
+array as the wavelengths — and its end-to-end test already did exactly that. But
+**the consequence is different, and worse:**
+
+- Time-column pairing degrades gracefully. A slightly wrong time is a slightly
+  wrong wavelength.
+- **Index pairing does not. One miscounted pulse shifts every wavelength after
+  it by one full step, silently.**
+
+That is precisely the "counting" failure mode flagged when `wavelength.py` was
+written, and the reason `check_alignment` exists. It is now the actual design
+rather than the bad alternative — so **that guard is mandatory, not advisory**,
+and it has a better number to check against than expected: `:READout:POINts?`
+gives the laser's own row count directly, so the comparison is against a figure
+the instrument reports rather than one we infer.
+
+Docstrings in `wavelength.py` corrected accordingly.
+
+### The two manuals contradict each other, and the failure would be silent
+
+**`:TRIGger:OUTPut:SETTing` is documented with inverted encodings:**
+
+| | 0 | 1 |
+|---|---|---|
+| **TSL-775** manual, p100 | periodic in **wavelength** | periodic in **time** |
+| **TSL-770** manual, p99 | periodic in **time** | periodic in **wavelength** |
+
+One is a documentation error, or the models genuinely differ. Raised as **Q24**.
+
+It matters because the failure is invisible: the wrong value still produces a
+trigger train, just periodic in the wrong variable. The wavelength spacing would
+come out wrong with nothing looking broken. **Set it and read it back. Never
+hardcode it.** A driver written for both models with a literal 0 or 1 in it is
+wrong on one of them.
+
+### The delimiter differs from the Red Pitaya's
+
+**The Santec's delimiter is a bare `CR`. The Red Pitaya's is `CRLF`.** Reusing
+`hardware.py`'s line reader unchanged will hang waiting for a newline that never
+comes, and the symptom is a timeout indistinguishable from a dead cable.
+
+Byte order is the same trap in a second instrument: the Santec's binary logging
+data is **little-endian** ("Intel byte order"), while the Red Pitaya's SCPI path
+is big-endian. `fast_read` already documents that hazard on the board; it now
+applies to the laser too, in the opposite direction.
+
+### The rest of what the manuals settle
+
+| | |
+|---|---|
+| Interfaces | GPIB, USB (type B, FTDI D2XX, ~1 MB/s), LAN (100BASE-TX, TCP/IP, configurable port, ~30 Mb/s) |
+| Command sets | **Two, selectable** — a legacy TSL-550-compatible set and the native TSL-770/775 SCPI set. They differ in response format **and in the binary logging payload** |
+| Logging payload | Legacy: 4-byte signed ints in 0.1 pm. Native: 8-byte IEEE-754 doubles in metres. Both little-endian, both wrapped in an IEEE 488.2 `#4nnnn` block — the same header shape the Red Pitaya uses |
+| Capacity | 500,000 points, comfortably above the ~122,000 a 1 s sweep at 8.192 µs steps would produce |
+| Trigger output modes | 0 None, 1 Stop, **2 Start**, **3 Step** |
+| Power log | `:READout:DATa:POWer?` — 32-bit floats in dBm. Not needed, but a free cross-check that the log lines up with the sweep |
+
+**Structural question answered: it is a DUMP, not a stream.** `:READout:DATa?`
+reads a completed log, so the driver runs **after** the capture rather than
+alongside it. That is the simpler of the two shapes.
+
+### One design choice worth making deliberately at P1
+
+Trigger mode **2 (Start)** emits a single pulse at sweep start. That is all the
+current alignment scheme actually needs, and it **removes the miscount risk
+entirely** — with one pulse there is nothing to miscount.
+
+Mode **3 (Step)** gives the train, which is what carries the index pairing to the
+logged wavelengths and what makes the free clock-ratio check possible.
+
+They are not interchangeable: with Start alone the wavelength log cannot be
+indexed against anything recorded, so Step is almost certainly right. But it
+should be **chosen**, not inherited from whatever the laser happens to be set to,
+and the choice should be read back and recorded.
+
+### State
+
+`wavelength.py` docstrings corrected; no functional change, and the 20 tests
+still pass unchanged, which is the point — the code was right, the prose about
+it was not. 102 offline tests pass. No hardware touched.
+
+**Q22 answered, Q20 corrected, Q24 raised. Of the three things blocking Phase 2,
+one is now down.** Remaining: **Q11** (photodetector level and impedance) and
+**Q12** (safe drive levels). The Santec driver can be written now, and P1 can run
+with the Red Pitaya switched off.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — H6.2, H6.3, H7.3: PHASE 1 IS COMPLETE
 
 **Every H step in Phase 1 is now done, except two that were deliberately not

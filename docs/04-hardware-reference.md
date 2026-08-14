@@ -399,6 +399,90 @@ Open questions to settle in H1/H2:
   restarts?
 - Are IN1 and IN2 sample-aligned? A fixed skew biases the wavelength mapping.
 
+## The Santec lasers — TSL-770 and TSL-775
+
+Recorded 2026-08-14 from the **TSL-775 operation manual v1.0** (supplied by
+Kevin) and the **TSL-770 operation manual** (santec.com). Nothing here is from
+memory. Neither laser has been connected yet, so none of it is verified on the
+bench — that is P1 in `08-phase2-hardware.md`.
+
+### Communication
+
+| | |
+|---|---|
+| Interfaces | GPIB (IEEE-488), USB (type B, "USB DEVICE" socket, FTDI D2XX driver, ~1 MB/s), LAN (100BASE-TX, TCP/IP, configurable IP and port, ~30 Mb/s) |
+| **Delimiter** | **bare `CR`** |
+| Command sets | Two, selectable. A legacy TSL-550-compatible set, and the native TSL-770/775 SCPI set. **They differ in response formats AND in the binary logging format** |
+
+**The delimiter is a trap.** The Red Pitaya's SCPI uses `CRLF`; the Santec uses
+`CR` alone. A transport written for one will hang waiting on the other, and the
+symptom is a timeout that looks like a dead cable. Do not reuse `hardware.py`'s
+line reader unchanged.
+
+### Reading the wavelength log — the commands that matter
+
+| Command | Does |
+|---|---|
+| `:READout:POINts?` | number of logged points, 0 to 500,000 |
+| `:READout:DATa?` | the wavelength log |
+| `:READout:DATa:POWer?` | the power log, 32-bit float, dBm — a free cross-check |
+
+**The log is wavelength ONLY: one value per trigger pulse, with no timestamps.**
+This is the single most important fact about the laser for this project, and an
+earlier note in the session log got it wrong. The pairing to time is **by index**
+against the trigger pulses recorded on IN2.
+
+Both `:READout:DATa?` responses are IEEE 488.2 definite-length blocks — the same
+`#4nnnn` header the Red Pitaya uses — followed by:
+
+| Command set | Payload | Units |
+|---|---|---|
+| Legacy (TSL-550-compatible) | 4-byte signed integers | 0.1 pm |
+| Native (TSL-770/775 SCPI) | 8-byte IEEE-754 doubles | metres |
+
+**Both are little-endian** ("Intel byte order" in the manuals). Note this is the
+opposite of the Red Pitaya's SCPI path, which is big-endian — the same trap that
+`fast_read` documents, in a second instrument.
+
+### Trigger output
+
+| Command | Values |
+|---|---|
+| `:TRIGger:OUTPut` | 0 None, 1 Stop, 2 Start, **3 Step** |
+| `:TRIGger:OUTPut:ACTive` | 0 rising, 1 falling |
+| `:TRIGger:OUTPut:STEP[:WIDTh]` | the step size, 0.1 pm resolution |
+| `:TRIGger:OUTPut:SETTing` | selects whether the step is in wavelength or in time — **see the warning below** |
+
+**`:TRIGger:OUTPut:SETTing` is documented with INVERTED encodings between the two
+models:**
+
+| | 0 | 1 |
+|---|---|---|
+| TSL-775 manual, p100 | periodic in **wavelength** | periodic in **time** |
+| TSL-770 manual, p99 | periodic in **time** | periodic in **wavelength** |
+
+One is a documentation error, or the models genuinely differ. **Set it and read
+it back; never hardcode it** (Q24). The failure is silent — the wrong mode still
+emits a trigger train, just periodic in the wrong variable, so the wavelength
+spacing comes out wrong with nothing appearing broken.
+
+Also worth knowing: mode **2 (Start)** emits a single pulse at sweep start. That
+is all the current design actually needs for alignment, and it removes the
+miscount risk entirely. Mode 3 (Step) gives the train, which is what lets the
+recorded edges carry the index pairing and the clock check. Worth deciding
+deliberately at P1 rather than inheriting whatever the laser is set to.
+
+### Consequences for the driver
+
+- **It reads AFTER the sweep, not during.** `:READout:DATa?` dumps a completed
+  log, so the driver runs after the capture rather than alongside it.
+- **A 1 s sweep fits comfortably.** The 500,000-point ceiling is well above the
+  ~122,000 pulses a 1 s sweep at 8.192 µs steps would produce.
+- **Which command set the laser is in must be established, not assumed** — it
+  changes the payload from 4-byte integers in 0.1 pm to 8-byte doubles in metres.
+  Reading `:READout:POINts?` and checking the byte count against the header is
+  the cheap way to tell.
+
 ## Safety
 
 Loopback phase: the board's own specifications are the limit. Do not command
