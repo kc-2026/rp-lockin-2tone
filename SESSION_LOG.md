@@ -421,6 +421,65 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — H4: edges recovered, trigger position not
+
+**H4.1 passes comfortably.** A six-edge pattern played from the ASG table and
+recovered on IN2: 733 edges over 122.1 repeats (expected 732), all six designed
+intervals recovered, **zero of 732 intervals failing to match a designed
+value**, worst mean error **0.1 ns = 0.007 samples**.
+
+**H4.2 timing resolution: 0.01 ns rms, 0.002 samples**, against an 8 ns sample
+period at decimation 2.
+
+**Do not quote 0.01 ns as the system's trigger resolution.** Everything in this
+measurement shares one clock — the ASG advances one table entry per DAC tick
+and the ADC samples at exactly half — so edges land at perfectly reproducible
+positions and the threshold interpolation is consistent to numerical precision.
+It measures the *instrument's* contribution, which is negligible. The real
+laser trigger is asynchronous and brings its own jitter and slower edges; that
+is U7, and it remains untestable in loopback.
+
+**H4.4 is where it gets interesting, and it is a partial pass.**
+
+Working: `ACQ:TRig CH2_PE` with `ACQ:TRig:LEV 0.1` triggers the acquisition
+from IN2. And with the level at 2.0 V, above the 0.5 V signal, it correctly
+does not fire and `wait_until` raises cleanly rather than spinning — which
+incidentally covers **H7.2**'s failure mode.
+
+Not working: **locating the trigger instant in the record.** The first edge sat
+9.71 µs into the record and was falling; its interval signature (11.0, 8.0,
+10.536, 7.0 µs) identifies it as the pattern's 41 µs edge, so the record starts
+at table-time 31.3 µs — while the rising edge that fired the trigger was at
+25 µs. The DMA ring was already running, so **buffer offset 0 is not the
+trigger instant**; it is wherever the write pointer happened to be.
+
+That is the limitation already noted in `acquire_deep_fast`'s docstring, now
+confirmed by measurement rather than suspected. It did not surface earlier
+because `ACQ:TRig NOW` fires immediately and the capture happens to begin at
+the region base.
+
+`ACQ:AXI:SOUR<n>:Trig:Pos?` exists precisely for this and returns 0x7F800000 —
+the float bit pattern for infinity. **This blocks H6.4**, the pre-roll test,
+and any accurate placement of the sweep within the record.
+
+Two routes, in preference order:
+
+1. Find a working spelling or an alternative way to read the trigger position.
+   Worth a focused probe before anything else.
+2. Locate everything from the IN2 edge pattern itself. The wavelength
+   calibration already derives from *recorded* trigger edges rather than from
+   the acquisition trigger, so this may be sufficient on its own. The ring wrap
+   still has to be unwrapped, which needs the write pointer either way.
+
+**H4.3 is not done and cannot be done with current hardware.** Confirming IN1
+and IN2 are sample-aligned needs ONE source split to BOTH inputs — a BNC tee.
+Driving OUT1→IN1 and OUT2→IN2 cannot separate input skew from output skew or
+from the ASG's random start phase; all three produce a phase difference
+proportional to frequency and are degenerate. **Needs a BNC tee and a short
+matched cable pair from Kevin.**
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — H3.1 and H3.2 done; H2.5 risk closed
 
 **H3.1 — amplitude linearity: passes over 2.4 decades.** Drove the lock-in

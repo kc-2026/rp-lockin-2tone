@@ -156,7 +156,48 @@ once, and its `VERIFY:` note either removed or replaced with a confirmation.
       2250 Hz bandwidth, −124 dB by 3 kHz, −204 dB at 19 kHz). Still to do on
       the board.
 
-### H4 — trigger digitisation
+### H4 — trigger digitisation — H4.1, H4.2, H4.4 done 2026-08-14
+
+- [x] **H4.1 PASSES, comfortably.** Played a six-edge pattern from the ASG
+      table and recovered it on IN2. 733 edges over 122.1 table repeats
+      (expected 732). All six designed intervals recovered, **zero of 732
+      intervals failed to match a designed value**. Worst mean error 0.1 ns =
+      **0.007 samples**, far inside the "sample or two" this step asks for.
+- [x] **H4.2 timing resolution: 0.01 ns rms (0.002 samples)** at decimation 2,
+      where the sample period is 8 ns. Over a 1 s sweep that is 0.01 ppb.
+      **Do not read this as the resolution the real system will achieve.**
+      Everything here shares one clock — the ASG steps one table entry per DAC
+      tick and the ADC samples at exactly half that — so edges land at
+      perfectly reproducible positions. The real laser trigger is asynchronous
+      to the board and will bring its own jitter and slower, noisier edges.
+      This measures the *instrument's* contribution, which is negligible. The
+      real limit is U7 on the untestable list.
+- [ ] **H4.3 NOT DONE — needs hardware we do not have.** Confirming IN1 and
+      IN2 are sample-aligned requires ONE source split to BOTH inputs, i.e. a
+      BNC tee. Driving OUT1→IN1 and OUT2→IN2 cannot separate input skew from
+      output skew or from the ASG's random start phase — they are degenerate.
+      **Ask Kevin for a BNC tee and a short matched pair of cables.**
+- [x] **H4.4 PARTIAL.** `ACQ:TRig CH2_PE` with `ACQ:TRig:LEV 0.1` does trigger
+      the acquisition from IN2 — confirmed. And with the level set to 2.0 V,
+      above the 0.5 V signal, it correctly does **not** fire and `wait_until`
+      raises cleanly instead of hanging (which also covers H7.2's failure
+      mode).
+      **But where the trigger lands in the record is UNRESOLVED, and this
+      blocks H6.4.** The first edge in the record was 9.71 µs in and falling;
+      its interval signature identifies it as the pattern's 41 µs edge, so the
+      record starts at table-time 31.3 µs while the rising edge that fired the
+      trigger was at 25 µs. In other words the DMA ring was already running and
+      **buffer offset 0 is not the trigger instant** — it is wherever the write
+      pointer happened to be. `ACQ:AXI:SOUR<n>:Trig:Pos?` exists to resolve
+      this and returns 0x7F800000, the float bit pattern for infinity.
+      Two ways forward, in preference order: find a working spelling or method
+      for the trigger position, or locate everything from the IN2 edge pattern
+      itself — the wavelength calibration already derives from recorded edges
+      rather than from the acquisition trigger, so this may be sufficient. The
+      ring wrap still has to be unwrapped either way, which needs the write
+      pointer.
+
+### H4 — trigger digitisation (original wording)
 
 **Wiring:** OUT2 → IN2.
 
