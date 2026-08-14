@@ -203,12 +203,27 @@ What that changes:
   sweep-start edge is not the same task as recovering thousands of intervals
   without losing any. See the decimation note in `05-hardware-notes.md`.
 
-**Caveat, unresolved:** this assumes the Santec's trigger output is configured to
-fire **once per sweep**. Santec TSL lasers can also emit a trigger per wavelength
-step, which would put a pulse train back on IN2 — a *better* one, since each
-pulse would then have a known wavelength, but a train nonetheless, and the
-missed-edge question would return with it. **Confirm the trigger mode before
-relying on the paragraph above.** See Q18.
+**Confirmed 2026-08-14 (Kevin):** the Santec triggers at set **time** steps, so
+IN2 does carry a periodic pulse train — but **only the first edge is used**, to
+synchronise the laser and the board. Alignment depends on one edge, not on
+recovering the train intact, so the paragraphs above hold and the missed-edge
+question is closed for alignment purposes.
+
+**Do not discard the rest of the train.** It is recorded anyway, and because the
+pulses are evenly spaced in time it is a direct measurement of how the laser's
+clock compares to the board's: fit a line through the recorded edge times and
+compare the slope against the laser's nominal step. That turns U11 from an
+assumption into a per-sweep check, for free, from data already captured. A few
+missing edges do not disturb a slope fit through hundreds of them, and a missed
+edge is visible as a double-length gap.
+
+**The one way this still fails silently — see Q21.** The laser reports wavelength
+against time *from its own first trigger*, and the board defines t = 0 from *its*
+first trigger. If the acquisition arms late and latches the second pulse instead
+of the first, every wavelength is off by exactly one time step and **the trace
+looks entirely normal** — same shape, wrong labels. Arm before the sweep starts
+and use pre-roll, then cross-check the pulse count in the record against the
+length of the laser's table.
 
 ### H4 — results as measured (H4.1, H4.2, H4.4 done 2026-08-14)
 
@@ -400,7 +415,8 @@ where a loopback pass does **not** imply the real system works.
 | U6 | Real noise environment | Loopback is quiet | SNR far worse than predicted |
 | U7 | Santec trigger output: level, polarity, width, and whether it fires once per sweep or per step (Q18) | Emulated | Capture not triggered, or a pulse train appears where one edge was expected |
 | U10 | The Santec serial link — command set, timing, and whether its reported wavelength is trustworthy | Laser not connected; no driver written yet | **The wavelength axis is now entirely dependent on this.** A wrong or mis-aligned report mislabels every point, and nothing in the trace would look wrong |
-| U11 | Clock relationship between the laser and the Red Pitaya (Q19) | Two instruments, one not present | Wavelength assignment drifts across the sweep even with the origin correctly aligned |
+| U11 | Clock relationship between the laser and the Red Pitaya (Q19) | Two instruments, one not present | Wavelength assignment drifts across the sweep even with the origin correctly aligned. **Mitigated:** the time-stepped trigger train measures this directly per sweep — see Q19 |
+| U12 | That both sides agree on which edge is "the first trigger" (Q21) | Needs the real laser and a real sweep | **Every wavelength offset by one time step, with a trace that looks perfectly normal.** The most dangerous item on this list, because it is silent |
 | U8 | Actual sweep repeatability of the laser | Not in the loop | Wavelength calibration drift |
 | U9 | Ground loops and pickup with everything connected | Single-box loopback | 80 MHz leakage into the detector path |
 

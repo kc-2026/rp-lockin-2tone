@@ -421,6 +421,88 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — Q18–Q20 answered; one new silent failure found
+
+Kevin answered all three questions raised in the entry below. Summary, then the
+consequences, then the one new risk they create.
+
+| | Answer (Kevin, 2026-08-14) |
+|---|---|
+| **Q18** trigger mode | Fires at **fixed TIME steps** — so IN2 does carry a pulse train. **Only the first edge is used**, to synchronise laser and board |
+| **Q19** clocks | Already very closely synchronised; an external timebase can be attached if wanted |
+| **Q20** serial report | **Wavelength against relative time from the first trigger** |
+
+### The mapping is now genuinely simple
+
+Both sides define t = 0 as the first trigger, so there is no sweep-rate
+assumption and no step-index arithmetic anywhere: find the first trigger edge in
+the record, call it zero, and look each trace point's time up in the laser's
+table. That is about as clean as this could have been.
+
+**The memory question is now properly closed.** Alignment needs one edge, not an
+intact train, so the 1.17% missed-interval figure cannot affect it. Recorded in
+`05-hardware-notes.md`. One honesty note kept there: **the memory question closed
+because the requirement vanished, not because the fault was understood.** The
+missed-edge mechanism is still unexplained — the recorded cause is off by a
+factor of a hundred, see the entry below — and if some future design needs the
+whole train recovered intact, that fault is still sitting there.
+
+### The discarded part of the train is worth more than it looks
+
+Q18 says the pulses are evenly spaced **in time**. That makes the recorded train
+a direct measurement of how the laser's clock compares to the board's: fit a line
+through the recorded edge times and compare the slope against the laser's
+nominal step. **U11 stops being an assumption and becomes a per-sweep
+measurement, from data already captured, for free.**
+
+Worth doing even with an external timebase fitted — it is the check that the
+timebase is actually working, and it costs nothing but a line fit. A few missing
+edges do not disturb a slope through hundreds of them, and a missed edge shows
+up as a double-length gap that is easy to reject. So decimation 8 is fine for
+this purpose too.
+
+### The new risk: "the first trigger" is defined twice, independently — Q21
+
+The laser reports wavelength against time from **its** first trigger. The board
+takes t = 0 from **its** first trigger. Nothing guarantees those are the same
+edge. **If the acquisition arms late and latches the second pulse, every
+wavelength in the sweep is offset by exactly one time step — and the trace looks
+completely normal.** Same shape, same amplitudes, same noise; just wrong labels.
+There is no internal evidence of the error anywhere in the data.
+
+This is the most dangerous item now on the untestable list (added as U12),
+because it is silent, and because both mitigations are so cheap there is no
+reason to skip them:
+
+1. **Arm the capture before the sweep starts, and use pre-roll.** H6.4 already
+   proved pre-roll works and delivers real pre-trigger data.
+2. **Cross-check the pulse count in the record against the length of the laser's
+   table.** If the laser reports N points and the record holds N pulses, the
+   first ones match. If the record holds N−1, it started late.
+
+Both are software, both are free, and together they turn a silent failure into a
+loud one. **Build them into the driver from the start rather than adding them
+after a confusing result.**
+
+### State of the trigger work
+
+`04-test-plan.md` H4 now reflects all of this. H4.4 — trigger the acquisition
+from IN2 and know where the trigger sits in the record — is the load-bearing
+test and passes, including the fixed 1.14 sample (9.1 ns) offset between
+`Trig:Pos` and the true threshold crossing, which should be subtracted when the
+absolute instant matters. It matters here.
+
+### Next
+
+The Santec serial driver is now the critical path, and its shape is known. Still
+needed before writing it: the serial command set, the port settings, and whether
+the wavelength table streams live during the sweep or is dumped afterwards. The
+Q21 checks above should be part of it, not bolted on later.
+
+Unaffected and available meanwhile: H7 robustness, and H3.5's board half.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — the wavelength axis comes from the laser, not the trigger
 
 **Kevin, 2026-08-14: the lasers are Santec, and they can report their own

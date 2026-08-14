@@ -332,19 +332,23 @@ DMA region moved into the upper half of RAM — an edit that changes a node name
 an alias, and places the region outside the kernel's memory map, with a
 non-booting board as the failure mode.
 
-**Reinforced 2026-08-14: the main objection to decimation 8 has gone away.** That
+**Settled 2026-08-14: the main objection to decimation 8 has gone away.** That
 objection was that 1.17% of trigger intervals fail to match at decimation 8, which
 mattered while the wavelength axis was derived from edge intervals. It no longer
 is — the Santec laser reports its own wavelength over serial, and the trigger only
 has to align the sweep with the capture. Detecting one sweep-start edge is a far
 easier task than recovering thousands of intervals without losing any.
 
-So **the memory move is not needed**, on the current understanding. Two caveats
-keep it from being fully closed: the missed-edge mechanism itself was never
-explained (the recorded cause is off by a factor of a hundred — see the log), and
-this rests on the Santec being configured to trigger once per sweep rather than
-once per wavelength step (Q18). If it turns out to be per-step, the pulse train
-is back and so is this question.
+**Confirmed with Kevin 2026-08-14:** the Santec triggers at fixed *time* steps, so
+the train is periodic — but **only its first edge is used**, to give both
+instruments a common t = 0. Alignment never depended on recovering the train
+intact, so **the memory move is not needed.**
+
+One caveat remains, and it is about honesty rather than risk: the missed-edge
+mechanism was never explained — the recorded cause is off by a factor of a
+hundred (see the log). The memory question is closed because the requirement
+vanished, not because the fault was understood. If some future design needs the
+whole train recovered intact, that fault is still there and still unexplained.
 
 Note the margin is thin: 1 s at decimation 8 is 119 MB, and 43 ms of pre-roll
 adds ~5 MB, so ~124 MB of 128 MB. Decimation 16 leaves comfortable headroom

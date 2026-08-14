@@ -16,10 +16,18 @@ second. It is a **Santec**, and it can report its own wavelength against time
 over a serial link.
 
 **Wavelength calibration comes from the laser over serial, NOT from trigger-edge
-timing (Kevin, 2026-08-14).** The laser's trigger output goes to the Red Pitaya's
-trigger input purely to **align the sweep with the capture** — to establish the
-common time origin. The wavelength for each point then comes from the laser's own
-report, and the deliverable becomes power against wavelength directly.
+timing (Kevin, 2026-08-14).** The laser reports **wavelength against relative time
+from its first trigger**. Its trigger output fires at fixed time steps and goes to
+the Red Pitaya's trigger input; **only the first edge is used**, to give both
+instruments the same t = 0. The wavelength for each trace point is then a lookup
+against the laser's table, with no sweep-rate assumption anywhere, and the
+deliverable becomes power against wavelength directly.
+
+**The one silent failure to design against:** both sides define t = 0 as "the
+first trigger", but independently. If the acquisition arms late and latches the
+second pulse, every wavelength shifts by exactly one time step and the trace
+looks perfectly normal. Arm before the sweep, use pre-roll, and check the pulse
+count against the table length. See Q21.
 
 The trigger train is still digitised on IN2, but its job shrank from "encode the
 wavelength axis in its interval timing" to "mark where the sweep begins".

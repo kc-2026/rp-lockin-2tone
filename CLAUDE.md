@@ -28,9 +28,13 @@ trigger the capture from the laser's trigger output on IN2, demodulate in
 software, and deliver a 5000-point trace of **amplitude** across the sweep.
 
 **The wavelength axis comes from the laser over serial, not from trigger timing**
-(Kevin, 2026-08-14). The trigger only fixes the common time origin. Reading the
-Santec over serial is new work that exists nowhere in the codebase yet — see Q18,
-Q19 and Q20.
+(Kevin, 2026-08-14). The Santec reports wavelength against relative time from its
+first trigger; that trigger also starts the capture, so both share t = 0. Reading
+the Santec is new work that exists nowhere in the codebase yet.
+
+**The trap to design against is Q21:** both sides call t = 0 "the first trigger",
+independently. Latch the second pulse instead of the first and every wavelength
+is off by one time step, with a trace that looks entirely normal.
 
 Everything is done in software on a control PC. There is no FPGA work in scope.
 
@@ -179,9 +183,9 @@ Key-based SSH is installed, so the board helper no longer needs a human — see
 
 **The largest open work is not on this list.** The wavelength axis now comes from
 the Santec laser over serial (Kevin, 2026-08-14), and **no driver for that exists**
-— not a line of it. See Q18, Q19, Q20 for what has to be established first:
-which trigger mode the laser is in, how the two instruments' clocks relate, and
-whether the laser reports wavelength against time or against a step index.
+— not a line of it. Q18–Q20 are answered, so its shape is now known; what remains
+is the serial command set, the port settings, and whether the wavelength table
+streams live or is dumped after the sweep.
 
 That change also **defused the decimation/memory question.** It was live only
 because the wavelength axis depended on recovering trigger intervals exactly; it
