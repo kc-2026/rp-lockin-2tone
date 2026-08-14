@@ -260,10 +260,33 @@ The emulated-DUT test at full sweep length needs a waveform longer than the
       count and measure the transfer time.
 - [ ] H6.3 Demodulate to exactly 5000 points. Confirm the count and that the
       time axis spans the sweep correctly.
-- [ ] H6.4 **Verify the pre-roll works.** Filter settling costs ~108 output
-      points (22 ms). Confirm that placing the trigger inside the record, with
-      pre-trigger data ahead of it, yields a trace that is already settled when
-      the sweep begins. Without this the first 2% of every sweep is garbage.
+- [x] **H6.4 PASSES 2026-08-14.** Compared two captures of the same constant
+      signal, triggered from IN2:
+
+      | | Trace starts | Result |
+      |---|---|---|
+      | no pre-roll | 10.8 ms **after** the trigger | 1.1% of the sweep lost |
+      | 43.2 ms pre-roll | 32.4 ms **before** the trigger | fully covered |
+
+      The pre-roll region reads as real signal (1.0 × steady, versus ~0 for
+      unwritten memory), so it is genuine pre-trigger data.
+
+      **Correction to the wording above: without pre-roll the start of the
+      sweep is ABSENT, not garbage.** `demodulate()` trims the settling
+      transient internally, so it never reaches the output — the trace simply
+      does not begin until the filter is valid. Nothing looks wrong; the trace
+      is just short at the front, and only the time axis reveals it. Arguably
+      easier to miss than corruption would be.
+
+      Two defects in `acquire_deep_fast` were found and fixed getting here:
+      **(1)** the DMA must be given time to accumulate history before the
+      trigger is armed — a trigger firing immediately after `ACQ:START` leaves
+      nothing behind it, and the "pre-roll" reads back as near-silence, which
+      looks like a dead input rather than a sequencing error;
+      **(2)** reads must be referenced to `Trig:Pos` whenever there is a real
+      trigger, not only when pre-roll is requested — reading from offset 0
+      after a real trigger returns an arbitrary point in the ring, which looks
+      entirely plausible and silently misplaces every event in the record.
 - [ ] H6.5 End-to-end: emulated DUT response plus emulated trigger train,
       captured together, demodulated, and mapped onto a time axis using the
       recovered trigger edges. Compare against ground truth. **This is the

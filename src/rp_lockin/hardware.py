@@ -428,6 +428,14 @@ class RedPitaya:
             self.write(f"ACQ:AXI:SOUR{ch}:ENable ON")
 
         self.write("ACQ:START")
+        if preroll_samples:
+            # THE RING MUST ALREADY HOLD THAT MUCH HISTORY before the trigger
+            # is allowed to fire. The DMA only starts writing at ACQ:START, so
+            # a trigger arriving immediately leaves nothing behind it and the
+            # "pre-roll" is memory that was never written this capture -- it
+            # reads back as near-silence, which looks like a dead input rather
+            # than a sequencing error. Measured that way once; hence the wait.
+            time.sleep(1.5 * preroll_samples * decimation / self.base_rate)
         self.write(f"ACQ:TRig {trigger}")
         self.wait_until("ACQ:TRig:STAT?", "TD", timeout=trigger_timeout,
                         what=f"deep acquisition trigger ({trigger})")
@@ -440,13 +448,17 @@ class RedPitaya:
         out = []
         try:
             for i, ch in enumerate(channels):
-                if preroll_samples:
-                    # Trig:Pos is only meaningful once a trigger has fired.
+                if trigger.upper() != "NOW":
+                    # Reference to the trigger whenever there IS one, not only
+                    # when pre-roll is asked for. Reading from offset 0 after a
+                    # real trigger returns data from an arbitrary point in the
+                    # ring -- it looks plausible, and silently misplaces every
+                    # event in the record. Trig:Pos is only meaningful once a
+                    # trigger has actually fired.
                     pos = int(self.query(f"ACQ:AXI:SOUR{ch}:Trig:Pos?"))
                     first = pos - preroll_samples
                 else:
-                    # No trigger reference wanted: the immediate-trigger case
-                    # starts the capture at the region base.
+                    # ACQ:TRig NOW starts the capture at the region base.
                     first = 0
                 out.append(self._fast_read_wrapped(
                     (i * per_ch) // 2, per_ch_samples, first, n_samples, port))

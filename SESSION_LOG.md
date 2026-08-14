@@ -421,6 +421,46 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — H6.4 passes; pre-roll proven
+
+| | Trace starts | Result |
+|---|---|---|
+| no pre-roll | 10.8 ms **after** the trigger | 1.1% of the sweep lost |
+| 43.2 ms pre-roll | 32.4 ms **before** the trigger | **fully covered** |
+
+Same constant 991.821 kHz signal on IN1, triggered from IN2, decimation 4. The
+pre-roll region reads 1.0 × steady rather than ~0, so it is genuine
+pre-trigger data and not unwritten memory.
+
+**Correction to the project's own framing.** `04-test-plan.md` said "without
+this the first 2% of every sweep is garbage." It is not garbage — it is
+**absent**. `demodulate()` trims the settling transient internally, so it never
+reaches the output; the trace simply does not begin until the filter is valid.
+Nothing looks wrong, the trace is just short at the front, and only the time
+axis shows it. That is arguably easier to miss than corruption.
+
+**Two defects in `acquire_deep_fast`, both found by this test, both fixed:**
+
+1. **The DMA must accumulate history before the trigger is armed.** It only
+   starts writing at `ACQ:START`, so a trigger firing immediately leaves
+   nothing behind it and the pre-roll region is memory that was never written
+   this capture. It reads back as near-silence — which presents as a dead
+   input, not as a sequencing error. Now waits 1.5 × the pre-roll duration
+   before issuing the trigger command.
+2. **Reads must reference `Trig:Pos` whenever there is a real trigger**, not
+   only when pre-roll is requested. Reading from offset 0 after a real trigger
+   returns an arbitrary point in the ring. It looks entirely plausible and
+   silently misplaces every event in the record — which is exactly what
+   corrupted the timing in the stepped-amplitude run below.
+
+**Also worth noting how the first attempt at this test failed.** It looked for
+a settling *transient* at the start of the trace and found none in either
+capture, concluding both were fine. The transient can never appear, because
+`demodulate()` trims it. Measuring coverage rather than corruption is what made
+the difference visible. A test that cannot fail is not evidence.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — H5.1 answered; first full-length capture
 
 **H5.1 / Q5: Deep Memory Generation does NOT exist on this OS.** Nine candidate
