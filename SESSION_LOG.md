@@ -421,6 +421,153 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — H3.5 board half, H7.1/H7.2/H7.4; two real defects fixed
+
+All loopback, outputs off at the end of every step and at the end.
+
+### H3.5 board half PASSES, and the agreement is better than expected
+
+Drove OUT1 at f_lockin + delta and demodulated at f_lockin. A tone offset by
+delta lands at delta in the baseband as a vector of constant magnitude
+A·|H(delta)| rotating at delta — so the magnitude is the measurement, and it
+survives delta exceeding the output Nyquist, because downsampling changes the
+apparent rotation rate and not the magnitude.
+
+| Offset | Measured | Predicted | Diff |
+|---:|---:|---:|---:|
+| 0–1500 Hz | −0.0 dB | −0.0 dB | 0.0 |
+| 2000 Hz | −0.8 dB | −0.8 dB | 0.0 |
+| **2250 Hz** (nominal bandwidth) | **−12.1 dB** | **−12.0 dB** | **0.0** |
+| 2500 Hz | −92.1 dB | −96.8 dB | at the noise floor |
+| 3000, 5000 Hz | −95, −96 dB | −124, −106 dB | at the noise floor |
+
+**Over the seven points above the noise floor the worst disagreement with the
+designed filter response is 0.0 dB.** The filter does exactly what it was
+designed to do.
+
+Points past 2500 Hz are **lower bounds, not measurements**: a 0.5 V drive against
+the 3.57 µV floor is 102 dB of range, and the residual 6.7–11 µV is what
+complex-Gaussian noise gives (σ√2 = 5.05 µV). The script labels them as such
+rather than reporting −95 dB as if it were the filter.
+
+### The counts-per-volt discrepancy is real, and loopback cannot resolve it
+
+A commanded 0.5 V came back as **902.8 counts**. At the 2048 counts/V this
+codebase assumes, that is 0.4408 V — **12% low**, which is implausible next to
+H3.1's 0.3% linearity and H2.2's 2% modulation depth.
+
+902.8 counts for a nominal 0.5 V implies **1816.9 counts/V**, against the 1817.7
+figure the H3.3 re-measurement flagged as "inherited and unverified". Those agree
+to **0.04%**, from an unrelated measurement. So 1817.7 is right.
+
+**But what it is a constant OF is the open question, and it matters.** Loopback
+measures DAC × cable × ADC as one number. It cannot say whether the 0.882 factor
+sits in the generator or the ADC, because the only instrument available to
+measure the generator is that same ADC. And the distinction matters: in the real
+experiment the photodetector drives the input **directly, with no DAC involved**,
+so only the ADC's share applies.
+
+Consequence for H3.3: σ is measured in counts and converted with this constant.
+If the factor is in the ADC, the noise figures should use 1817.7 and the current
+numbers stand. **If it is in the DAC, the ADC really is 2048 counts/V and every
+absolute noise figure is 12.7% too high.** Raised as **Q23**. Resolving it needs
+either a calibrated source into the input or a calibrated meter on the output —
+neither is a loopback measurement.
+
+### H7.2 PASSES — and fixing it fixed today's mystery wedge
+
+Armed on CH2_PE at 2.0 V with the outputs off, so nothing could fire it. Raised
+`TimeoutError` after 8.7 s against an 8 s budget, with a message naming the
+trigger source. **H7.2's stated failure mode — hanging forever — does not occur.**
+
+**But the first attempt left the board unusable, and that was a real defect.**
+`acquire_deep_fast`'s cleanup `finally` only wrapped the *read*. When the trigger
+never arrived, `wait_until` raised from **above** that block, so `ACQ:START`
+stayed active and both channels stayed `ENable ON`. A board left armed that way
+**stops answering SCPI queries entirely** — the TCP connection still accepts, so
+it presents as a dead cable or a hung PC rather than as a capture that was never
+disarmed. Recovering needs the SCPI server restarted by hand.
+
+That is almost certainly what wedged the server earlier today, and it is
+diagnostically nasty: every symptom points away from the cause. **Fixed** — the
+cleanup now covers arming, triggering, filling and reading, issues `ACQ:STOP`
+as well as the per-channel disables, and swallows errors so the original
+exception survives.
+
+### H7.4 FAILED, then was fixed
+
+`close()` only shut the socket. **An unhandled exception anywhere in a
+measurement script left the generator driving indefinitely, with nobody
+watching.** Confirmed on hardware: after a simulated crash inside a `with` block,
+`OUTPUT1:STATE?` still read `1`.
+
+`tests/hardware/conftest.py` disarms outputs for the hardware suite, which is
+exactly why this survived — the gap only ever showed in ad-hoc scripts, and
+ad-hoc scripts are where most of this project's measuring actually happens.
+
+**Fixed:** `close()` now switches both outputs off first, best-effort, never
+raising — it usually runs while an exception is already propagating, and the
+useful exception is the original one. `close(disable_outputs=False)` opts out.
+Re-ran on hardware: `OUT1=0` after the crash. **PASSES.**
+
+Five offline tests added (`tests/test_hardware_safety.py`) using a fake socket,
+including one that pins the disarm as coming *after* the enable, and one that
+proves a failing disarm does not replace the real exception. Suite is 101.
+
+### H7.1 PASSES — twenty sweeps, and one number changes the decimation story
+
+Twenty full-second two-channel captures at decimation 8, triggered from a
+trigger train on IN2 with 45 ms of pre-roll. 20/20 succeeded, 239 s total.
+
+| Quantity | Result |
+|---|---|
+| **Amplitude** | **0.0029% rms** (sd 0.0105 counts on 360.454) |
+| **First edge in the record** | **1.330 µs, sd 6 ns**, range 19 ns — well inside one 32 ns sample |
+| Recovered train step | 8.192 µs, sd 1.6e-12 µs |
+| `Trig:Pos` | sd 17757 samples (2.6 ms range) |
+| **Edge count** | **122071 on every single run. Zero variance. Zero missing.** |
+
+Amplitude reproducing to 0.003% and the first edge to 6 ns is far better than
+anything the measurement needs.
+
+`Trig:Pos` scattering by 2.6 ms is expected and harmless — the trigger fires
+wherever the DMA ring pointer happens to be. It is why reads are referenced to
+`Trig:Pos` rather than to the region base.
+
+**The edge count is the interesting one. At decimation 8, with a uniformly
+spaced train, edge recovery was perfect across 2.4 million edges.** That sits
+badly with the recorded "1.17% of intervals fail to match at decimation 8", and
+supports the arithmetic objection raised earlier: the recorded cause (20 ns rise
+against a 32 ns sample period) is identical in both experiments, so it cannot
+explain one failing and the other not.
+
+**What differs is the pattern**: H6.5 used H4.1's deliberately *uneven* intervals;
+this used a uniform 8.192 µs train, which is what Q18 says the Santec actually
+emits. **This does not explain the 1.17%** — it was not reproduced, so its cause
+is still unknown — but it does show decimation 8 is not inherently lossy, and it
+is the more representative test now.
+
+Worth being clear about what the clock measurement did **not** show. It read
+0 ppm offset with a standard deviation of 2e-7 ppm, which sounds superb and
+proves nothing about U11: in loopback the generator and the ADC share one clock,
+so there is no clock difference to detect. It validates the machinery, not the
+premise. **U11 stays open until the real laser is attached.**
+
+Also noted while setting this up: run `analyse_trigger_train` on an *uneven*
+train and it reports one missing pulse per pattern period, because the long wrap
+interval rounds to two steps. That is the routine used outside its stated
+assumption of a fixed step, not a fault — but it is an easy mistake and the H7.1
+script now says so where the pattern is defined.
+
+### Still open
+
+**H7.3, mid-capture disconnect** — attempted last, deliberately, because the
+plausible failure is another wedged SCPI server and that needs a human to
+restart. **SCPI server restarts are Kevin's, not the agent's** (asked
+2026-08-14); the deny list now blocks `systemctl` on the board.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — wavelength mapping built; the serial half deliberately not
 
 Kevin: the lasers are a **Santec TSL-770 and TSL-775**, not connected during

@@ -31,7 +31,7 @@ Together these cover everything except the DUT physics and the analog chain.
 
 ## Phase 0 — offline (COMPLETE)
 
-`pytest` — 96 tests, no hardware. Must stay green.
+`pytest` — 101 tests, no hardware. Must stay green.
 
 Covers: demodulation accuracy, noise scaling, filter settling, streaming block
 equality, time-axis correctness, waveform commensurability, capture planning,
@@ -176,7 +176,16 @@ once, and its `VERIFY:` note either removed or replaced with a confirmation.
       σ tracks √ENBW to ~1.5%, better than it tracks √(nominal bandwidth),
       because the ENBW/bandwidth ratio drifts slightly with bandwidth. Scale by
       √ENBW if you need the noise at some other setting.
-- [ ] H3.5 **(half done)** Deliberately offset the demodulation frequency by a few kHz and
+- [x] **H3.5 PASSES 2026-08-14, both halves.** On the board: drove OUT1 at
+      f_lockin + delta and demodulated at f_lockin. **Over the seven
+      offsets above the noise floor, the worst disagreement with the
+      designed filter response is 0.0 dB** — including −12.1 dB measured
+      against −12.0 dB predicted at the 2250 Hz nominal bandwidth.
+      Offsets past 2500 Hz are **lower bounds, not measurements**: a 0.5 V
+      drive against the 3.57 µV floor gives 102 dB of range, and the
+      residual 6.7–11 µV is what complex-Gaussian noise produces.
+      Turned up a calibration discrepancy — see **Q23**.
+- [x] H3.5 (original wording) Deliberately offset the demodulation frequency by a few kHz and
       confirm the response falls off as the filter predicts. **Offline half done
       2026-08-12** (rejection table in `SESSION_LOG.md`: −12 dB at the nominal
       2250 Hz bandwidth, −124 dB by 3 kHz, −204 dB at 19 kHz). Still to do on
@@ -393,12 +402,48 @@ The emulated-DUT test at full sweep length needs a waveform longer than the
 
 ### H7 — robustness
 
-- [ ] H7.1 Repeat H6.5 twenty times. Quantify sweep-to-sweep repeatability of
-      amplitude, phase and timing.
-- [ ] H7.2 Confirm behaviour when the trigger never arrives — should time out
-      cleanly, not hang.
-- [ ] H7.3 Confirm behaviour on a mid-capture disconnect.
-- [ ] H7.4 Confirm outputs end up off after a crash.
+- [x] **H7.1 PASSES 2026-08-14.** Twenty full-second two-channel captures
+      at decimation 8, triggered with 45 ms pre-roll. **20/20 succeeded.**
+      **Amplitude reproduces to 0.0029% rms**; the first trigger edge lands
+      at the same point in the record to **6 ns rms** (range 19 ns, well
+      inside one 32 ns sample). Drive held constant rather than stepped as
+      H6.5 did, to separate sweep-to-sweep variation from within-sweep
+      structure. Phase is not a deliverable (see `01-project-spec.md`) so
+      it is not quantified here; H3.2 covers phase stability.
+      `Trig:Pos` scatters by 2.6 ms and that is expected — the trigger fires
+      wherever the DMA ring pointer sits, which is why reads reference it
+      rather than the region base.
+      **Edge count was 122071 on every run, zero variance, zero missing —
+      2.4 M edges at decimation 8 with no losses.** That sits badly with
+      H6.5's 1.17% and is discussed under H6.5 and in `SESSION_LOG.md`.
+- [x] **H7.2 PASSES 2026-08-14.** Armed on CH2_PE at 2.0 V with outputs
+      off. Raised `TimeoutError` after 8.7 s against an 8 s budget, naming
+      the trigger source. **It does not hang.**
+      **The first attempt left the board unusable, which was a real defect
+      and is now fixed.** `acquire_deep_fast`'s cleanup only wrapped the
+      read, so a trigger that never arrived raised from above it and left
+      `ACQ:START` active with both channels enabled. **A board left armed
+      that way stops answering SCPI entirely** — TCP still accepts, so it
+      looks like a dead cable or a hung PC, and recovery needs the SCPI
+      server restarted by hand. Cleanup now spans arming through reading.
+- [ ] H7.3 Confirm behaviour on a mid-capture disconnect. **Not yet done.**
+      The plausible failure is another wedged SCPI server, and **restarting
+      it is Kevin's job, not the agent's** (2026-08-14). Run it when he is
+      at the bench. Testable in three parts: a closed socket mid-sequence,
+      the fast-read helper absent, and the helper killed mid-transfer. A
+      physically unplugged cable needs a human either way.
+- [x] **H7.4 FAILED 2026-08-14, then was fixed and passes.**
+      `close()` only shut the socket, so **an unhandled exception anywhere
+      in a measurement script left the generator driving indefinitely.**
+      Confirmed on hardware: `OUTPUT1:STATE?` still read `1` after a
+      simulated crash inside a `with` block.
+      `tests/hardware/conftest.py` disarms outputs for the hardware suite,
+      which is exactly why this survived — the gap only showed in ad-hoc
+      scripts, which is where most measuring here actually happens.
+      `close()` now disarms both outputs first, best-effort and never
+      raising, since it usually runs while an exception is already
+      propagating. `close(disable_outputs=False)` opts out. Five offline
+      tests in `tests/test_hardware_safety.py` pin it.
 
 ---
 

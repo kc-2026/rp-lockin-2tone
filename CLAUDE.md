@@ -63,7 +63,7 @@ This distinction matters more than usual here.
 
 | Area | Status |
 |---|---|
-| `src/rp_lockin/dsp.py` | **Trusted.** 96 offline tests. Do not change without re-running them. |
+| `src/rp_lockin/dsp.py` | **Trusted.** 101 offline tests. Do not change without re-running them. |
 | `planning.py`, `emulator.py` | **Trusted.** Same suite. |
 | `waveforms.py` — `make_am_table`, `plan_two_tone_grid` | **Trusted and hardware-verified.** Use these to drive the board. |
 | `waveforms.py` — `make_am_waveform`, `plan_two_tone` | **Sound arithmetic, WRONG hardware model.** Kept because their tests are worth having. Driving the board with them produces no output at all. |
@@ -173,14 +173,17 @@ Key-based SSH is installed, so the board helper no longer needs a human — see
 | H3.2 phase stability | done — 0.002° over 28 ms |
 | H3.3 noise floor / Q8 | **done, revised twice — σ = 3.57 µV per trace point; ≥36 µV of signal gives SNR 10.** Do not quote the earlier 2.96 µV |
 | H3.4 √bandwidth law | done — holds to 2–4% over 8× in bandwidth |
-| H3.5 offset response | **offline half only**; board half not started |
+| H3.5 offset response | **done — measured rejection matches the designed filter to 0.0 dB** over the range above the noise floor |
 | H4.1–H4.4 trigger | done — edges recovered exactly, inputs aligned to 0.0005 samples, `Trig:Pos` solved |
 | H5.1 Deep Memory Gen | **answered: NOT AVAILABLE.** 16384-point ceiling is permanent |
 | H5.2 / H5.3 | superseded — H6.5 emulated the DUT by stepping amplitude instead |
 | H6.1 memory move | **deliberately not done** — see the memory section in `05-hardware-notes.md` |
 | H6.4 pre-roll | done — and two real `acquire_deep_fast` defects fixed getting there |
 | H6.5 full capture | **PASSES** — the Phase 1 exit criterion |
-| H7.1–H7.4 robustness | **none started. This is the main remaining Phase 1 work.** |
+| H7.1 repeatability | **done — 20/20 sweeps, amplitude to 0.0029% rms, first edge to 6 ns** |
+| H7.2 trigger never arrives | **done — raises cleanly; fixed a defect that left the board armed and SCPI wedged** |
+| H7.3 mid-capture disconnect | **not started — needs Kevin at the bench**, since the likely failure needs an SCPI restart |
+| H7.4 outputs off after a crash | **failed, then fixed — `close()` now disarms both outputs** |
 
 **The largest open work is not on this list: the Santec transport.** The lasers are
 a **TSL-770 and a TSL-775** (Kevin, 2026-08-14) and are not connected during
@@ -237,7 +240,7 @@ move it into the relevant doc and note it in the session log.
 python -m venv .venv
 .venv/Scripts/python -m pip install -e ".[dev]"     # Windows
 .venv/bin/python -m pip install -e ".[dev]"         # Linux
-pytest -q                                            # expect 96 passed
+pytest -q                                            # expect 101 passed
 ```
 
 Most machines here run Windows; keep the suite passing on it. One test uses

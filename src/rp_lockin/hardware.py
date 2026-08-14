@@ -51,7 +51,32 @@ class RedPitaya:
 
     # -- plumbing ----------------------------------------------------------
 
-    def close(self) -> None:
+    def close(self, disable_outputs: bool = True) -> None:
+        """
+        Disconnect, switching both outputs off on the way out.
+
+        H7.4 caught this: before 2026-08-14, close() only shut the socket, so an
+        unhandled exception anywhere in a measurement script left the generator
+        driving indefinitely with nobody watching. `tests/hardware/conftest.py`
+        disarms outputs for the test suite, which masked the gap -- every ad-hoc
+        script had it.
+
+        The disarm is best-effort and never raises. It runs on the way out of a
+        failure most of the time, and the useful exception is the original one,
+        not whatever a doomed write hits afterwards. A wedged or already-closed
+        socket therefore just skips it.
+
+        `disable_outputs=False` opts out, for the rare case of deliberately
+        leaving a signal running across a disconnect. Nothing in this project
+        does that, and the loopback safety rule in CLAUDE.md is that outputs are
+        never left enabled -- so if you reach for it, say why in the log.
+        """
+        if disable_outputs:
+            for ch in (1, 2):
+                try:
+                    self.write(f"OUTPUT{ch}:STATE OFF")
+                except OSError:
+                    pass
         try:
             self._sock.close()
         except OSError:
@@ -427,26 +452,34 @@ class RedPitaya:
             self.write(f"ACQ:AXI:SOUR{ch}:SET:Buffer {start + i * per_ch},{per_ch}")
             self.write(f"ACQ:AXI:SOUR{ch}:ENable ON")
 
-        self.write("ACQ:START")
-        if preroll_samples:
-            # THE RING MUST ALREADY HOLD THAT MUCH HISTORY before the trigger
-            # is allowed to fire. The DMA only starts writing at ACQ:START, so
-            # a trigger arriving immediately leaves nothing behind it and the
-            # "pre-roll" is memory that was never written this capture -- it
-            # reads back as near-silence, which looks like a dead input rather
-            # than a sequencing error. Measured that way once; hence the wait.
-            time.sleep(1.5 * preroll_samples * decimation / self.base_rate)
-        self.write(f"ACQ:TRig {trigger}")
-        self.wait_until("ACQ:TRig:STAT?", "TD", timeout=trigger_timeout,
-                        what=f"deep acquisition trigger ({trigger})")
-        fill_timeout = 30.0 + 4 * n_samples * decimation / self.base_rate
-        self.wait_until(f"ACQ:AXI:SOUR{channels[0]}:TRIG:FILL?", "1",
-                        timeout=fill_timeout, what="deep memory fill")
-        self.write("ACQ:STOP")
-
+        # The cleanup below covers EVERYTHING from here on, not just the read.
+        # It used to start at the read, which left the DMA running and the
+        # channels enabled whenever the trigger never arrived -- H7.2's exact
+        # path. A board left armed that way stops answering SCPI queries
+        # altogether: the connection still accepts, so it presents as a dead
+        # cable or a hung PC rather than as a capture that was never disarmed,
+        # and recovering needs the SCPI server restarted by hand.
         per_ch_samples = per_ch // 2
         out = []
         try:
+            self.write("ACQ:START")
+            if preroll_samples:
+                # THE RING MUST ALREADY HOLD THAT MUCH HISTORY before the
+                # trigger is allowed to fire. The DMA only starts writing at
+                # ACQ:START, so a trigger arriving immediately leaves nothing
+                # behind it and the "pre-roll" is memory that was never written
+                # this capture -- it reads back as near-silence, which looks
+                # like a dead input rather than a sequencing error. Measured
+                # that way once; hence the wait.
+                time.sleep(1.5 * preroll_samples * decimation / self.base_rate)
+            self.write(f"ACQ:TRig {trigger}")
+            self.wait_until("ACQ:TRig:STAT?", "TD", timeout=trigger_timeout,
+                            what=f"deep acquisition trigger ({trigger})")
+            fill_timeout = 30.0 + 4 * n_samples * decimation / self.base_rate
+            self.wait_until(f"ACQ:AXI:SOUR{channels[0]}:TRIG:FILL?", "1",
+                            timeout=fill_timeout, what="deep memory fill")
+            self.write("ACQ:STOP")
+
             for i, ch in enumerate(channels):
                 if trigger.upper() != "NOW":
                     # Reference to the trigger whenever there IS one, not only
@@ -463,8 +496,15 @@ class RedPitaya:
                 out.append(self._fast_read_wrapped(
                     (i * per_ch) // 2, per_ch_samples, first, n_samples, port))
         finally:
-            for ch in channels:
-                self.write(f"ACQ:AXI:SOUR{ch}:ENable OFF")
+            # Best-effort, and deliberately swallowing errors: this runs while
+            # an exception is already propagating, and the useful one is the
+            # original failure, not whatever the disarm hits on the way out.
+            for cmd in ["ACQ:STOP"] + [f"ACQ:AXI:SOUR{ch}:ENable OFF"
+                                       for ch in channels]:
+                try:
+                    self.write(cmd)
+                except OSError:
+                    pass
         return out
 
     def acquire_deep_2ch(self, n_samples: int = 1_000_000, decimation: int = 1,
