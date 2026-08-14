@@ -14,6 +14,7 @@ import pytest
 from rp_lockin.wavelength import (
     analyse_trigger_train,
     check_alignment,
+    logged_point_times,
     map_to_wavelength,
 )
 
@@ -237,6 +238,67 @@ def test_off_by_one_trigger_shifts_wavelength_but_not_shape():
     assert np.allclose(bad.wavelength - good.wavelength, dwl)
     # Both look entirely reasonable on their own.
     assert good.n_outside == 0 and bad.n_outside == 0
+
+
+def test_indexing_from_one_edge_survives_a_lost_edge():
+    """
+    The whole reason `logged_point_times` exists.
+
+    Pairing wavelengths to individual edges means a lost edge shifts every
+    wavelength after it by a full step, silently. Indexing from the FIRST edge
+    plus the measured step cannot: nothing is counted, so nothing shifts.
+
+    Same dropped edge, both methods, side by side.
+    """
+    t, wl = laser_table()
+    t0 = 0.25
+    clean = recorded_edges(t, t0=t0)
+    lossy = recorded_edges(t, t0=t0, drop=(400,))
+
+    # Pairing wavelength i to recovered edge i. The laser still logged all 1000
+    # wavelengths; the record only holds 999 edges, so from the gap onward every
+    # wavelength is attached to the edge one step too early.
+    paired_t = lossy - t0
+    paired_wl = wl[:lossy.size]
+    dwl = (WL_STOP - WL_START) / (N_PULSES - 1)
+
+    probe = t[600]  # the true instant of wavelength index 600
+    assigned = float(np.interp(probe, paired_t, paired_wl))
+    assert abs(assigned - wl[600]) == pytest.approx(dwl, rel=0.05), (
+        "a lost edge should shift the assignment by exactly one step")
+
+    # Indexing from the first edge: unaffected, because nothing was counted.
+    step = analyse_trigger_train(lossy, nominal_step=STEP).step
+    times = logged_point_times(t.size, lossy[0], step)
+    assert np.allclose(times - t0, t, atol=1e-12)
+
+
+def test_indexing_uses_the_measured_step_not_the_nominal_one():
+    """
+    Taking the step from a line fit rather than the laser's setting is what
+    closes U11 by measurement. If the two clocks differ, the measured step
+    absorbs it and the time axis stays right in the BOARD's time base.
+    """
+    ppm = 150.0
+    t, _ = laser_table()
+    stretched = recorded_edges(t * (1 + ppm / 1e6), t0=0.0)
+    step = analyse_trigger_train(stretched, nominal_step=STEP).step
+
+    measured = logged_point_times(t.size, stretched[0], step)
+    nominal = logged_point_times(t.size, stretched[0], STEP)
+
+    assert np.allclose(measured, stretched, atol=1e-9)
+    # The nominal step drifts by the full clock error across the sweep.
+    drift = abs(nominal[-1] - stretched[-1])
+    assert drift == pytest.approx(ppm / 1e6 * t[-1], rel=0.02)
+    assert drift > 100e-6  # 150 ppm over 1 s is ~150 us -- not negligible
+
+
+def test_logged_point_times_rejects_nonsense():
+    with pytest.raises(ValueError, match="n_points"):
+        logged_point_times(0, 0.0, STEP)
+    with pytest.raises(ValueError, match="step must be positive"):
+        logged_point_times(10, 0.0, 0.0)
 
 
 def test_mismatched_lengths_refuse():

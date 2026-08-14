@@ -529,6 +529,104 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — photodetector manual read; Kevin's start-trigger idea adopted
+
+Two things this session: Kevin's PDA05CF2 manual, and a question from him that
+turned out to be a better design than the one recorded.
+
+### Kevin's question: why not use only the start trigger?
+
+*"Why can't you just use the start trigger as the only trigger, since everything
+afterwards can be made into power over wavelength because the laser gives a
+wavelength over time anyway?"*
+
+**Right in substance, and it removes the worst failure mode in the design.**
+
+The premise needs one correction — the laser does not give wavelength over
+*time*, it gives one wavelength per trigger pulse (see the previous entry). But
+**when the trigger is periodic in TIME, those are the same thing**: the i-th
+logged wavelength sits at `first_edge + i × step`. So:
+
+- **Only ONE edge is ever located.** A missed edge in the middle of the record
+  changes nothing, because nothing is being counted.
+- The catastrophic failure — one miscounted pulse shifting every subsequent
+  wavelength by a full step, silently — **cannot happen**, rather than being
+  guarded against after the fact.
+
+Implemented as `wavelength.logged_point_times()`, with two tests: one showing a
+dropped edge shifts the paired-to-edges method by exactly one step while leaving
+the indexed method untouched, and one showing that taking `step` from a line fit
+through the train — instead of from the laser's nominal setting — absorbs a
+clock difference that would otherwise drift 150 µs across a 1 s sweep.
+
+**That second point is the bonus.** Fitting the step in the board's own time base
+turns **U11 from an assumption into a measurement**, and a line fit through
+hundreds of edges does not care about a few missing ones. So the train is still
+worth recording — just as a *verification* signal rather than as a dependency.
+
+**One thing does not follow, and it is why Start mode alone will not do.** Mode 2
+(Start) emits a single pulse. With no train there is nothing to fit the step
+from, and no count to check against. **Keep Step mode; simply stop counting it.**
+Best of both.
+
+### The detector: PDA05CF2, and it changes the noise budget
+
+Recorded in `04-hardware-reference.md`. Two consequences, one good and one not.
+
+**U4 is closed, comfortably. The detector is flat to 150 MHz**, so 991.821 kHz
+sits four orders of magnitude inside its passband. "Does the photodetector roll
+off at 1 MHz" was a live risk to the entire measurement premise, and it is gone.
+
+**But the detector is noisier than the board, and will dominate.** Two
+independent routes from the datasheet:
+
+| Route | Density | σ in our 4763 Hz ENBW |
+|---|---:|---:|
+| From the 2 mV rms output noise over 150 MHz | 163 nV/√Hz | **11.27 µV** |
+| From NEP 1.26e-11 W/√Hz through the 50 Ω gain | 65.5 nV/√Hz | 4.52 µV |
+
+They disagree by 2.5×, which is not a reason to average them — it probably means
+the noise is not flat across 150 MHz, or the rms figure includes amplifier
+contributions the NEP does not. **Plan against the pessimistic one.**
+
+Combined with the board's 3.57 µV: **~11.8 µV, so SNR 10 needs ~120 µV rather
+than the 36 µV loopback suggested.** Roughly 3× worse, before the real noise
+environment (U6) or a longer cable are counted, and loopback showed a 30 cm lead
+alone adds 50%.
+
+**That the detector dominates is the right way round** — it means the instrument
+is not the limitation. It is also why the sensitive ±1 V range is worth keeping
+rather than retreating to ±20 V, where σ is 45 µV and the ADC would take charge
+of a measurement it currently has no part in.
+
+### The input stage needs AC coupling, and that has not been tested
+
+The detector output is **unipolar, 0 to 10 V into Hi-Z**, and the Red Pitaya's
+1 MΩ inputs make it Hi-Z. Ten volts will not fit a ±1 V range, and the signal is
+a small modulation riding on a DC pedestal that tracks average optical power.
+
+**AC coupling is the answer** and `setup_acquisition(coupling="AC")` already
+supports it. But **every noise figure this project has measured was taken DC
+coupled**, and the AC corner frequency is recorded nowhere. 991.821 kHz should be
+far above any sensible corner — "should be" being the phrase this project keeps
+getting caught by. Raised as **Q25**, and it is cheap to settle in loopback: AC
+couple and repeat H3.3.
+
+### Where Phase 2 stands
+
+**Two of the three blockers are down.** Q22 (Santec command set) and Q11
+(photodetector) are both answered from manuals. **Only Q12 — safe drive levels
+for the amplifiers and AOMs — still blocks connecting anything**, and it is the
+one that cannot be answered from a datasheet we already have.
+
+Also worth noting what P4.4 should produce, so a wrong answer is recognisable:
+**expect 11–12 µV.** Near 3.6 µV suggests the detector is not actually in the
+path; above ~25 µV means something is wrong beyond the datasheet.
+
+105 offline tests pass, up from 102. No hardware touched.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — Santec manuals read; Q22 answered, Q20 was WRONG
 
 Kevin supplied the TSL-775 operation manual v1.0 and a link to the TSL-770's.

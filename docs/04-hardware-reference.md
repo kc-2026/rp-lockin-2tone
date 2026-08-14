@@ -483,6 +483,62 @@ deliberately at P1 rather than inheriting whatever the laser is set to.
   Reading `:READout:POINts?` and checking the byte count against the header is
   the cheap way to tell.
 
+## The photodetector — Thorlabs PDA05CF2
+
+Recorded 2026-08-14 from the Thorlabs manual (Rev B, 3 January 2018) supplied by
+Kevin. Not connected yet, so nothing below is verified on the bench — that is P4
+in `08-phase2-hardware.md`.
+
+| | |
+|---|---|
+| Detector | InGaAs, Ø0.5 mm active area |
+| Wavelength range | 800–1700 nm — **covers a 1520–1570 nm sweep comfortably** |
+| Peak response | 1.04 A/W at 1590 nm |
+| **Small-signal bandwidth** | **150 MHz** |
+| NEP at peak | 1.26 × 10⁻¹¹ W/√Hz |
+| Output noise | 2 mV rms |
+| Transimpedance gain | 5 × 10³ V/A into 50 Ω, **1 × 10⁴ V/A into Hi-Z** |
+| Output voltage | 0 to 5 V into 50 Ω, **0 to 10 V into Hi-Z** |
+| Dark offset | ±20 mV |
+| Max output current | 100 mA |
+| Output | includes a **50 Ω series resistor**, forming a divider with the load |
+
+### U4 is closed, and comfortably
+
+**The detector is flat to 150 MHz, so 991.821 kHz sits four orders of magnitude
+inside its passband.** "Does the photodetector roll off at 1 MHz" was a live risk
+to the entire measurement premise. It does not. Nothing more is needed here.
+
+### Two things about the output that shape the whole input stage
+
+**It is unipolar with a DC pedestal.** The output runs 0 to 10 V, and the DC
+level tracks average optical power. Our signal is a small modulation at
+991.821 kHz riding on top of it.
+
+**Into the Red Pitaya it behaves as Hi-Z, not 50 Ω.** The board's inputs are
+1 MΩ, so the 50 Ω series resistor divides by 0.99995 — negligible — and the
+detector delivers its **Hi-Z figures: 10⁴ V/A and up to 10 V.**
+
+Ten volts against a ±1 V range is a problem, and the answer is almost certainly
+**AC coupling**, which `setup_acquisition(coupling="AC")` already supports. It
+drops the pedestal and lets the sensitive ±1 V range see only the modulation.
+The alternative — the ±20 V range — is a bad trade: σ there is 45 µV, four times
+the detector's own noise, so the ADC would dominate a measurement it currently
+does not. **See Q25: the AC-coupling corner has not been checked, and every noise
+figure in `05-results.md` was measured DC-coupled.**
+
+### Saturation and damage
+
+Output saturates at 10 V, which is 1.00 mA of photocurrent, about **0.96 mW**
+optical at peak responsivity. **An explicit optical damage threshold is not
+stated in the manual** — treat ~1 mW as the working ceiling and ask Thorlabs or
+Kevin before exceeding it.
+
+One electrical hazard from the manual, worth repeating because it destroys the
+instrument: **do not add a 50 Ω terminator when the load is already 50 Ω.** The
+combined 25 Ω allows ~135 mA and damages the output driver. With the Red Pitaya's
+1 MΩ input this does not arise, but it would if a scope is teed in alongside.
+
 ## Safety
 
 Loopback phase: the board's own specifications are the limit. Do not command

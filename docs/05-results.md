@@ -30,6 +30,35 @@ number was obtained**, step by step, is in `07-phase1-loopback.md`.
 noise floor, and the fact that the demodulator's noise gain is **not** the
 nominal bandwidth. Both are below.
 
+## Predicted noise floor with the photodetector connected
+
+**Everything above was measured with loopback cables. The real input is a
+Thorlabs PDA05CF2, and it is noisier than the board.** Calculated 2026-08-14 from
+its datasheet — *predicted, not measured*, and the first real test is P4.4.
+
+| Route | Detector density | σ_detector | With the board | **SNR 10 needs** |
+|---|---:|---:|---:|---:|
+| Board alone (measured, loopback) | — | — | 3.57 µV | 35.7 µV |
+| Optimistic — from NEP, 50 Ω gain | 65.5 nV/√Hz | 4.52 µV | 5.76 µV | 57.6 µV |
+| **Pessimistic — from the 2 mV rms figure** | **163 nV/√Hz** | **11.27 µV** | **11.82 µV** | **118 µV** |
+
+The two routes are independent — one from the quoted 2 mV rms output noise over
+the 150 MHz bandwidth, one from the 1.26 × 10⁻¹¹ W/√Hz NEP through the gain — and
+they disagree by 2.5×. That is not a reason to average them: the discrepancy
+probably means the noise is not flat across 150 MHz, or the rms figure includes
+amplifier contributions the NEP does not. **Plan against the pessimistic number
+until P4.4 measures it.**
+
+**So expect the real floor to be roughly 3× worse than loopback, and a signal of
+~120 µV to be needed rather than ~36 µV.** The detector, not the ADC, will
+dominate — which is the right way round: it means the instrument is not the
+limitation, and it is why the sensitive ±1 V range plus AC coupling is worth
+keeping rather than retreating to ±20 V.
+
+Not included, and both can only make it worse: the real noise environment (U6)
+and any pickup on a longer detector cable. Loopback added 50% just from a 30 cm
+lead.
+
 **One caveat on every absolute voltage here (Q23).** These convert counts to
 volts using 1817.7 counts/V, confirmed to 0.04% by H3.5. But loopback measures
 generator × cable × ADC as a single number and cannot say whether the 0.882

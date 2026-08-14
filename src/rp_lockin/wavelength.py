@@ -61,6 +61,7 @@ __all__ = [
     "AlignmentCheck",
     "analyse_trigger_train",
     "check_alignment",
+    "logged_point_times",
     "map_to_wavelength",
 ]
 
@@ -204,6 +205,50 @@ def analyse_trigger_train(edges: np.ndarray,
         ratio=ratio,
         ppm=ppm,
     )
+
+
+def logged_point_times(n_points: int, first_edge: float,
+                       step: float) -> np.ndarray:
+    """
+    When each of the laser's N logged wavelengths happened, in the record's
+    time base. **Prefer this over pairing wavelengths to individual edges.**
+
+    Why it exists (Kevin, 2026-08-14). The obvious way to place the laser's log
+    in time is to pair its Nth wavelength with the Nth trigger edge found in the
+    record. That works, and it is what `check_alignment` guards -- but it makes
+    every wavelength depend on having counted every edge, and one miscount
+    shifts the whole remainder of the sweep by a step, silently.
+
+    None of that is necessary when the trigger is periodic in TIME. The laser
+    emits its pulses on a fixed interval, so the i-th logged point is simply
+
+        t_i = (time of the first edge) + i * step
+
+    Only ONE edge is ever located. A missed edge in the middle of the record
+    changes nothing, because nothing is being counted.
+
+    Getting `step` from `analyse_trigger_train(edges).step` rather than from the
+    laser's nominal setting also removes the two-clock assumption: the step is
+    then measured in the board's own time base, by a line fit through hundreds
+    of edges, which a few missing ones do not disturb. That is U11 closed by
+    measurement instead of trust.
+
+        train = analyse_trigger_train(edges, nominal_step)
+        t = logged_point_times(n_from_readout_points, edges[0], train.step)
+        sweep = map_to_wavelength(result.t, amplitude, edges[0],
+                                  t - edges[0], laser_wavelengths)
+
+    **This is only valid when the trigger is periodic in time**, not in
+    wavelength. On a Santec that is `:TRIGger:OUTPut:SETTing`, whose two manuals
+    document opposite encodings -- so read it back rather than assuming (Q24).
+    In wavelength-periodic mode the points are unevenly spaced in time and you
+    must pair against the edges after all.
+    """
+    if n_points < 1:
+        raise ValueError(f"n_points must be >= 1, got {n_points}")
+    if not step > 0:
+        raise ValueError(f"step must be positive, got {step}")
+    return float(first_edge) + np.arange(n_points, dtype=float) * float(step)
 
 
 def check_alignment(edges: np.ndarray, table_t: np.ndarray,

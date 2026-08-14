@@ -233,8 +233,18 @@ nonlinearity.
 | P4.3 | Confirm nothing clips across the full wavelength sweep |
 | P4.4 | **Noise floor with everything connected and no drive (U6)** — the real SNR number, against loopback's 3.57 µV |
 
-**Needs:** optics aligned, photodetector damage threshold, agreement on a safe
-starting laser power.
+**Needs:** optics aligned, and agreement on a safe starting laser power. The
+detector is a **PDA05CF2** and its datasheet figures are in
+`04-hardware-reference.md`; **U4 is already closed** — 150 MHz bandwidth, so no
+rolloff anywhere near 991.821 kHz. Saturation is around **0.96 mW** optical; an
+explicit damage threshold is not in the manual, so confirm before exceeding it.
+
+**Expect ~11 µV of detector noise against the board's 3.57 µV**, so P4.4 should
+land near **11–12 µV** and SNR 10 should need **~120 µV**. If it comes back near
+3.6 µV, suspect the detector is not actually in the path; above ~25 µV, something
+is wrong beyond the datasheet. **AC-couple IN1** — the 0–10 V pedestal will not
+fit the ±1 V range otherwise, and the ±20 V range would put the ADC back in
+charge at 45 µV (Q25).
 **Pass:** detector output sits comfortably inside a range, is flat at ~1 MHz, and
 the real noise floor is known.
 **Closes:** Q11, U4, U5, U6.
@@ -312,6 +322,15 @@ input to that session; that one is its output.
 
 None of this is blocked, and none of it touches hardware:
 
+- **Index the wavelengths, do not count them.** With the trigger periodic in
+  TIME, the laser's i-th logged wavelength sits at `first_edge + i × step`, so
+  **only the first edge is ever located** and a missed edge in the middle changes
+  nothing. Taking `step` from a line fit through the recorded train, rather than
+  from the laser's nominal setting, also measures the two clocks against each
+  other — closing U11 by measurement instead of trust.
+  `wavelength.logged_point_times()` does this and is tested against both failure
+  modes. **Keep Step mode rather than Start:** Start emits a single pulse, and
+  then there is no train to fit a step from and no count to check against.
 - **The unbiased amplitude estimator.** `01-overview.md` notes that `R =
   sqrt(X² + Y²)` is biased upward in noise, and that rotating `X + jY` to a
   common angle and taking the real part is unbiased and quieter. **Still not
