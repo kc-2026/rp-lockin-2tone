@@ -109,16 +109,28 @@ once, and its `VERIFY:` note either removed or replaced with a confirmation.
 
 **Wiring:** OUT1 → IN1.
 
-- [ ] H3.1 Generate a plain 1 MHz tone. Demodulate. Confirm recovered amplitude
-      tracks the commanded amplitude linearly across at least a decade.
-      **Not started. Note the frequency is 991.821 kHz, not 1 MHz.** Now
-      straightforward: `acquire_deep_fast` is proven and the helper is running.
-- [ ] H3.2 Confirm recovered phase is stable within a capture and repeatable
-      across captures. **Not started.** Note H2.5 already established that
-      phase is NOT repeatable *between channels across restarts*; this step is
-      about stability within one capture on one channel, which is a different
-      question and still worth answering — it is also how the residual drift
-      risk left over from H2.5 gets closed.
+- [x] H3.1 Generate a plain tone at the lock-in frequency. Demodulate. Confirm
+      recovered amplitude tracks the commanded amplitude linearly.
+      **Done 2026-08-14 — linear over 2.4 decades (2 mV to 500 mV).** Above
+      20 mV the recovered/commanded ratio sits in 0.9919–0.9951, a 0.3%
+      spread. The full-range spread of 4.5% comes entirely from the 2 mV and
+      5 mV points, and is the **generator's** amplitude resolution at small
+      settings, not demodulator nonlinearity — noise cannot explain it, since
+      the vector mean's noise at 2 mV is 0.3 µV against a 2036 µV signal.
+      Amplitude taken as |mean(X + jY)|, not mean(R), which is biased upward.
+- [x] H3.2 Confirm recovered phase is stable within a capture.
+      **Done 2026-08-14 — 0.002° total excursion over 28 ms**, drift
+      0.00003 Hz, R stable to 0.003% rms. That is the shared DAC/ADC clock
+      behaving as `02-architecture.md` predicts.
+      **Also closed the H2.5 residual risk, which needed a separate test.**
+      H3.2 above measures one channel against the ADC; the risk was about the
+      two channels against *each other*. Drove both at the same frequency and
+      tracked OUT2−OUT1 across one capture: **drift 0.0024 Hz, excursion
+      0.053° over 24 ms**, against a 2250 Hz bandwidth. The offset is a
+      constant −113° that does not move. Same frequency on both channels is
+      what makes this valid — a common capture-start offset then cancels
+      exactly, which is the trap that made the earlier envelope-based
+      measurement worthless.
 - [x] H3.3 Measure the noise floor with the output off and the input
       terminated. Convert to an equivalent input noise density. Record it —
       this is the number that predicts whether the real measurement will work.

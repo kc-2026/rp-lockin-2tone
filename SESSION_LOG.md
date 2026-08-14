@@ -421,6 +421,63 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — H3.1 and H3.2 done; H2.5 risk closed
+
+**H3.1 — amplitude linearity: passes over 2.4 decades.** Drove the lock-in
+frequency at 2, 5, 10, 20, 50, 100, 200 and 500 mV.
+
+| Commanded | Recovered | Ratio |
+|---:|---:|---:|
+| 2 mV | 2.036 mV | 1.0182 |
+| 5 mV | 4.870 mV | 0.9741 |
+| 20 mV | 19.892 mV | 0.9946 |
+| 100 mV | 99.515 mV | 0.9951 |
+| 500 mV | 496.9 mV | 0.9938 |
+
+**Above 20 mV the ratio spread is 0.3%** (0.9919–0.9951). The 4.5% spread over
+the full range is entirely the 2 mV and 5 mV points. That is the *generator's*
+amplitude resolution at small settings, not demodulator nonlinearity — noise
+cannot account for it, because the vector mean's noise at 2 mV is 0.3 µV
+against a 2036 µV signal. Consistent ~0.6% under-read across the range is the
+combined output/input gain, not a linearity defect.
+
+Amplitude taken as |mean(X + jY)|. `mean(R)` is biased upward in noise
+(CLAUDE.md trap 5) and would have flattered the small-amplitude points.
+
+**H3.2 — phase stability within a capture: excellent.** 0.002° total excursion
+over 28 ms, linear drift 0.00003 Hz, R stable to 0.003% rms. The DAC and ADC
+share a clock and the demodulation frequency is exactly the generated one, so
+the phase is deterministic — which is what `02-architecture.md` asserts, now
+measured.
+
+**The H2.5 residual drift risk is CLOSED, and it needed its own test.** H3.2
+measures one channel against the ADC; the risk was about the two channels
+against each other. Drove **both channels at the same frequency**, captured
+both simultaneously, tracked OUT2−OUT1 across the record:
+
+- mean offset **−113.146°**, total excursion **0.053°** over 24 ms
+- linear drift **+0.873 °/s = +0.0024 Hz** equivalent frequency offset
+- scatter about the fit 0.013°
+
+Against a 2250 Hz lock-in bandwidth that offset is a factor of 9×10⁵ too small
+to matter. **The relative phase is a constant, and a constant offset does not
+affect R** — which is exactly Kevin's argument, now with a number behind it.
+
+The complete picture, since the pieces looked contradictory in isolation: the
+inter-channel phase offset is **random at start** (H2.5, 71–82° across
+restarts) but **rock-constant within a run** (0.05° over 24 ms). Both are true
+and neither threatens the deliverable.
+
+Driving both channels at the *same* frequency is what makes this measurement
+valid. A common capture-start offset then cancels exactly. The earlier attempt
+used the two different modulation frequencies, where it does not cancel — that
+is what made it worthless, and it is worth not repeating.
+
+**Next:** H3.5's on-board half, then H4 (trigger digitisation, no rewiring
+needed), then H5/H6.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — H3.3 independently re-measured
 
 **Kevin asked for the H3.3 numbers below to be verified.** Re-measured from a

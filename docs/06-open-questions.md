@@ -16,7 +16,7 @@ relevant doc and note it in `SESSION_LOG.md`.
 
 | # | Question | Notes |
 |---|---|---|
-| Q6 | Is the OUT1/OUT2 relative carrier phase repeatable? | **No — 71–82° spread, unexplained. DOWNGRADED, not blocking.** Kevin confirmed 2026-08-12 that **the deliverable is amplitude only**, and the intermodulation amplitude does not depend on the relative phase of the two envelopes. See `SESSION_LOG.md` for the one residual risk this leaves (a relative *drift* fast enough to offset the beat frequency) and how to check it. Do not spend time explaining the phase scatter unless phase becomes a deliverable again. |
+| Q6 | Is the OUT1/OUT2 relative carrier phase repeatable? | **CLOSED 2026-08-14.** The offset is random at start (71–82° across restarts) but **constant within a run** — measured drift 0.0024 Hz, excursion 0.053° over 24 ms, against a 2250 Hz bandwidth. A constant offset does not affect R, and the deliverable is amplitude only (Kevin, 2026-08-12). The residual drift risk that survived that ruling is now measured and dead. Do not reopen unless phase becomes a deliverable. |
 | Q7 | Are IN1 and IN2 sample-aligned? | A fixed skew between signal and trigger biases every wavelength assignment. Measure, do not assume. |
 | Q8 | What is the real noise floor at 1 MHz? | **Answered 2026-08-12 — see Resolved.** |
 | Q9 | Does the DUT response roll off at 1 MHz? | Physics, not measurable in loopback. Lower difference frequencies are available — see `03-frequency-plan.md`. |
