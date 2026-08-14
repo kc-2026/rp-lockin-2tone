@@ -133,25 +133,149 @@ not added after a confusing result.
 
 ---
 
-## 5. Draft order of connection — please correct this
+## 5. Proposed steps — P1 to P6
 
-Written to fail safe, and offered as a starting point rather than a
-recommendation, since I do not know the damage thresholds.
+**This is a PROPOSAL, not a plan.** I do not know the damage thresholds, so the
+ordering is reasoned from "if this goes wrong, what breaks" rather than from the
+equipment's actual limits. Correct it in the session; the agreed version goes in
+`07-phase2-plan.md`.
 
-1. **Laser serial only.** No RF, no optics. Confirm the driver reads a
-   wavelength table and that the timing lines up. This is the largest piece of
-   untested software and it can be validated with nothing connected to the Red
-   Pitaya at all.
-2. **Laser trigger into IN2**, still no RF. Confirms U7 — that the real trigger
-   actually fires the capture, at real levels — while nothing can be damaged.
-3. **Drive chain with the AOMs disconnected**, into a load or a scope. Confirms
-   U1 and U2 at real levels without touching the optics. The U2 control
-   measurement belongs here.
-4. **Optics connected, laser at low power.** Confirms U3, U4, U5.
-5. **Full system.** Confirms U6, U8, U9.
+The principle throughout: **every step should be one where, if it fails, the
+thing that breaks is cheap.** Optics come last, and the laser goes into the beam
+path only after the electrical chain is understood.
 
-The principle: every step should be one where, if it goes wrong, the thing that
-breaks is cheap.
+---
+
+### P1 — Santec serial link *(nothing connected to the Red Pitaya)*
+
+The largest piece of untested software, and it can be fully validated with no RF,
+no optics, and the Red Pitaya switched off.
+
+| Step | What it establishes |
+|---|---|
+| P1.1 | Open the port and identify the laser. Confirm the 770 and 775 answer the same commands, or record how they differ |
+| P1.2 | Run a sweep and read back a wavelength table |
+| P1.3 | Confirm the table's shape: units, row count, and that time really is relative to the first trigger |
+| P1.4 | Confirm whether the table streams during the sweep or is dumped after it |
+| P1.5 | Run the same sweep twice and compare the tables — sweep repeatability (**U8**) |
+
+**Needs:** the programming manual (**Q22**), the serial cable/adapter, and the
+laser powered. Nothing else.
+**Pass:** a wavelength table read reliably, with its format confirmed rather than
+assumed.
+**Closes:** Q22, U8, most of U10.
+
+---
+
+### P2 — Laser trigger into IN2 *(still no RF, no optics)*
+
+| Step | What it establishes |
+|---|---|
+| P2.1 | Measure the trigger electrically: amplitude, polarity, rise time, pulse width (**U7**) |
+| P2.2 | Confirm it fires the acquisition, and find the right `ACQ:TRig:LEV` |
+| P2.3 | Confirm the recorded pulse count matches the table's row count — the off-by-one-trigger guard (**U12**) |
+| P2.4 | Measure the laser/board clock ratio across a full sweep (**U11**) |
+| P2.5 | **Confirm the decimation choice against the REAL trigger.** Loopback showed zero lost edges at decimation 8, but with a 20 ns synthetic edge. If the real edges are much faster, this is where that shows |
+
+**Needs:** a BNC from the laser's trigger out to IN2, the laser able to sweep,
+and P1 done so there is a table to compare against.
+**Pass:** the capture triggers reliably, pulse count matches the table, and the
+clock ratio is stable.
+**Closes:** U7, U11, U12. Confirms or overturns the decimation choice.
+
+**Note:** the code for P2.3 and P2.4 is already written and tested —
+`wavelength.check_alignment` and `analyse_trigger_train`. This step is where they
+first meet a real instrument.
+
+---
+
+### P3 — Drive chain, AOMs disconnected *(no optics)*
+
+Everything electrical, into a load or a scope, before anything optical exists.
+
+| Step | What it establishes |
+|---|---|
+| P3.1 | Red Pitaya output level at the amplifier input, with attenuators if needed — confirm it is inside the amplifier's safe input |
+| P3.2 | Amplifier output level — confirm it is inside the AOMs' rating **before** they are connected |
+| P3.3 | Absolute 80 MHz drive amplitude at what will be the AOM input (**U1**) |
+| P3.4 | Spectrum of each amplifier output on its own — catches gross nonlinearity early |
+| P3.5 | Both channels running: check for crosstalk between them, which is the mechanism that could produce a false difference-frequency signal |
+
+**Needs:** **Q12** (safe input, gain, AOM rating), attenuators if required, a 50 Ω
+load, and a way to measure RF at 80 MHz — a scope or power meter. **This is the
+first step that can damage something, and the first that needs you present.**
+**Pass:** levels confirmed inside every rating, with margin, and no gross
+nonlinearity.
+**Closes:** U1, part of U2.
+
+---
+
+### P4 — Optics connected, laser at low power
+
+| Step | What it establishes |
+|---|---|
+| P4.1 | Photodetector output level and DC offset, laser on, no RF — sets the input range and coupling (**Q11, U5**) |
+| P4.2 | Photodetector response near 1 MHz (**U4**). Modulate one AOM and sweep the modulation frequency. **If it rolls off here, the measurement premise needs revisiting** |
+| P4.3 | Confirm nothing clips across the full wavelength sweep |
+| P4.4 | **Noise floor with everything connected and no drive (U6)** — the real SNR number, against loopback's 3.57 µV |
+
+**Needs:** optics aligned, photodetector damage threshold, agreement on a safe
+starting laser power.
+**Pass:** detector output sits comfortably inside a range, is flat at ~1 MHz, and
+the real noise floor is known.
+**Closes:** Q11, U4, U5, U6.
+
+**P4.4 is the step that decides whether the project works.** Loopback says a
+signal needs ≥36 µV to be clearly visible. That figure was measured in a quiet
+box with 30 cm of cable, and it can only get worse from here. This is where you
+find out by how much.
+
+---
+
+### P5 — Full system, first real measurement
+
+| Step | What it establishes |
+|---|---|
+| P5.1 | **The U2 control measurement: drive ONE tone only and look at the difference frequency. Nothing should be there.** If something is, it is the amplifiers or crosstalk, not the DUT |
+| P5.2 | Both tones. Is there an intermodulation response at all (**U3** — the entire premise) |
+| P5.3 | A full 1 s swept trace, mapped to wavelength end to end |
+| P5.4 | Ground loops and 80 MHz leakage into the detector path (**U9**) |
+
+**Needs:** everything above passed, and agreement on what I may run unattended
+from here.
+**Pass:** the control measurement is clean, and a real response appears above the
+P4.4 noise floor.
+**Closes:** U2, U3, U9.
+
+**P5.1 before P5.2, always.** An amplifier-generated signal appears at exactly
+the frequency we are looking for and looks entirely legitimate. Running P5.2
+first and finding a signal proves nothing.
+
+---
+
+### P6 — Robustness and delivery
+
+| Step | What it establishes |
+|---|---|
+| P6.1 | Repeat the full sweep 20 times — real sweep-to-sweep repeatability, against loopback's 0.003% |
+| P6.2 | Output file format, once decided (**Q15**) |
+| P6.3 | Averaging across sweeps, if wanted (**Q13**) |
+| P6.4 | Failure behaviour with the real system: laser not sweeping, trigger absent, serial link dropped |
+
+**Needs:** **Q13**, **Q15**, and **Q17** — the success criteria that say when this
+is finished.
+
+---
+
+### What this ordering deliberately avoids
+
+- **No optics until P4**, so every electrical unknown is settled while the only
+  thing at risk is a cable.
+- **The AOMs are not connected until their drive level has been measured**, not
+  calculated.
+- **P5.1 comes before P5.2**, so a false positive cannot be mistaken for success.
+- **P2 validates the wavelength path before any RF exists**, so if the trigger or
+  the serial link misbehaves it is found in the cheapest possible configuration.
 
 ---
 
