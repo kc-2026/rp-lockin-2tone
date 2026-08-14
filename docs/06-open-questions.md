@@ -17,7 +17,7 @@ relevant doc and note it in `SESSION_LOG.md`.
 | # | Question | Notes |
 |---|---|---|
 | Q6 | Is the OUT1/OUT2 relative carrier phase repeatable? | **CLOSED 2026-08-14.** The offset is random at start (71–82° across restarts) but **constant within a run** — measured drift 0.0024 Hz, excursion 0.053° over 24 ms, against a 2250 Hz bandwidth. A constant offset does not affect R, and the deliverable is amplitude only (Kevin, 2026-08-12). The residual drift risk that survived that ruling is now measured and dead. Do not reopen unless phase becomes a deliverable. |
-| Q7 | Are IN1 and IN2 sample-aligned? | A fixed skew between signal and trigger biases every wavelength assignment. Measure, do not assume. |
+| Q7 | Are IN1 and IN2 sample-aligned? | **YES — answered 2026-08-14. Aligned to 0.004 ns = 0.0005 samples**, repeatable to 0.002 ns over 1–20 MHz. No correction needed; channel skew biases nothing. Measured properly, with OUT1 split through a BNC tee into both inputs, which is the only wiring that separates input skew from output skew and from the ASG's random start phase. See H4.3. |
 | Q8 | What is the real noise floor at 1 MHz? | **Answered 2026-08-12 — see Resolved.** |
 | Q9 | Does the DUT response roll off at 1 MHz? | Physics, not measurable in loopback. Lower difference frequencies are available — see `03-frequency-plan.md`. |
 

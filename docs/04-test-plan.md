@@ -172,11 +172,21 @@ once, and its `VERIFY:` note either removed or replaced with a confirmation.
       to the board and will bring its own jitter and slower, noisier edges.
       This measures the *instrument's* contribution, which is negligible. The
       real limit is U7 on the untestable list.
-- [ ] **H4.3 NOT DONE — needs hardware we do not have.** Confirming IN1 and
-      IN2 are sample-aligned requires ONE source split to BOTH inputs, i.e. a
-      BNC tee. Driving OUT1→IN1 and OUT2→IN2 cannot separate input skew from
-      output skew or from the ASG's random start phase — they are degenerate.
-      **Ask Kevin for a BNC tee and a short matched pair of cables.**
+- [x] **H4.3 PASSES — the inputs are aligned to 0.004 ns = 0.0005 samples**,
+      2000× finer than one sample, repeatable to 0.002 ns across five
+      frequencies (1–20 MHz) and three captures each. **Q7 answered: no
+      correction needed, and channel skew biases nothing.**
+      Measured with OUT1 → BNC tee → two matched cables → IN1 and IN2, so both
+      inputs saw literally the same signal. Several frequencies on purpose: a
+      fixed time skew gives phase proportional to frequency, a constant offset
+      does not, so the slope separates them. Slope gives −0.0042 ns with a
+      −0.046° intercept and 0.04° residual rms.
+      Secondary observation, not a timing issue: **the two inputs have slightly
+      different frequency responses.** At 20 MHz IN2 reads 200 counts against
+      IN1's 237, a 16% difference, versus ~1% at 1 MHz — IN2 rolls off sooner.
+      Irrelevant at the 991.8 kHz operating point, and it does not affect edge
+      timing, which threshold interpolation handles. Worth knowing if anyone
+      ever compares absolute amplitudes between the two channels.
 - [x] **H4.4 PARTIAL.** `ACQ:TRig CH2_PE` with `ACQ:TRig:LEV 0.1` does trigger
       the acquisition from IN2 — confirmed. And with the level set to 2.0 V,
       above the 0.5 V signal, it correctly does **not** fire and `wait_until`
