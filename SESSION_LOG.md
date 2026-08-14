@@ -421,6 +421,64 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — H5.1 answered; first full-length capture
+
+**H5.1 / Q5: Deep Memory Generation does NOT exist on this OS.** Nine candidate
+spellings (`SOUR<n>:AXI:*`, `SOUR:AXI:*`, `SOUR<n>:DMG?`,
+`SOUR<n>:TRAC:DATA:AXI?`, `SOUR<n>:TRAC:DATA:LEN?`) all return zero bytes, and
+loading a 32768-entry table **closes the SCPI connection** — the server does not
+reject an oversized write, it drops the socket. **Never send more than 16384
+points.** Outputs were verified off after that crash.
+
+So the generator's unique-waveform ceiling is 65.536 µs, permanently, and
+H5.2 as written is impossible: 65.536 µs is 0.3 of one output point, so a
+shorter version of the emulated-sweep test would prove nothing.
+
+**H5.4 fallback taken: impose the envelope live instead of baking it into a
+waveform.** The generator's amplitude can be changed over SCPI while a capture
+runs, so a stepped amplitude profile substitutes for a smooth one. Coarser —
+ten steps rather than 5000 points — but it exercises the same chain and does
+H6.2's work at the same time.
+
+**Result: amplitude recovery excellent, time correlation failed.**
+
+| Commanded | Recovered | Ratio |
+|---:|---:|---:|
+| 0.40 | 0.397 | 0.993 |
+| 0.30 | 0.298 | 0.993 |
+| 0.20 | 0.199 | 0.993 |
+| 0.10 | 0.099 | 0.994 |
+| 0.05 | 0.0496 | 0.991 |
+
+Every plateau within 1%, consistent with H3.1's 0.6% under-read. But the
+plateaus appear ~300 ms earlier than commanded, so **the time correlation is
+not established.** Two causes, both mine:
+
+1. The read started at buffer offset 0 rather than being referenced to
+   `Trig:Pos` — the very mechanism built earlier in the session and then not
+   used here.
+2. PC-side timestamps for the `SOUR:VOLT` commands do not share a timebase
+   with the DMA, and carry the ~46 ms SCPI round trip as uncertainty.
+
+**Redo it referenced to `Trig:Pos`** before claiming anything about timing.
+
+**Solid results worth keeping:**
+
+- **62 500 000 samples captured, exact match to the request.** First
+  full-length 1 s capture (decimation 4; decimation 2 would need 250 MB against
+  a 128 MB region).
+- **4892 output points from a 5000 Sa/s demodulation = exactly 5000 − 108**,
+  independently confirming the documented 108-point settling cost.
+- Demodulation of 62.5 M samples took 9.3 s.
+
+**Transfer ran at 3.1 MB/s, against 22 MB/s measured earlier.** Cause:
+`fast_read` opens a **new TCP connection per call**, and this fetched 119 MB in
+32 pieces of 4 MB. That is connection overhead, not the board. Worth fixing —
+either keep one connection open across reads, or use larger pieces now that the
+helper chunks its sends internally.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — Trig:Pos works; pre-roll implemented
 
 **Correcting the previous entry: `ACQ:AXI:SOUR<n>:Trig:Pos?` is not broken.**

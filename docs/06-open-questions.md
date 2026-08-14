@@ -10,7 +10,7 @@ relevant doc and note it in `SESSION_LOG.md`.
 | Q2 | Are the SCPI commands in `hardware.py` correct for that version? | H1.5 — acquisition and generator commands verified; `setup_am_generator` and the `ACQ:AXI:*` path still open |
 | Q3b | Is the ASG's 16384-entry table size settable over SCPI? If so, exact 80/5/6 MHz returns and the frequency limitation in `SESSION_LOG.md` disappears. | Not yet probed |
 | Q4 | Does `SOUR:TRig:INT` start both channels synchronously? | H2.4 |
-| Q5 | Is Deep Memory Generation available on this OS? | H5.1 |
+| Q5 | Is Deep Memory Generation available on this OS? | **NO — answered 2026-08-14.** All nine candidate SCPI spellings return zero bytes, and sending a 32768-entry table **closes the SCPI connection outright**. The generator's unique-waveform ceiling is 16384 samples = 65.536 µs, permanently. H5.4's fallback applies. |
 
 ## Affects measurement quality
 

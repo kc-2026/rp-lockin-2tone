@@ -231,8 +231,14 @@ once, and its `VERIFY:` note either removed or replaced with a confirmation.
 The emulated-DUT test at full sweep length needs a waveform longer than the
 16384-sample arbitrary buffer, which means Deep Memory Generation.
 
-- [ ] H5.1 Establish whether DMG is available on this OS version and what its
-      SCPI interface is.
+- [x] **H5.1 ANSWERED 2026-08-14: DMG is NOT available.** All nine candidate
+      spellings (`SOUR<n>:AXI:*`, `SOUR:AXI:*`, `SOUR<n>:DMG?`,
+      `SOUR<n>:TRAC:DATA:AXI?`, `SOUR<n>:TRAC:DATA:LEN?`) return zero bytes.
+      Confirmed behaviourally as well: loading a 32768-entry table **closes the
+      SCPI connection** — the server does not reject an oversized write, it
+      drops the socket. **Do not send more than 16384 points.** The unique
+      waveform ceiling is 65.536 µs and is permanent.
+      Outputs were verified off after the crash; the reconnect found 0/0.
 - [ ] H5.2 Play a 60 ms emulated DUT response and recover it. Compare against
       ground truth; expect agreement to a few percent.
 - [ ] H5.3 Scale up as memory allows. Record the maximum achievable.
