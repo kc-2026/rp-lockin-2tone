@@ -3,13 +3,25 @@
 Resolve these as they come up. When one is settled, move the answer into the
 relevant doc and note it in `SESSION_LOG.md`.
 
-## Blocking Phase 1
+## Blocking Phase 2 — read these first
 
-| # | Question | Where it gets answered |
+**Phase 1 is complete. These are what stand between here and Phase 2.**
+The full brief is `07-phase2-prep.md`.
+
+| # | Question | Blocks |
 |---|---|---|
-| Q2 | Are the SCPI commands in `hardware.py` correct for that version? | H1.5 — acquisition and generator commands verified; `setup_am_generator` and the `ACQ:AXI:*` path still open |
-| Q3b | Is the ASG's 16384-entry table size settable over SCPI? If so, exact 80/5/6 MHz returns and the frequency limitation in `SESSION_LOG.md` disappears. | Not yet probed |
-| Q4 | Does `SOUR:TRig:INT` start both channels synchronously? | H2.4 |
+| **Q22** | Santec TSL-770/775 serial command set, port settings, and whether the wavelength table streams live or is dumped after the sweep | **the laser driver — the critical path.** Everything not needing the command set is already written and tested |
+| **Q11** | Photodetector output amplitude and impedance | choosing the input range and coupling; without it the first real capture may clip or sit in the noise |
+| **Q12** | Safe drive levels for the amplifier chain and the AOMs | **physically connecting anything.** A hard safety gate |
+| **Q17** | Phase 2 success criteria | knowing when Phase 2 is done. The results it was waiting on are now in |
+
+## Was blocking Phase 1 — all resolved
+
+| # | Question | Where it got answered |
+|---|---|---|
+| Q2 | Are the SCPI commands in `hardware.py` correct for that version? | **YES, all of them, H1.5 complete.** `setup_am_generator` needed rewriting rather than respelling — its model of the generator was wrong. The `ACQ:AXI:*` path is verified through `acquire_deep_fast`, which H6.2–H6.5 and H7.1 exercised for 20+ full-length captures. |
+| Q3b | Is the ASG's 16384-entry table size settable over SCPI? If so, exact 80/5/6 MHz returns and the frequency limitation in `SESSION_LOG.md` disappears. | **Never probed, and no longer blocking.** The grid plan was adopted instead and works: carrier 80.001831 MHz, difference 991.821 kHz. Worth a look only if exact round frequencies ever matter. |
+| Q4 | Does `SOUR:TRig:INT` start both channels synchronously? | **YES — H2.4 passed 2026-08-12.** Both channels generate simultaneously with carrier magnitudes within 0.6%. Note this is about them *starting* together; their relative phase is Q6, which is a different question and failed. |
 | Q5 | Is Deep Memory Generation available on this OS? | **NO — answered 2026-08-14.** All nine candidate SCPI spellings return zero bytes, and sending a 32768-entry table **closes the SCPI connection outright**. The generator's unique-waveform ceiling is 16384 samples = 65.536 µs, permanently. H5.4's fallback applies. |
 
 ## Affects measurement quality

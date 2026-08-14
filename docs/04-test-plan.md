@@ -523,4 +523,10 @@ Do not begin connecting hardware without this. It needs, at minimum:
 - Agreement on what the agent may command unattended versus what needs a human
   present
 
-Write the outcome into a new `docs/07-phase2-plan.md`.
+**The full brief is `07-phase2-prep.md`** — written 2026-08-14, once Phase 1
+completed. It lists what is missing, what has to be decided, a draft
+fail-safe connection order, and the work that can proceed meanwhile. Three
+things block Phase 2 and they are independent: **Q22** (the Santec command set),
+**Q11** (photodetector level and impedance) and **Q12** (safe drive levels).
+
+Write the outcome of the session into a new `docs/07-phase2-plan.md`.

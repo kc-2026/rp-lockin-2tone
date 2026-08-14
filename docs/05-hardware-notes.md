@@ -90,8 +90,14 @@ Sixteen times smaller than this document previously assumed. What that buys:
 | 2 | 125 MS/s (dec 2) | 524288 | 4.19 ms |
 
 A 1 s sweep on two channels at decimation 2 needs 477 MiB — short by a factor
-of **238**. The device-tree enlargement below is therefore mandatory before
-H6, and it also constrains H5.2: a 60 ms emulated response does not fit either.
+of **238** against the 2 MiB as shipped.
+
+**Superseded 2026-08-14: the enlargement below is NOT mandatory, and was not
+done.** The region was raised to 128 MiB, which fits a full 1 s two-channel
+capture at **decimation 8** — H6.2 through H6.5 all ran that way. Decimation 8
+costs 1.1 dB of noise, and the trigger-recovery objection to it evaporated once
+the wavelength axis moved to the laser's serial report. The 512 MB move remains
+rejected; see the decimation section further down.
 
 ### H1.5 progress — `setup_acquisition` is fully verified
 
@@ -387,26 +393,52 @@ point rather than a wall, and if `ACQ:AVG` applies to the AXI path its boxcar
 nulls fall near 62.5 MHz, which would suppress the fold further. Both are
 unverified — measure in H3.3/H3.4 before relying on any of it.
 
+**Overtaken by events, 2026-08-14.** Decimation 4 was never needed: the noise
+cost of decimation was measured directly (see below) and **decimation 8** was
+adopted, which fits a full 1 s two-channel capture in the existing 128 MiB
+region for 1.1 dB. H6.2–H6.5 and H7.1 all ran that way. The speculation above
+about the 62.5 MHz fold is therefore moot, and was never tested.
+
 ## Measured noise floor and the on-board spur family — 2026-08-12 (H3.3)
 
 Outputs off, loopback cables fitted, DC coupled, decimation 2.
 
-| | IN1 | IN2 |
-|---|---:|---:|
-| Density at 991.821 kHz, ±1 V range | **45.6 nV/√Hz** | 52.5 nV/√Hz* |
-| σ per quadrature at operating bandwidth | **2.96 µV** | 3.42 µV* |
-| Density at 991.821 kHz, ±20 V range | 697 nV/√Hz* | 624 nV/√Hz* |
-| σ per quadrature, ±20 V range | 45.4 µV* | 40.6 µV* |
+**USE THESE NUMBERS.** They supersede an earlier 45.6 nV/√Hz → 2.96 µV → 30 µV
+that appeared here and in three other documents; that set was revised twice and
+was ~21% optimistic. The history is in `SESSION_LOG.md`.
 
-IN1 on ±1 V is **measured directly** off a 256 ms deep capture: demodulate the
-record, take the scatter of X and Y (2.961 and 2.957 µV, agreeing to 0.1%). A
-second, independent route — measure the noise density and convert it with the
-demodulator's noise gain — gave 3.16 µV, agreeing to 6%. \*Starred figures come
-from the density route only and are likely ~6% high for the same reason.
+| Configuration, IN1 at ±1 V | Density @ 991.821 kHz | σ per quadrature | For SNR 10 |
+|---|---:|---:|---:|
+| 50 Ω terminated — the board's own floor | 34.6 nV/√Hz | 2.39 µV | 24 µV |
+| **Loopback cable, output off — plan with this** | **51.7 nV/√Hz** | **3.57 µV** | **36 µV** |
+
+**The cable adds ~50%, and that is pickup, not an artefact.** The real input is a
+longer cable from a photodetector in a noisier place, so 34.6 nV/√Hz is a floor
+the real system will never see and 24 µV is an unreachable best case.
+
+| Other ranges (density route only, likely ~6% high) | IN1 | IN2 |
+|---|---:|---:|
+| Density @ 991.821 kHz, ±20 V range | 697 nV/√Hz | 624 nV/√Hz |
+| σ per quadrature, ±20 V range | 45.4 µV | 40.6 µV |
+
+IN2 was not re-measured: it carries the trigger train, where a few percent of
+amplitude noise is irrelevant.
 
 Repeatable to 0.2%. Raw record σ is 0.68 counts against 0.289 counts for ideal
 12-bit quantisation, so the floor is analog, not quantisation — though
 quantisation is ~18% of the variance and not negligible.
+
+**The noise gain is NOT the nominal bandwidth** — 4763 Hz measured against
+2250 Hz nominal. Predicting σ from the −3 dB bandwidth gives 2.45 µV against
+3.57 measured, **46% low, in the dangerous direction.**
+
+**One caveat on the absolute scale (Q23).** These convert counts to volts using
+1817.7 counts/V, independently confirmed to 0.04% by H3.5. But loopback measures
+generator × cable × ADC as one number and cannot say whether the 0.882 factor
+sits in the generator or the ADC. In the real experiment the photodetector drives
+the input directly, with no generator involved, so **if the factor is in the
+generator then every figure above is 12.7% too high.** Settling it needs a
+calibrated source or meter, which is not a loopback measurement.
 
 **σ scales as √ENBW to ~1.5%**, confirmed on real data across a factor of 8 in
 bandwidth (H3.4). Scale by √ENBW, not √(nominal bandwidth), which is only good
@@ -505,7 +537,21 @@ that a line is present.
 
 Enable the server: web interface → Development → SCPI server → Run. Port 5000.
 
-Commands used by `hardware.py`, all **unverified**:
+Commands used by `hardware.py`. **All verified against OS 2.00 during Phase 1**
+(H1.5, completed 2026-08-14) — the "unverified" caveat that stood here is gone.
+Three things learned doing it, each of which cost time:
+
+- **A misspelled setting command returns zero bytes, exactly like a correct
+  one.** Verify by setting and reading back, never by absence of an error.
+- **`ACQ:RST` resets gain to LV, coupling to DC, decimation to 1, format to
+  ASCII and units to VOLTS.** `acquire_deep_fast` issues it, so anything set
+  beforehand is discarded. Harmless for LV/DC work because that is what it
+  resets *to*; it would silently ruin an HV or AC-coupled capture, and it will
+  break a following `acquire()` by leaving the format at ASCII.
+- **`SOUR<n>:FREQ:FIX` does not mean what it appears to** for a loaded table: it
+  sets how many times per second the fixed 16384-entry table is traversed, not a
+  per-sample clock. That misunderstanding meant `setup_am_generator` produced no
+  output at all.
 
 | Purpose | Command |
 |---|---|

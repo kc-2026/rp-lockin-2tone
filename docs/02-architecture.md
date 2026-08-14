@@ -4,17 +4,26 @@
 
 ```
   waveforms.py  ── drive construction, frequency planning
-  planning.py   ── capture sizing: memory, decimation, settling
+  planning.py   ── capture sizing: memory, decimation, settling, pre-roll, tail
   emulator.py   ── synthetic DUT output + ground truth (loopback testing)
-  dsp.py        ── demodulation                          [TRUSTED, 62 tests]
-  hardware.py   ── SCPI transport                        [UNVERIFIED]
+  dsp.py        ── demodulation                          [TRUSTED, 102 tests]
+  wavelength.py ── trace → wavelength, clock check, alignment guards
+                                                         [TRUSTED offline,
+                                                          never seen a laser]
+  hardware.py   ── SCPI transport            [VERIFIED against the board,
+                                              Phase 1 complete 2026-08-14]
 ```
 
 The split between `dsp.py` and `hardware.py` is deliberate and load-bearing.
-The signal processing is fully testable offline and has been; the transport has
-never touched a board. Keeping them apart means a wrong SCPI command produces a
-connection error rather than a plausible-but-wrong measurement. **Do not move
-processing into the transport layer.**
+The signal processing is fully testable offline; the transport is not. Keeping
+them apart means a wrong SCPI command produces a connection error rather than a
+plausible-but-wrong measurement. **Do not move processing into the transport
+layer.**
+
+`wavelength.py` follows the same principle for the laser: it holds **no serial
+commands at all** and takes the laser's wavelength table as an argument. The
+Santec transport is not written, and must not be written from memory — see
+`07-phase2-prep.md`.
 
 ## Signal chain
 
@@ -106,9 +115,19 @@ would have reported a phantom 2× amplitude error. Caught by
 
 ## Known limitations
 
-- `hardware.py` is unverified. This is the largest single risk.
-- Deep Memory Generation is not yet implemented; long emulated sweeps depend on
-  it (test plan H5).
-- Filter settling costs ~108 output points per sweep. Mitigated by pre-roll,
-  not eliminated.
-- No averaging across sweeps yet. Straightforward to add if wanted.
+- ~~`hardware.py` is unverified. This is the largest single risk.~~
+  **Resolved 2026-08-14.** Every method has run against the board; Phase 1 is
+  complete. `acquire_deep_2ch`'s SCPI read remains broken and is superseded by
+  `acquire_deep_fast`.
+- ~~Deep Memory Generation is not yet implemented; long emulated sweeps depend
+  on it.~~ **It does not exist on this OS (H5.1), permanently.** The generator's
+  unique-waveform ceiling is 16384 points = 65.536 µs. H6.5 emulated the DUT by
+  stepping the amplitude during the capture instead.
+- Filter settling costs ~113 output points per sweep. Mitigated by pre-roll,
+  not eliminated — **and it needs a tail as well**, because `LockinResult.t`
+  compensates group delay, so the valid window is shifted rather than merely
+  shortened. See `planning.recommended_tail()`.
+- No averaging across sweeps yet. Straightforward to add if wanted (Q13).
+- **The largest single risk is now the Santec serial link**, which does not
+  exist yet and cannot be written from memory. See `07-phase2-prep.md`. It is
+  the one subsystem whose silent failure is invisible in the output.
