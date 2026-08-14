@@ -63,7 +63,7 @@ This distinction matters more than usual here.
 
 | Area | Status |
 |---|---|
-| `src/rp_lockin/dsp.py` | **Trusted.** 101 offline tests. Do not change without re-running them. |
+| `src/rp_lockin/dsp.py` | **Trusted.** 102 offline tests. Do not change without re-running them. |
 | `planning.py`, `emulator.py` | **Trusted.** Same suite. |
 | `waveforms.py` — `make_am_table`, `plan_two_tone_grid` | **Trusted and hardware-verified.** Use these to drive the board. |
 | `waveforms.py` — `make_am_waveform`, `plan_two_tone` | **Sound arithmetic, WRONG hardware model.** Kept because their tests are worth having. Driving the board with them produces no output at all. |
@@ -108,9 +108,14 @@ wrong answers rather than crashes:
 2. **The naive buffer rule is wrong.** N = fs/f_mod only works when that is an
    integer. The real minimum is the smallest N making N·f/fs whole for *every*
    frequency involved. f2 = 6 MHz needs 125 samples, not 41.67.
-3. **Filter settling costs ~108 points** at 5000 Sa/s — about 22 ms, 2% of a
+3. **Filter settling costs ~113 points** at 5000 Sa/s — about 22 ms, 2% of a
    sweep. The capture must pre-roll before the laser trigger or the start of
    every trace is garbage. See `planning.settling_points()`.
+   **And it needs a TAIL too, which is easy to miss.** `LockinResult.t`
+   compensates group delay as well as trimming settling, so the valid
+   window is shifted: a record stopping at trigger + 1 s yields 4943 points,
+   not 5000, with no error and a trace that just ends early. Use
+   `planning.recommended_tail()`. Measured in H6.3.
 4. **The time axis is not zero-based.** `LockinResult.t` is referenced to the
    start of the input record and already compensates settling and group delay.
    Do not add your own offset — the wavelength calibration depends on this.
@@ -177,12 +182,13 @@ Key-based SSH is installed, so the board helper no longer needs a human — see
 | H4.1–H4.4 trigger | done — edges recovered exactly, inputs aligned to 0.0005 samples, `Trig:Pos` solved |
 | H5.1 Deep Memory Gen | **answered: NOT AVAILABLE.** 16384-point ceiling is permanent |
 | H5.2 / H5.3 | superseded — H6.5 emulated the DUT by stepping amplitude instead |
-| H6.1 memory move | **deliberately not done** — see the memory section in `05-hardware-notes.md` |
+| H6.1 memory move | **deliberately not done, and no longer needed** — see `05-hardware-notes.md` |
+| H6.2 / H6.3 full capture | **done — exactly 5000 points at exactly 200.000 µs spacing** |
 | H6.4 pre-roll | done — and two real `acquire_deep_fast` defects fixed getting there |
 | H6.5 full capture | **PASSES** — the Phase 1 exit criterion |
 | H7.1 repeatability | **done — 20/20 sweeps, amplitude to 0.0029% rms, first edge to 6 ns** |
 | H7.2 trigger never arrives | **done — raises cleanly; fixed a defect that left the board armed and SCPI wedged** |
-| H7.3 mid-capture disconnect | **not started — needs Kevin at the bench**, since the likely failure needs an SCPI restart |
+| H7.3 mid-capture disconnect | **done — all three stages fail cleanly and leave the board healthy** |
 | H7.4 outputs off after a crash | **failed, then fixed — `close()` now disarms both outputs** |
 
 **The largest open work is not on this list: the Santec transport.** The lasers are
@@ -240,7 +246,7 @@ move it into the relevant doc and note it in the session log.
 python -m venv .venv
 .venv/Scripts/python -m pip install -e ".[dev]"     # Windows
 .venv/bin/python -m pip install -e ".[dev]"         # Linux
-pytest -q                                            # expect 101 passed
+pytest -q                                            # expect 102 passed
 ```
 
 Most machines here run Windows; keep the suite passing on it. One test uses

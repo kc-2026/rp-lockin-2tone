@@ -31,7 +31,7 @@ Together these cover everything except the DUT physics and the analog chain.
 
 ## Phase 0 — offline (COMPLETE)
 
-`pytest` — 101 tests, no hardware. Must stay green.
+`pytest` — 102 tests, no hardware. Must stay green.
 
 Covers: demodulation accuracy, noise scaling, filter settling, streaming block
 equality, time-axis correctness, waveform commensurability, capture planning,
@@ -339,10 +339,38 @@ The emulated-DUT test at full sweep length needs a waveform longer than the
       upper half costs the OS nothing, whereas the original instruction ran a
       512 MB region from the 16 MB mark straight through Linux's own memory.
       Back up `dtraw.dts` first. Reboot. Confirm `ACQ:AXI:SIZE?`.
-- [ ] H6.2 Capture 1 s on both channels at decimation 2. Confirm the sample
-      count and measure the transfer time.
-- [ ] H6.3 Demodulate to exactly 5000 points. Confirm the count and that the
-      time axis spans the sweep correctly.
+- [x] **H6.2 PASSES 2026-08-14**, at decimation 8 rather than 2 — see the
+      decimation note in `05-hardware-notes.md`; decimation 2 does not fit
+      the 128 MiB region and the move to buy it was rejected.
+      32,812,500 samples on each channel, exactly as requested, both
+      carrying signal. 125.2 MB, **97.8% of the region.**
+      **Transfer is far slower than the single-channel figure suggests:**
+      6.7–11.2 s for 125 MB including arming and the 1 s capture, so
+      11–19 MB/s against the 87 MB/s measured on a 64 MB single-channel
+      read. The 1 MB chunking added to `rp_fastread.py` after it was
+      killed by a 50 MB request means ~125 round trips, and at ~50 ms each
+      that is most of the difference. A robustness-for-speed trade that
+      was worth making; larger chunks would recover most of it if a sweep
+      ever needs to be faster.
+- [x] **H6.3 PASSES 2026-08-14 — exactly 5000 points**, spanning +0.1 ms to
+      999.9 ms about the trigger, at **exactly 200.000 µs spacing with zero
+      measurable jitter**, first point 100 µs after the trigger.
+      **It failed the first time, at 4943 points, and the reason is a real
+      constraint that was not written down anywhere.** A 1 s sweep with
+      45 ms of pre-roll, stopping at exactly trigger + 1 s, comes up 57
+      points short — with no error, and a trace that looks perfectly
+      healthy and merely ends early. `LockinResult.t` compensates the
+      filter's GROUP DELAY as well as trimming its settling, so the valid
+      window is **shifted**, not just shortened, and the usable span runs
+      out about half the settling length before the record does. 57 points
+      against 113 trimmed.
+      **The record must bracket the sweep on both sides:** settling before
+      it, and about half the settling after it. `planning.recommended_tail()`
+      now returns that, alongside `recommended_preroll()`. Re-running with
+      30 ms of pre-roll and a 20 ms tail gave exactly 5000.
+      **Watch the memory.** The recommended pre-roll (45.2 ms) plus tail
+      (16.9 ms) plus a 1 s sweep at decimation 8 is **98.9% of the
+      128 MiB region**. It fits, with essentially nothing to spare.
 - [x] **H6.4 PASSES 2026-08-14.** Compared two captures of the same constant
       signal, triggered from IN2:
 
@@ -426,12 +454,19 @@ The emulated-DUT test at full sweep length needs a waveform longer than the
       that way stops answering SCPI entirely** — TCP still accepts, so it
       looks like a dead cable or a hung PC, and recovery needs the SCPI
       server restarted by hand. Cleanup now spans arming through reading.
-- [ ] H7.3 Confirm behaviour on a mid-capture disconnect. **Not yet done.**
-      The plausible failure is another wedged SCPI server, and **restarting
-      it is Kevin's job, not the agent's** (2026-08-14). Run it when he is
-      at the bench. Testable in three parts: a closed socket mid-sequence,
-      the fast-read helper absent, and the helper killed mid-transfer. A
-      physically unplugged cable needs a human either way.
+- [x] **H7.3 PASSES 2026-08-14, all three stages**, run last and staged from
+      harmless to risky so earlier results were banked first.
+      **A — SCPI socket gone:** raises `OSError` in 0.000 s, no hang.
+      **B — fast-read helper absent:** raises `ConnectionError` naming the
+      cause, before anything is armed.
+      **C — helper killed MID-TRANSFER**, 0.8 s into a 57 MB read: raises
+      `ConnectionError` after 17.7 s. Slow, but it fails rather than hangs.
+      **The board was healthy after every stage, outputs off.** That is the
+      part that matters, and it is the widened cleanup from H7.2 doing its
+      job — before that fix, stage C would very likely have left the
+      capture armed and the SCPI server wedged.
+      Not covered: physically unplugging the Ethernet, which needs a human.
+      Its software-visible behaviour is stage A.
 - [x] **H7.4 FAILED 2026-08-14, then was fixed and passes.**
       `close()` only shut the socket, so **an unhandled exception anywhere
       in a measurement script left the generator driving indefinitely.**

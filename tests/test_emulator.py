@@ -155,6 +155,30 @@ def test_settling_cost_is_known_and_bounded():
     assert recommended_preroll(5000, fs=FS) >= 2 * secs
 
 
+def test_capture_needs_a_tail_as_well_as_a_preroll():
+    """
+    Pre-roll alone does not deliver a full sweep, and the shortfall is silent.
+
+    H6.3 on hardware, 2026-08-14: a 1 s sweep with 45 ms pre-roll, stopping at
+    exactly trigger + 1 s, gave 4943 output points rather than 5000. No error --
+    the trace just ended early. LockinResult.t compensates the filter's group
+    delay as well as trimming settling, so the valid window is SHIFTED, and the
+    usable span runs out about half the settling length before the record does.
+    57 points short against 113 trimmed.
+
+    Pin the relationship, because the failure it guards against looks like a
+    perfectly good trace.
+    """
+    from rp_lockin import recommended_tail, settling_points
+    pts, secs = settling_points(5000, fs=FS)
+    tail = recommended_tail(5000, fs=FS)
+    # Must cover the group delay -- half the settling -- with something to spare.
+    assert tail >= 0.5 * secs, "a tail shorter than the group delay loses points"
+    # And must stay modest: it competes for a DMA region that a 1 s two-channel
+    # capture already fills to 97%.
+    assert tail < secs, "a tail longer than the settling is wasting memory"
+
+
 def test_plan_and_emulator_agree_on_difference_frequency():
     p = plan_two_tone(difference=DIFF)
     samples, truth = synthesise_dut_output(p.difference, 0.010, fs=FS)

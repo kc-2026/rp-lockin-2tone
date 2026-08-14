@@ -421,6 +421,117 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — H6.2, H6.3, H7.3: PHASE 1 IS COMPLETE
+
+**Every H step in Phase 1 is now done, except two that were deliberately not
+done:** H6.1, the device-tree memory move, rejected on its merits and since made
+unnecessary; and H5.2/H5.3, superseded because Deep Memory Generation does not
+exist and H6.5 emulated the DUT by stepping amplitude instead.
+
+All loopback. Outputs off throughout and left off.
+
+### H7.3 PASSES — all three stages, and the H7.2 fix earned its keep
+
+Run last and staged from harmless to risky, so that if the final stage wedged the
+board the earlier results were already banked.
+
+| Stage | Result |
+|---|---|
+| A — SCPI socket gone | `OSError` in 0.000 s |
+| B — helper absent | `ConnectionError` naming the cause, before anything is armed |
+| C — **helper killed mid-transfer**, 0.8 s into a 57 MB read | `ConnectionError` after 17.7 s |
+
+**The board was responsive with outputs off after every stage.** That is the part
+that matters, and it is the widened cleanup from H7.2 doing its job — before that
+fix, stage C would very likely have left the capture armed and the server wedged,
+which is precisely how this session lost twenty minutes earlier.
+
+Stage C's 17.7 s is slow but it is a failure, not a hang. Not worth chasing.
+
+Physically unplugging the Ethernet is still untested and needs a human; its
+software-visible behaviour is stage A.
+
+### H6.2 PASSES, and the transfer rate is worth knowing
+
+32,812,500 samples on each channel, exactly as requested, both carrying signal.
+125.2 MB — **97.8% of the region.**
+
+**Transfer is much slower than the single-channel number suggests:** 6.7–11.2 s
+for 125 MB including arming and the 1 s capture, so **11–19 MB/s against the
+87 MB/s** measured on a 64 MB single-channel read. The 1 MB chunking added to
+`rp_fastread.py` after a 50 MB request killed it means ~125 round trips, and at
+~50 ms each that is most of the gap. A robustness-for-speed trade worth making;
+larger chunks would recover most of it if a sweep ever needs to be faster.
+
+### H6.3 PASSES — but only after finding a constraint nobody had written down
+
+Exactly **5000 points**, spanning +0.1 ms to 999.9 ms about the trigger, at
+**exactly 200.000 µs spacing with zero measurable jitter**, first point 100 µs
+after the trigger.
+
+**It failed the first time, at 4943 points, and the failure is the dangerous
+kind.** A 1 s sweep with 45 ms of pre-roll, stopping at exactly trigger + 1 s,
+comes up **57 points short — with no error, and a trace that looks perfectly
+healthy and merely ends early.**
+
+The cause: **`LockinResult.t` compensates the filter's GROUP DELAY as well as
+trimming its settling.** That *shifts* the valid window rather than only
+shortening it, so the usable span runs out about half the settling length before
+the record does. 57 points against 113 trimmed — almost exactly half.
+
+**Pre-roll alone is not enough. The record has to bracket the sweep on both
+sides**: settling before it, and about half the settling after it. Added
+`planning.recommended_tail()` next to `recommended_preroll()`, with the
+measurement in its docstring and a test pinning the relationship. Re-running with
+30 ms of pre-roll and a 20 ms tail gave exactly 5000.
+
+**Memory is the constraint this runs into.** The recommended pre-roll (45.2 ms)
+plus tail (16.9 ms) plus a 1 s sweep at decimation 8 is **98.9% of the 128 MiB
+region**. It fits with essentially nothing to spare. Anyone lengthening the sweep,
+widening the pre-roll, or adding a channel will hit the ceiling immediately —
+and at that point the memory move comes back on the table, on *this* argument
+rather than the trigger-edge one that has now evaporated.
+
+### First end-to-end run of `wavelength.py` on real board data
+
+Same capture, pushed through the whole chain. The laser table is synthetic — the
+Santec is not connected and its command set is unknown (Q22) — but the edges, the
+timing and the trace are all genuinely off the board, so everything except the
+serial link itself was exercised.
+
+- 128,174 edges recovered from IN2
+- step 8.192000 µs against a nominal 8.192000, **0 missing**, line-fit residual
+  **0.12 ns**
+- `check_alignment`: count and span both match — the first recorded edge is the
+  first table row
+- `map_to_wavelength`: **5000 of 5000 points mapped**, none before or after the
+  table, wavelength monotonic across 1521.4–1569.0 nm
+- amplitude across the sweep steady to **0.0061%**
+
+**The 0 ppm clock offset again proves nothing about U11** and the script says so
+where it prints it: in loopback the generator and the ADC share one clock, so
+there is no clock difference to detect. It validates the machinery, not the
+premise.
+
+### Where Phase 1 stands
+
+Done: H1, H2 (H2.5 failed and was downgraded, its residual risk later closed by
+H3.2), H3.1–H3.5, H4.1–H4.4, H5.1 answered, H6.2–H6.5, H7.1–H7.4.
+
+Not done, deliberately: H6.1 (rejected, and now unnecessary), H5.2/H5.3
+(superseded).
+
+102 offline tests pass.
+
+**The next work is not on the Red Pitaya.** It is the Santec serial driver, and
+it is blocked on Q22 — the TSL-770/775 command set, the port settings, and
+whether the wavelength table streams live or is dumped after the sweep. After
+that, Phase 2 needs its own planning session before anything is connected; the
+untestable list (U1–U12) is what that session is for, and U10/U11/U12 were added
+today.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — H3.5 board half, H7.1/H7.2/H7.4; two real defects fixed
 
 All loopback, outputs off at the end of every step and at the end.

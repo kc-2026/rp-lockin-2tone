@@ -44,6 +44,7 @@ from .planning import (
     describe_capture_plan,
     plan_capture,
     recommended_preroll,
+    recommended_tail,
     settling_points,
 )
 from .wavelength import (
@@ -102,6 +103,7 @@ __all__ = [
     "plan_two_tone_grid",
     "snap_to_asg_grid",
     "recommended_preroll",
+    "recommended_tail",
     "settling_points",
     "synthesise_dut_output",
 ]

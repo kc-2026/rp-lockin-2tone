@@ -207,3 +207,34 @@ def recommended_preroll(output_rate: float, bandwidth: float | None = None,
     """Seconds of pre-trigger capture to request. See settling_points()."""
     _, seconds = settling_points(output_rate, bandwidth, fs)
     return margin * seconds
+
+
+def recommended_tail(output_rate: float, bandwidth: float | None = None,
+                     fs: float = BASE_SAMPLE_RATE, margin: float = 1.5) -> float:
+    """
+    Seconds to keep capturing AFTER the sweep ends. Pre-roll alone is not enough.
+
+    Measured on hardware 2026-08-14, doing H6.3. A 1 s sweep captured with 45 ms
+    of pre-roll and stopping exactly at the trigger + 1 s yielded **4943 output
+    points, not 5000** -- 57 short, with no error anywhere and a trace that
+    looked perfectly healthy, just ending early.
+
+    The cause is that `LockinResult.t` compensates the filter's GROUP DELAY as
+    well as trimming its settling. That SHIFTS the valid window rather than only
+    shortening it, so the usable span ends roughly half the settling length
+    before the record does. 57 points is almost exactly half of the 113 that
+    were trimmed.
+
+    So the record has to bracket the sweep on BOTH sides: settling before it, and
+    about half the settling after it. Re-running with a 20 ms tail gave exactly
+    5000 points spanning +0.1 to 999.9 ms, at exactly 200.000 us spacing with
+    zero jitter.
+
+    The default margin of 1.5 is deliberately smaller than the pre-roll's 2.0:
+    the tail requirement is half the size and is competing for the same DMA
+    region, which a 1 s two-channel capture already fills to 97%.
+
+    Returns seconds.
+    """
+    _, seconds = settling_points(output_rate, bandwidth, fs)
+    return margin * 0.5 * seconds
