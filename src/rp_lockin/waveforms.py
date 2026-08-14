@@ -25,7 +25,7 @@ __all__ = ["AsgTable", "GridTwoTonePlan", "TwoTonePlan", "asg_grid",
 
 
 # ---------------------------------------------------------------------------
-# The real generator model -- measured on the board, 2026-08-10
+# The real generator model -- measured on the board, 2026-08-12
 # ---------------------------------------------------------------------------
 #
 # The ASG does NOT replay the N samples you load. It always traverses a fixed
@@ -193,7 +193,7 @@ def plan_two_tone_grid(difference: float = 1e6, f1: float = 5e6,
     exact, just a different choice about which quantity stays nearest nominal.
     Neither accumulates error: once both tones are integer cycle counts, their
     difference is a whole number of grid steps by construction. The values here
-    are the ones agreed with Edwin on 2026-08-10.
+    are the ones agreed with Kevin on 2026-08-12.
     """
     _, n_c = snap_to_asg_grid(carrier, fs)
     _, n_1 = snap_to_asg_grid(f1, fs)

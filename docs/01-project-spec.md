@@ -20,7 +20,7 @@ The deliverable per sweep is a 4000–5000 point time series of the demodulated
 response — **amplitude only** — with a time axis accurate enough to map onto
 wavelength via the trigger calibration.
 
-**Scope narrowed 2026-08-10 (Edwin): amplitude, not amplitude and phase.**
+**Scope narrowed 2026-08-12 (Kevin): amplitude, not amplitude and phase.**
 Phase is still computed and returned by `demodulate()`, and is still useful
 within a sweep, but it is not a deliverable and nothing should be gated on it.
 This is what downgraded Q6 (the OUT1/OUT2 relative carrier phase is not
@@ -68,7 +68,7 @@ keeps the same 5000 points, removes the folding, and gains about 3.7 dB of
 noise performance. It still gives 71 cycles of the 1 MHz difference frequency
 per integration time, far above the 5–10 that R4 requires.
 
-**Decided 2026-08-10 (Q10, Edwin): keep τ = 71 µs at 5000 points.** The
+**Decided 2026-08-12 (Q10, Kevin): keep τ = 71 µs at 5000 points.** The
 alternative that also avoids aliasing is 12500 points at τ = 28.3 µs, which
 would honour the original 30 µs convention but exceed R5's point count; it was
 considered and not taken.

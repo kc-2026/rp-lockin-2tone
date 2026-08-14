@@ -1,7 +1,7 @@
 # Agent onboarding — read this first, every session
 
 You are working on a two-tone lock-in measurement system for a Red Pitaya
-SIGNALlab 250-12. A human (Edwin) has the board on his bench and can rewire it,
+SIGNALlab 250-12. A human (Kevin) has the board on his bench and can rewire it,
 but is not watching continuously.
 
 **Read in this order before doing anything:**
@@ -59,7 +59,7 @@ This distinction matters more than usual here.
 | `planning.py`, `emulator.py` | **Trusted.** Same suite. |
 | `waveforms.py` — `make_am_table`, `plan_two_tone_grid` | **Trusted and hardware-verified.** Use these to drive the board. |
 | `waveforms.py` — `make_am_waveform`, `plan_two_tone` | **Sound arithmetic, WRONG hardware model.** Kept because their tests are worth having. Driving the board with them produces no output at all. |
-| `hardware.py` — SCPI transport, generator, `acquire`, `acquire_deep_fast` | **Verified against the board 2026-08-10.** |
+| `hardware.py` — SCPI transport, generator, `acquire`, `acquire_deep_fast` | **Verified against the board 2026-08-12.** |
 | `hardware.py` — `acquire_deep_2ch` | **The SCPI read is broken.** Arming is fine; the read returns garbage. Use `acquire_deep_fast`. |
 | `scripts/rp_fastread.py` | **Runs ON THE BOARD**, not the control PC. The one deliberate exception to "everything runs on the PC". |
 
@@ -236,7 +236,7 @@ export RP_HOST=rp-fffe42.local     # mDNS; the link-local IP changes on reconnec
   `QUIT\n` to port 9999.
 
 - **The board's root filesystem is currently mounted read-write**, apparently
-  left that way by the 2026-08-10 device-tree edit. That is why the documented
+  left that way by the 2026-08-12 device-tree edit. That is why the documented
   `rw` step appears unnecessary — and note `rw`/`ro` are interactive shell
   shortcuts that do not exist in a one-shot `ssh host "..."` command; use
   `mount -o remount,rw /` there. A permanently writable root on an SD card is a

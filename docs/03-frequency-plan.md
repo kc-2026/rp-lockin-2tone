@@ -1,6 +1,6 @@
 # Frequency plan
 
-> **SUPERSEDED IN PART, 2026-08-10 — read this first.**
+> **SUPERSEDED IN PART, 2026-08-12 — read this first.**
 >
 > This document derives a 250-sample buffer from the assumption that the
 > generator replays exactly the N samples you load. **Measured on the board,
@@ -17,8 +17,8 @@
 > multiple of **fs/16384 = 15258.7890625 Hz**. Sections below that pick N are
 > obsolete; the grid is now fixed and the frequencies move onto it.
 >
-> **Replacement operating point — decided by Edwin and implemented
-> 2026-08-10.** Built by `plan_two_tone_grid()`, driven by
+> **Replacement operating point — decided by Kevin and implemented
+> 2026-08-12.** Built by `plan_two_tone_grid()`, driven by
 > `make_am_table()`, and verified on the board: all three AM lines land at
 > exactly these frequencies, with sideband/carrier ratios of 0.512 and 0.488
 > against 0.500 theoretical at a 20 MHz carrier where the analog path is flat.

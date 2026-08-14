@@ -139,7 +139,7 @@ def test_both_channel_buffers_share_a_length():
 # exist: it assumed loading N samples and playing at fs/N replays those N
 # samples. The real ASG always traverses a fixed 16384-entry table. Loading a
 # 50-sample buffer produced NO OUTPUT AT ALL on the bench board -- min -2,
-# max +4 counts. Measured 2026-08-10 against OS 2.00.
+# max +4 counts. Measured 2026-08-12 against OS 2.00.
 #
 # Do not delete these to make a refactor pass. Offline tests could not have
 # caught the original bug, but they can stop it coming back.
@@ -229,7 +229,7 @@ def test_grid_plan_difference_is_exact_not_accumulated():
 
 
 def test_grid_plan_matches_the_agreed_operating_point():
-    """The frequencies Edwin signed off on 2026-08-10. If these change, the
+    """The frequencies Kevin signed off on 2026-08-12. If these change, the
     drive frequencies changed, and that is a decision not a refactor."""
     p = plan_two_tone_grid(difference=1e6, f1=5e6, carrier=80e6, fs=FS)
     assert p.carrier_cycles == 5243

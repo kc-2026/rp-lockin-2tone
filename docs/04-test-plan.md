@@ -50,16 +50,16 @@ been executed. Work through it method by method, confirming each SCPI command
 against the board's actual OS version. Every method carries a `VERIFY:` note.
 
 - [x] H1.1 Record the OS version into `docs/05-hardware-notes.md`.
-      **Done 2026-08-10 — OS 2.00 build 37.**
+      **Done 2026-08-12 — OS 2.00 build 37.**
 - [x] H1.2 Connect, `*IDN?`, confirm it is a 250-12 and not a 125-14. A 125-14
       would make every frequency in this project wrong, silently.
-      **Done 2026-08-10, but NOT via `*IDN?`, which carries no model name.**
+      **Done 2026-08-12, but NOT via `*IDN?`, which carries no model name.**
       Confirmed by the board's label, by `monitor -f` → `z20_250`, and by
       measuring the sample rate. Amend this step's wording accordingly.
 - [x] H1.3 Confirm the sample rate the board reports matches 250 MS/s.
-      **Done 2026-08-10 by measurement.**
+      **Done 2026-08-12 by measurement.**
 - [x] H1.4 Read `ACQ:AXI:START?` and `ACQ:AXI:SIZE?`. Record the region size.
-      **Done — 2 MiB as shipped, enlarged to 128 MB on 2026-08-10.**
+      **Done — 2 MiB as shipped, enlarged to 128 MB on 2026-08-12.**
 - [x] H1.5 Verify each command in `setup_generator`, `setup_am_generator`,
       `setup_acquisition`, `acquire`, `acquire_deep`, `acquire_deep_2ch`.
       Fix spellings in place; note every correction in `SESSION_LOG.md`.
@@ -68,7 +68,7 @@ against the board's actual OS version. Every method carries a `VERIFY:` note.
       by `acquire_deep_fast`.**
 - [x] H1.6 Confirm binary block transfer (`ACQ:DATA:FORMAT BIN`) returns the
       expected sample count and a sane amplitude range.
-      **Done 2026-08-10 — exactly 16384 int16 big-endian samples. The separate
+      **Done 2026-08-12 — exactly 16384 int16 big-endian samples. The separate
       little-endian decode on the fast-read path was proven 2026-08-12.**
 
 **Exit:** every method in `hardware.py` has been executed successfully at least
@@ -79,25 +79,25 @@ once, and its `VERIFY:` note either removed or replaced with a confirmation.
 **Wiring:** OUT1 → IN1.
 
 - [x] H2.1 Generate 80 MHz AM at 5 MHz. Confirm three spectral lines at 75, 80,
-      85 MHz. **Done 2026-08-10 — all three lines exact, on the grid-snapped
+      85 MHz. **Done 2026-08-12 — all three lines exact, on the grid-snapped
       frequencies.**
-- [x] H2.2 **Done 2026-08-10 — sideband/carrier ratios 0.512 and 0.488 against
+- [x] H2.2 **Done 2026-08-12 — sideband/carrier ratios 0.512 and 0.488 against
       0.500 theoretical.** Repeat at a 20 MHz carrier. **This is the
       quantitative check** — the
       analog path is flat at 20 MHz, so sideband amplitudes and modulation
       depth are meaningful there. At 80 MHz the round trip is attenuated twice
       (output and input both roll off at 60 MHz), so only relative line
       positions are trustworthy.
-- [x] H2.3 **Done 2026-08-10 — worst spur −48.5 dBc, no comb.** Confirm no
+- [x] H2.3 **Done 2026-08-12 — worst spur −48.5 dBc, no comb.** Confirm no
       wrap-glitch comb. Look for spurious content between
       100 kHz and 40 MHz; there should be essentially none. This is the test
       that catches an incommensurate buffer.
 - [x] H2.4 Both channels generating at once, at f1 and f2. Confirm both are
-      alive and that starting them is synchronous. **Done 2026-08-10 — both
+      alive and that starting them is synchronous. **Done 2026-08-12 — both
       generate simultaneously, carrier magnitudes within 0.6%.**
 - [x] H2.5 **DONE AND FAILED, then downgraded — not blocking.** The OUT1/OUT2
       relative carrier phase scatters over 71–82°, whether or not the
-      generators are restarted, and is unexplained. **Edwin ruled on 2026-08-10
+      generators are restarted, and is unexplained. **Kevin ruled on 2026-08-12
       that this does not block the project, because the deliverable is
       amplitude only and the intermodulation amplitude does not depend on the
       relative phase of the two drives.** One residual risk survives that
@@ -127,7 +127,7 @@ once, and its `VERIFY:` note either removed or replaced with a confirmation.
       trace point.** Measured directly off a 256 ms deep capture, and
       independently via a density route that agreed to 6%. One departure from
       the wording above: the input carried the **loopback cable with the output
-      commanded off**, not a 50 Ω terminator — **Edwin accepted this as the
+      commanded off**, not a 50 Ω terminator — **Kevin accepted this as the
       operative configuration on 2026-08-12**, on the grounds that it is the
       wiring the rest of Phase 1 runs in. Also found a switching-supply spur
       family at 504.868 kHz, ~32 µV per line, harmless at its present frequency

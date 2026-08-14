@@ -38,7 +38,7 @@ is aliasing-free because 62.5 MHz Nyquist sits above the rolloff.
 link-local IP is negotiated and changes on reconnect, so prefer the hostname
 in `RP_HOST`. The board's own hostname derives from its MAC (`ff:fe:42`).
 
-## First contact — 2026-08-10
+## First contact — 2026-08-12
 
 Link-local (APIPA) addressing on a direct Ethernet cable; no DHCP in the path.
 PC side self-assigned `169.254.96.225`, board `169.254.56.245`. Link negotiates
@@ -70,7 +70,7 @@ way: the label on the board, `monitor -f` over SSH, or a loopback measurement
 of the actual sample rate. `ACQ:SOUR<n>:COUP` being supported is suggestive
 (it is documented as 250-12 only) but is not proof on its own.
 
-**Resolved 2026-08-10: Edwin read the board's label — it is a SIGNALlab
+**Resolved 2026-08-12: Kevin read the board's label — it is a SIGNALlab
 250-12.** The 250 MS/s base rate and the whole frequency plan therefore stand.
 H1.3 should still confirm the rate by measurement once loopback is wired, since
 the label proves the hardware but not that the OS is configured for it.
@@ -123,7 +123,7 @@ same value, so the normal and AXI paths appear to share one units setting.
 ### The arbitrary generator does not work the way `waveforms.py` assumes
 
 **This is the most consequential finding of the first hardware session, and it
-invalidates `make_am_waveform`'s model of the hardware.** Measured 2026-08-10
+invalidates `make_am_waveform`'s model of the hardware.** Measured 2026-08-12
 on OS 2.00.
 
 `make_am_waveform()` returns `(samples, fs/N)` on the assumption that loading N

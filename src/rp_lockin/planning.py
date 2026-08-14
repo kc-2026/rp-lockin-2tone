@@ -26,7 +26,7 @@ from .dsp import min_record_seconds
 __all__ = ["CaptureOption", "plan_capture", "describe_capture_plan",
            "settling_points", "recommended_preroll"]
 
-# MEASURED 2026-08-10: 5.7 MB/s pulling deep-memory blocks over SCPI, six
+# MEASURED 2026-08-12: 5.7 MB/s pulling deep-memory blocks over SCPI, six
 # consecutive 7.6 MB reads within 0.02 s of each other.
 #
 # This is a limitation of the SCPI SERVER, not of the board or the link, and
@@ -40,7 +40,7 @@ __all__ = ["CaptureOption", "plan_capture", "describe_capture_plan",
 # So a 477 MB one-second sweep is ~84 s over SCPI but would be ~5.5 s over a
 # raw socket. If the transfer time ever matters -- H7.1's twenty repeats is
 # half an hour over SCPI -- the fix is a raw read of the DMA region rather than
-# a change of decimation. See SESSION_LOG.md 2026-08-10.
+# a change of decimation. See SESSION_LOG.md 2026-08-12.
 SCPI_MB_PER_S = 5.7
 
 

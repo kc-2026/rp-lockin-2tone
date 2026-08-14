@@ -164,7 +164,7 @@ class RedPitaya:
         """
         Output an amplitude-modulated carrier from the arbitrary-waveform table.
 
-        VERIFIED against OS 2.00 on 2026-08-10, after the original version was
+        VERIFIED against OS 2.00 on 2026-08-12, after the original version was
         found not to work at all.
 
         The ASG always traverses a fixed 16384-entry table; SOUR:FREQ:FIX sets
@@ -324,7 +324,7 @@ class RedPitaya:
         Deep capture, read back over the fast path. USE THIS, not
         acquire_deep_2ch.
 
-        Verified 2026-08-10: driving 1 MHz then 2 MHz and capturing each gave
+        Verified 2026-08-12: driving 1 MHz then 2 MHz and capturing each gave
         1.0000 and 2.0000 MHz back, amplitude 361 counts against 362 measured
         independently, rms exactly amplitude/sqrt(2). Each capture tracks its
         own drive, so this is live data rather than leftovers.
@@ -429,7 +429,7 @@ class RedPitaya:
         data so the filter is settled when the sweep starts; this needs to
         become a parameter in acquire_deep_fast() too.
 
-        See SESSION_LOG.md 2026-08-10 for the diagnosis.
+        See SESSION_LOG.md 2026-08-12 for the diagnosis.
         """
         self.write("ACQ:RST")
         self.write(f"ACQ:AXI:DEC {int(decimation)}")

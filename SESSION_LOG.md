@@ -61,7 +61,7 @@ starting by recording the OS version.
 
 ---
 
-## 2026-08-10 — Claude (Claude Code) — first hardware contact; H1 essentially done
+## 2026-08-12 — Claude (Claude Code) — first hardware contact; H1 essentially done
 
 **Goal:** Onboard, validate the repo, get the board talking, and begin H1.
 
@@ -70,7 +70,7 @@ starting by recording the OS version.
   imported Unix-only `resource` and failed at import, so its assertions never
   ran. Moved to stdlib `tracemalloc`. Verified it still guards: 346 MB at
   `CHUNK_SAMPLES = 1<<22` versus 4295 MB at `1<<26`, against an 800 MB bound.
-- **Q10 decided by Edwin: τ stays at 71 µs / 5000 points.** Also corrected the
+- **Q10 decided by Kevin: τ stays at 71 µs / 5000 points.** Also corrected the
   spec's claim that τ is "configurable" — `dsp.py` clamps bandwidth to
   0.9 × output Nyquist and silently drops a wider request. Deliberate.
 - H1.1–H1.6 complete except the deep-memory path. Details below.
@@ -91,7 +91,7 @@ starting by recording the OS version.
    the hardware is wrong.
 2. **The board has 1 GB, but `mem=512M` hides half of it from Linux.** I first
    concluded from `/proc/iomem` and `MemTotal` that it was a 512 MB board and
-   started redesigning around decimation 4. Edwin pushed back with the
+   started redesigning around decimation 4. Kevin pushed back with the
    datasheet and was right. Both of those sources show the capped view.
    `/proc/device-tree/memory/reg` is the honest one: base 0, size 0x40000000.
    The upper half, `0x20000000`–`0x3FFFFFFF`, is free for DMA and costs Linux
@@ -124,8 +124,8 @@ transfer returns exactly 16384 int16 big-endian samples. Amplitude accurate to
 
 **LIMITATION — the drive frequencies are no longer round numbers.**
 
-*Recorded at Edwin's explicit request when he approved the change on
-2026-08-10. Anyone comparing this system against a spec, a commercial lock-in,
+*Recorded at Kevin's explicit request when he approved the change on
+2026-08-12. Anyone comparing this system against a spec, a commercial lock-in,
 or an earlier dataset that says "1 MHz" needs to read this.*
 
 The ASG can only emit integer multiples of fs/16384 = **15258.7890625 Hz**.
@@ -214,7 +214,7 @@ limitation disappears. Worth checking before anyone builds around 991.821 kHz.
   since the generators run continuously through it. What is at risk is
   comparing or averaging phase *across* sweeps (bears directly on Q13).
 
-  **RESOLVED AS NOT BLOCKING — Edwin, 2026-08-10: the deliverable is
+  **RESOLVED AS NOT BLOCKING — Kevin, 2026-08-12: the deliverable is
   amplitude only, not amplitude and phase.** `01-project-spec.md` updated.
 
   His reasoning, which is the physical argument and worth keeping over my
@@ -226,10 +226,10 @@ limitation disappears. Worth checking before anyone builds around 991.821 kHz.
   without changing its length. Do not spend time explaining the scatter unless
   phase comes back into scope.
 
-  **Concerns to carry forward anyway, recorded at Edwin's request:**
+  **Concerns to carry forward anyway, recorded at Kevin's request:**
 
   1. *A relative **drift** would matter even for amplitude* — this is the one
-     concern that survives Edwin's argument, because it is not a constant
+     concern that survives Kevin's argument, because it is not a constant
      offset. A constant offset leaves R alone; a steadily advancing one does
      not. If the two
      channels' table positions slide continuously rather than jumping, that is
@@ -305,7 +305,7 @@ nothing at all) and read size. `GBE_MB_PER_S = 100.0` is now
 **A 477 MB one-second sweep therefore takes ~84 s over SCPI — but this is
 fixable, and the fix is worth taking.**
 
-Edwin pushed back on the claim that the board's CPU was the limit, and he was
+Kevin pushed back on the claim that the board's CPU was the limit, and he was
 right. Measured on the same cable, same board:
 
 | Path | Rate |
@@ -401,7 +401,7 @@ noise measurement.
 2. Re-measure the drift once deep capture is trustworthy — at **decimation 1**,
    with signal levels printed.
 3. The DMA region was enlarged from 2 MiB to 128 MB on
-   2026-08-10 (`reg = <0x1000000 0x8000000>`, staged deliberately: the node
+   2026-08-12 (`reg = <0x1000000 0x8000000>`, staged deliberately: the node
    name and base are unchanged so the `dma_region` alias on line 19 of the DTS
    stays valid, and 144 MB is the hard ceiling before colliding with
    `labuf@a000000`). That is 0.27 s of two-channel capture at decimation 2 —
@@ -457,7 +457,7 @@ Below ~3 µV a single sweep cannot see it at all.
 **Did:**
 - Confirmed the offline suite green (74) before touching hardware, and again
   after (76 — two new tests, below).
-- Probed board state read-only. Region is still the 128 MB from 2026-08-10.
+- Probed board state read-only. Region is still the 128 MB from 2026-08-12.
   `ACQ:DATA:FORMAT?` read `ASCII` and units `VOLTS` on connect, i.e. a fresh
   SCPI server since the reboot; `setup_acquisition` correctly sets BIN/RAW.
 - Measured the floor with averaged Welch periodograms of many short captures,
@@ -520,7 +520,7 @@ Below ~3 µV a single sweep cannot see it at all.
    a real line keeps its frequency as fs changes whereas a folded one moves.
    Use it for that and nothing else.
 
-5. **The Rayleigh bias flagged in the 2026-08-10 log is real and confirmed to
+5. **The Rayleigh bias flagged in the 2026-08-12 log is real and confirmed to
    0.7%.** With no signal, mean(R) reads 1.2533σ and never zero — on IN1 that
    is an apparent 3.96 µV "signal" that does not exist. The honest noise figure
    is the per-quadrature σ, which is also exactly what limits a real amplitude
@@ -542,13 +542,13 @@ healthy at ~50 ms round trip, DMA region 128 MB at 0x1000000.
 - `tests/hardware/test_loopback.py` **is stale and would mislead.** It still
   imports `plan_two_tone` and `make_am_waveform` — the pair CLAUDE.md marks as
   the wrong hardware model — and `PLAN = plan_two_tone(difference=1e6)` at
-  module scope hardcodes the 1 MHz that the 2026-08-10 session established is
+  module scope hardcodes the 1 MHz that the 2026-08-12 session established is
   actually 991.821 kHz. Its H3 test also calls `acquire_deep`, which routes to
   the broken `acquire_deep_2ch`. Not touched, because fixing it is a task in
   its own right and it is skipped without `RP_HOST`. **Do not trust it as a
   record of what passes.**
 - `scripts/plan.py` still computes settling at 250 MS/s (reports 113 points
-  instead of 108). Errs safe, unchanged from 2026-08-10.
+  instead of 108). Errs safe, unchanged from 2026-08-12.
 
 **What H3.3 does NOT cover — read this before quoting the number:**
 
@@ -566,7 +566,7 @@ healthy at ~50 ms round trip, DMA region 128 MB at 0x1000000.
 2. **The input was not 50 Ω terminated.** H3.3 as written says "input
    terminated"; what was measured is the input with the **loopback cable
    fitted and the output commanded off**, since that is the wiring in place and
-   changing it needs a human. **Edwin accepted this as the operative
+   changing it needs a human. **Kevin accepted this as the operative
    configuration on 2026-08-12** rather than spend a rewiring round trip on a
    50 Ω terminator, on the grounds that it is the wiring the rest of Phase 1
    runs in. So the question below stays open by choice, not by oversight. So the figure includes whatever the OUT1 stage
@@ -583,7 +583,7 @@ healthy at ~50 ms round trip, DMA region 128 MB at 0x1000000.
 4. **AC coupling unmeasured.** DC was used throughout, matching
    `setup_acquisition`'s default and the operating point.
 5. **Absolute volts carry ~13% unresolved uncertainty.** Counts were converted
-   at the nominal 2048 counts/V for LV. The 2026-08-10 log records a measured
+   at the nominal 2048 counts/V for LV. The 2026-08-12 log records a measured
    round-trip figure of ~1818 counts/V, 13% away. That figure conflates the
    DAC's real output amplitude with the ADC's scale, so it is not necessarily
    the ADC scale — but until someone measures the ADC scale against a
@@ -624,7 +624,7 @@ narrower than the nominal figure even though the *noise* bandwidth is wider:
 
 ### CONFIRMED BY DEEP CAPTURE, LATER THE SAME DAY — and one figure above was badly wrong
 
-Edwin started `rp_fastread.py` by hand, which unblocked everything the section
+Kevin started `rp_fastread.py` by hand, which unblocked everything the section
 above listed as pending. One contiguous 32 M-sample capture (256 ms, IN1,
 decimation 2, LV, DC, outputs off) settled all of it. **The headline table above
 has been updated to these numbers; what follows is what changed and why.**
