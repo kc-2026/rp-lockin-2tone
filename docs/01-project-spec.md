@@ -12,13 +12,21 @@ nonlinearity mixes them, and the response appears at the difference frequency
 |f2 − f1|. A photodetector returns that response and nothing else.
 
 Meanwhile a laser sweeps its wavelength across a span in approximately one
-second, emitting a trigger sequence. The relative timing of those trigger edges
-carries the time-to-wavelength calibration, so the trigger train is digitised
-and recorded alongside the signal.
+second. It is a **Santec**, and it can report its own wavelength against time
+over a serial link.
+
+**Wavelength calibration comes from the laser over serial, NOT from trigger-edge
+timing (Kevin, 2026-08-14).** The laser's trigger output goes to the Red Pitaya's
+trigger input purely to **align the sweep with the capture** — to establish the
+common time origin. The wavelength for each point then comes from the laser's own
+report, and the deliverable becomes power against wavelength directly.
+
+The trigger train is still digitised on IN2, but its job shrank from "encode the
+wavelength axis in its interval timing" to "mark where the sweep begins".
 
 The deliverable per sweep is a 4000–5000 point time series of the demodulated
-response — **amplitude only** — with a time axis accurate enough to map onto
-wavelength via the trigger calibration.
+response — **amplitude only** — mapped onto wavelength using the laser's serial
+report, with the trigger fixing the time origin.
 
 **Scope narrowed 2026-08-12 (Kevin): amplitude, not amplitude and phase.**
 Phase is still computed and returned by `demodulate()`, and is still useful
@@ -41,7 +49,8 @@ and taking the real part is unbiased and quieter. Not yet implemented — see
 | R3 | Demodulate at \|f2 − f1\| | measurement principle |
 | R4 | Integration time ≥ 5–10 periods of \|f2 − f1\| | lock-in validity |
 | R5 | 4000–5000 output points per 1 s sweep | sufficient sampling of the sweep |
-| R6 | Capture the laser trigger train for calibration | wavelength mapping |
+| R6 | Trigger the capture from the laser's trigger output, to fix the time origin | sweep alignment |
+| R6b | Read the laser's wavelength-versus-time over serial, and map the trace onto it | wavelength axis (Kevin, 2026-08-14) |
 | R7 | Software only; no FPGA development | scope decision, see ADR-0001 |
 | R8 | Runs on a control PC over the network | environment |
 

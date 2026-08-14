@@ -180,7 +180,37 @@ once, and its `VERIFY:` note either removed or replaced with a confirmation.
       2250 Hz bandwidth, −124 dB by 3 kHz, −204 dB at 19 kHz). Still to do on
       the board.
 
-### H4 — trigger digitisation — H4.1, H4.2, H4.4 done 2026-08-14
+### H4 — trigger digitisation
+
+**SCOPE REDUCED 2026-08-14 (Kevin). Read this before drawing conclusions from
+the results below.** The wavelength axis now comes from the Santec laser's own
+serial report of wavelength against time, not from the intervals between trigger
+edges. The trigger output's only job is to **align the sweep with the capture**.
+
+What that changes:
+
+- **H4.4 is now the load-bearing test**, and it passes. Triggering the
+  acquisition from IN2 and knowing where the trigger sits in the record is
+  exactly and only what the new scheme needs.
+- **H4.1 and H4.2 are no longer critical.** Recovering a long train of intervals
+  to sub-nanosecond precision was in service of a calibration that no longer
+  exists. The results stand and are kept — they are good evidence the input path
+  and edge finder work — but nothing is gated on them.
+- **H4.3 still matters**, though less. A skew between IN1 and IN2 would offset
+  the signal against the trigger instant, and so shift the whole trace in time
+  relative to the sweep. It is 0.0005 samples, so this is settled either way.
+- **The decimation-8 missed-edge problem largely dissolves.** Detecting one
+  sweep-start edge is not the same task as recovering thousands of intervals
+  without losing any. See the decimation note in `05-hardware-notes.md`.
+
+**Caveat, unresolved:** this assumes the Santec's trigger output is configured to
+fire **once per sweep**. Santec TSL lasers can also emit a trigger per wavelength
+step, which would put a pulse train back on IN2 — a *better* one, since each
+pulse would then have a known wavelength, but a train nonetheless, and the
+missed-edge question would return with it. **Confirm the trigger mode before
+relying on the paragraph above.** See Q18.
+
+### H4 — results as measured (H4.1, H4.2, H4.4 done 2026-08-14)
 
 - [x] **H4.1 PASSES, comfortably.** Played a six-edge pattern from the ASG
       table and recovered it on IN2. 733 edges over 122.1 table repeats
@@ -368,9 +398,13 @@ where a loopback pass does **not** imply the real system works.
 | U4 | Photodetector bandwidth at 1 MHz | Not connected | Response rolled off or absent |
 | U5 | Photodetector output level and input range choice | Unknown until measured | Clipping, or burying the signal in ADC quantisation |
 | U6 | Real noise environment | Loopback is quiet | SNR far worse than predicted |
-| U7 | Laser trigger electrical characteristics | Emulated | Trigger missed or mis-timed |
+| U7 | Santec trigger output: level, polarity, width, and whether it fires once per sweep or per step (Q18) | Emulated | Capture not triggered, or a pulse train appears where one edge was expected |
+| U10 | The Santec serial link — command set, timing, and whether its reported wavelength is trustworthy | Laser not connected; no driver written yet | **The wavelength axis is now entirely dependent on this.** A wrong or mis-aligned report mislabels every point, and nothing in the trace would look wrong |
+| U11 | Clock relationship between the laser and the Red Pitaya (Q19) | Two instruments, one not present | Wavelength assignment drifts across the sweep even with the origin correctly aligned |
 | U8 | Actual sweep repeatability of the laser | Not in the loop | Wavelength calibration drift |
 | U9 | Ground loops and pickup with everything connected | Single-box loopback | 80 MHz leakage into the detector path |
+
+**Note where the risk moved.** Taking the wavelength axis from the laser removes a hard problem (recovering thousands of edge intervals without losing one) and replaces it with a different one: trusting a second instrument's report and aligning two clocks. That is a good trade — the laser knows its own wavelength far better than we can infer it — but it is a trade, not a free win, and U10 and U11 are where it now lives. Both are invisible in loopback.
 
 U2 deserves particular attention. Amplifier intermodulation would appear at
 exactly |f2 − f1| — the same frequency as the real signal — and would look

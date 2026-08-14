@@ -22,11 +22,15 @@ enough that a fresh agent can resume without re-deriving anything.
 
 Two 80 MHz carriers, amplitude modulated at f1 = 5 MHz and f2 = 6 MHz, drive a
 DUT through AOMs. The DUT mixes them; a photodetector returns the
-intermodulation response at |f2 − f1| = 1 MHz and nothing else. A laser sweeps
-its wavelength over ~1 s, emitting trigger pulses whose relative timing encodes
-the time-to-wavelength calibration. We capture the photodetector on IN1 and the
-trigger train on IN2, demodulate the 1 MHz response in software, and deliver a
-5000-point trace of amplitude and phase across the sweep.
+intermodulation response at |f2 − f1| ≈ 991.821 kHz and nothing else. A **Santec**
+laser sweeps its wavelength over ~1 s. We capture the photodetector on IN1,
+trigger the capture from the laser's trigger output on IN2, demodulate in
+software, and deliver a 5000-point trace of **amplitude** across the sweep.
+
+**The wavelength axis comes from the laser over serial, not from trigger timing**
+(Kevin, 2026-08-14). The trigger only fixes the common time origin. Reading the
+Santec over serial is new work that exists nowhere in the codebase yet — see Q18,
+Q19 and Q20.
 
 Everything is done in software on a control PC. There is no FPGA work in scope.
 
@@ -173,12 +177,15 @@ Key-based SSH is installed, so the board helper no longer needs a human — see
 | H6.5 full capture | **PASSES** — the Phase 1 exit criterion |
 | H7.1–H7.4 robustness | **none started. This is the main remaining Phase 1 work.** |
 
-**The largest open question is not on this list.** It is U7 — what the laser's
-trigger output actually looks like electrically. Nothing about it is documented:
-no pulse rate, amplitude, rise time or logic family. It decides the decimation,
-which decides whether 128 MB is enough, which decides whether the device-tree
-move is needed at all. **It is answerable from the laser's datasheet, not from a
-measurement.** Ask before doing anything memory-related.
+**The largest open work is not on this list.** The wavelength axis now comes from
+the Santec laser over serial (Kevin, 2026-08-14), and **no driver for that exists**
+— not a line of it. See Q18, Q19, Q20 for what has to be established first:
+which trigger mode the laser is in, how the two instruments' clocks relate, and
+whether the laser reports wavelength against time or against a step index.
+
+That change also **defused the decimation/memory question.** It was live only
+because the wavelength axis depended on recovering trigger intervals exactly; it
+no longer does. Do not start the device-tree move — see `05-hardware-notes.md`.
 
 **Two numbers from H3.3 not to re-derive or guess at:**
 

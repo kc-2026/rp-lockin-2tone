@@ -421,6 +421,91 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — the wavelength axis comes from the laser, not the trigger
+
+**Kevin, 2026-08-14: the lasers are Santec, and they can report their own
+wavelength against time over serial. Their trigger output goes to the Red
+Pitaya's trigger input purely to align the sweep with the capture. The trigger
+pulses are no longer needed to carry the wavelength calibration.**
+
+This is the largest scope change since the amplitude-only decision, and it is a
+simplification. Written into `01-project-spec.md` (goal and R6/R6b),
+`04-test-plan.md` (H4 scope, the untestable table), `05-hardware-notes.md`
+(decimation), `06-open-questions.md` (Q18–Q20) and `CLAUDE.md`.
+
+### What it fixes
+
+**The decimation-8 missed-edge problem largely dissolves, and with it the
+justification for the memory move.** That problem was: 1.17% of trigger
+intervals fail to match a designed value at decimation 8, and a missed edge
+merges two intervals and corrupts the wavelength mapping. It mattered only
+because the mapping was *derived from those intervals*. **Detecting one
+sweep-start edge is a completely different task from recovering thousands of
+intervals without losing any.** H4.4 already passes and is exactly what the new
+scheme needs.
+
+So the chain that has been driving the memory discussion — missed edges force
+decimation 2, decimation 2 needs 477 MiB, 477 MiB needs the device-tree move —
+is broken at its first link. **Do not do the memory move.** Two things stop this
+being fully closed: the missed-edge mechanism was never actually explained (the
+recorded cause is off by a factor of a hundred, see the previous entry), and Q18
+below.
+
+### What it changes about the H4 results
+
+Nothing measured becomes wrong; some of it becomes less load-bearing.
+
+| | Before | Now |
+|---|---|---|
+| H4.1 interval recovery | central | good evidence the path works; nothing gated on it |
+| H4.2 timing resolution | central | same |
+| H4.3 IN1/IN2 alignment | important | still relevant — a skew shifts the trace against the trigger instant — and settled at 0.0005 samples |
+| **H4.4 trigger the capture** | one of four | **the load-bearing test, and it passes** |
+
+The unticked-box duplication fixed earlier today matters more now: someone
+reading H4 should see that H4.4 is the one that counts.
+
+### Where the risk went — this is a trade, not a free win
+
+Taking the wavelength axis from the laser removes a hard signal-processing
+problem and replaces it with an instrument-integration one. The laser knows its
+own wavelength far better than we can infer it from edge intervals, so it is a
+good trade. But the failure modes are new, and both are invisible in loopback.
+Added as U10 and U11:
+
+- **U10 — the serial link itself.** The wavelength axis is now *entirely*
+  dependent on it. A mis-aligned or wrong report mislabels every point, and
+  nothing in the trace would look wrong. There is **no driver for this anywhere
+  in the codebase** — not a line.
+- **U11 — two clocks.** The trigger fixes a common origin, but the laser's
+  timebase and the board's are independent. A 100 ppm rate mismatch is 100 µs of
+  drift across a 1 s sweep. Whether that matters depends on how fast the
+  wavelength moves and what wavelength error is tolerable.
+
+### Three things to establish before writing any of it
+
+- **Q18: which trigger-output mode is the laser in?** Santec TSL lasers can emit
+  one pulse per sweep *or* one per wavelength step. Everything above assumes
+  once per sweep. Per-step would put a pulse train back on IN2 — a *better* train,
+  since each pulse would carry a known wavelength, but a train nonetheless, and
+  the missed-edge question returns with it, and so does the memory question.
+  **This one decides whether the paragraphs above hold.**
+- **Q19: how do the two clocks relate?** See U11.
+- **Q20: what does the serial report actually contain** — wavelength against
+  absolute time, or against a step index? If indexed rather than timestamped,
+  the mapping still needs sweep timing, which puts some work back on the
+  trigger. Also needed: command set, port settings, and whether data streams
+  live or is dumped after the sweep.
+
+### Next
+
+The immediate work is no longer on the Red Pitaya. It is a small Santec serial
+driver on the control PC, and it cannot sensibly be written before Q18–Q20 are
+answered — the answers change its shape. Everything in Phase 1 that remains
+(H7 robustness, H3.5's board half) is independent of this and can proceed.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — stale numbers fixed; two recorded explanations do not hold
 
 No hardware measurements this session. Kevin asked where each H step stood, and
