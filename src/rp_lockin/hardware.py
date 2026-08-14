@@ -316,10 +316,35 @@ class RedPitaya:
         """
         return self.acquire_deep_2ch(n_samples, decimation, channels=(channel,))[0]
 
+    def _fast_read_wrapped(self, region_start: int, region_samples: int,
+                           first_sample: int, n_samples: int,
+                           port: int) -> np.ndarray:
+        """Read n_samples from a ring, starting at first_sample, handling wrap.
+
+        Offsets are in SAMPLES within one channel's sub-region; the byte
+        arithmetic is done here so callers cannot get the factor of two wrong.
+        """
+        first_sample %= region_samples
+        end = first_sample + n_samples
+        if end <= region_samples:
+            return self.fast_read((region_start + first_sample) * 2,
+                                  n_samples * 2, port=port)
+        head = region_samples - first_sample
+        return np.concatenate([
+            self.fast_read((region_start + first_sample) * 2, head * 2,
+                           port=port),
+            self.fast_read(region_start * 2, (n_samples - head) * 2,
+                           port=port),
+        ])
+
     def acquire_deep_fast(self, n_samples: int = 1_000_000,
                           decimation: int = 1,
                           channels: tuple[int, ...] = (1, 2),
-                          port: int = 9999) -> list[np.ndarray]:
+                          port: int = 9999,
+                          trigger: str = "NOW",
+                          trigger_level: float = 0.1,
+                          preroll_samples: int = 0,
+                          trigger_timeout: float = 30.0) -> list[np.ndarray]:
         """
         Deep capture, read back over the fast path. USE THIS, not
         acquire_deep_2ch.
@@ -337,17 +362,42 @@ class RedPitaya:
         Requires scripts/rp_fastread.py running on the board.
 
         TRIG:DLY IS A POST-TRIGGER SAMPLE COUNT, not a delay before starting.
-        It has to be at least n_samples or the tail of what you read is
-        whatever occupied the region beforehand -- which looks like a partly
-        corrupted capture rather than an error.
+        It has to cover everything you intend to read after the trigger, or the
+        tail of the record is whatever occupied the region beforehand -- which
+        looks like a partly corrupted capture rather than an error.
 
-        LIMITATION: reads from the start of each channel's region, which is
-        correct only because ACQ:TRig NOW fires immediately, so the capture
-        begins there. A laser-triggered capture with pre-roll (H6.4) writes
-        into a ring and the data will NOT start at offset 0; that needs
-        ACQ:AXI:SOUR<n>:Trig:Pos?, which currently returns 2139095040
-        (0x7F800000) and is evidently broken. Resolve before H6.
+        `trigger` is any ACQ:TRig source: NOW, CH1_PE, CH2_PE, EXT_PE and so
+        on. `preroll_samples` asks for that many samples BEFORE the trigger,
+        which is what H6.4 needs so the demodulator's filter is already settled
+        when the sweep begins. Pre-roll requires a real trigger source; with
+        NOW there is nothing to be early relative to.
+
+        On ACQ:AXI:SOUR<n>:Trig:Pos?, which an earlier revision of this
+        docstring declared broken: **it works.** It returns 0x7F800000 when no
+        trigger has occurred, and every reading that led to the "broken"
+        conclusion was taken idle or after ACQ:TRig NOW. After a genuine
+        triggered capture it returns the trigger's sample index. Validated by
+        reading from a known distance before it: across four captures with
+        different positions, the rising edge appeared at exactly the expected
+        offset every time.
+
+        It sits a fixed **1.14 samples (9.1 ns) after** the actual threshold
+        crossing, reproducible to 0.00 samples. Not corrected for here, because
+        the offset depends on trigger level and edge slew and so belongs to the
+        signal rather than to this transport. Subtract it if the absolute
+        instant matters.
         """
+        if preroll_samples and trigger.upper() == "NOW":
+            raise ValueError(
+                "pre-roll needs a real trigger source (e.g. CH2_PE); with "
+                "ACQ:TRig NOW the capture starts immediately and there is "
+                "nothing to be early relative to."
+            )
+        if preroll_samples >= n_samples:
+            raise ValueError(
+                f"preroll_samples={preroll_samples} must be less than "
+                f"n_samples={n_samples}"
+            )
         if not self.fast_read_available(port=port):
             raise ConnectionError(
                 f"fast-read helper not running on {self.host}:{port}. Start it "
@@ -370,23 +420,36 @@ class RedPitaya:
             )
             n_samples = max_samples
 
+        post = n_samples - preroll_samples
+        self.write(f"ACQ:TRig:LEV {trigger_level}")
         for i, ch in enumerate(channels):
-            self.write(f"ACQ:AXI:SOUR{ch}:Trig:Dly {n_samples}")
+            self.write(f"ACQ:AXI:SOUR{ch}:Trig:Dly {post}")
             self.write(f"ACQ:AXI:SOUR{ch}:SET:Buffer {start + i * per_ch},{per_ch}")
             self.write(f"ACQ:AXI:SOUR{ch}:ENable ON")
 
         self.write("ACQ:START")
-        self.write("ACQ:TRig NOW")
-        self.wait_until("ACQ:TRig:STAT?", "TD", what="deep acquisition trigger")
+        self.write(f"ACQ:TRig {trigger}")
+        self.wait_until("ACQ:TRig:STAT?", "TD", timeout=trigger_timeout,
+                        what=f"deep acquisition trigger ({trigger})")
         fill_timeout = 30.0 + 4 * n_samples * decimation / self.base_rate
         self.wait_until(f"ACQ:AXI:SOUR{channels[0]}:TRIG:FILL?", "1",
                         timeout=fill_timeout, what="deep memory fill")
         self.write("ACQ:STOP")
 
+        per_ch_samples = per_ch // 2
         out = []
         try:
             for i, ch in enumerate(channels):
-                out.append(self.fast_read(i * per_ch, n_samples * 2, port=port))
+                if preroll_samples:
+                    # Trig:Pos is only meaningful once a trigger has fired.
+                    pos = int(self.query(f"ACQ:AXI:SOUR{ch}:Trig:Pos?"))
+                    first = pos - preroll_samples
+                else:
+                    # No trigger reference wanted: the immediate-trigger case
+                    # starts the capture at the region base.
+                    first = 0
+                out.append(self._fast_read_wrapped(
+                    (i * per_ch) // 2, per_ch_samples, first, n_samples, port))
         finally:
             for ch in channels:
                 self.write(f"ACQ:AXI:SOUR{ch}:ENable OFF")

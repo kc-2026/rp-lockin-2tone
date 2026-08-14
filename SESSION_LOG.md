@@ -421,6 +421,66 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — Trig:Pos works; pre-roll implemented
+
+**Correcting the previous entry: `ACQ:AXI:SOUR<n>:Trig:Pos?` is not broken.**
+
+It returns 0x7F800000 (float infinity) only when **no trigger has occurred**.
+Every reading behind the "broken" verdict was taken with the board idle or
+after `ACQ:TRig NOW`. After a genuine `CH2_PE`-triggered capture it returns the
+trigger's sample index — 18164, 19032, 17290, 18370 across four runs.
+
+The first validation was also wrong, and worth describing because the mistake
+is easy to repeat. It read *from* the reported position and complained there
+was no edge at sample 0. But `CH2_PE` fires on a rising edge, so if the
+position is right the transition has already happened by the first sample and
+there is nothing left to cross. **The absence of an edge at 0 was success, read
+as failure.**
+
+Correct test: read a known distance *before* the reported position and check a
+rising edge appears there. It does, every time:
+
+| Capture | Trig:Pos | Rising edge (expected 1000) | Error |
+|---|---:|---:|---:|
+| 1 | 18164 | 998.86 | −1.14 |
+| 2 | 19032 | 998.87 | −1.13 |
+| 3 | 17290 | 998.86 | −1.14 |
+| 4 | 18370 | 998.86 | −1.14 |
+
+**Spread 0.00 samples.** `Trig:Pos` sits a fixed 1.14 samples (9.1 ns) after
+the true threshold crossing — trigger comparator latency plus the difference
+between the board's 0.1 V threshold and the mid-level used for edge finding.
+Not corrected for in `hardware.py`, because it depends on trigger level and
+edge slew and so belongs to the signal, not the transport.
+
+**Pre-roll is implemented and verified, so H6.4 is unblocked.**
+`acquire_deep_fast` gained `trigger`, `trigger_level`, `preroll_samples` and
+`trigger_timeout`. It sets `Trig:Dly` to the post-trigger count, reads from
+`Trig:Pos − preroll_samples`, and handles the ring wrap in
+`_fast_read_wrapped` (offsets in samples, byte arithmetic in one place so
+callers cannot get the factor of two wrong).
+
+| Pre-roll asked | Rising edge at | Error | Pre-roll region rms |
+|---:|---:|---:|---:|
+| 5 000 | 4998.87 | −1.13 | 712.0 |
+| 25 000 | 24999.39 | −0.61 | 713.7 |
+| 100 000 | 99998.87 | −1.13 | 712.4 |
+
+The pre-roll region carries the same rms as the rest of the record (712.6), so
+it is **real pre-trigger signal, not uninitialised memory** — which is the
+failure this could plausibly have had. Both misuse cases raise: pre-roll with
+`trigger="NOW"`, and pre-roll larger than the record.
+
+The 22 ms of filter settling H6.4 needs is 2.75 M samples at decimation 2,
+comfortably inside the region.
+
+**Lesson worth carrying:** two of this session's three "broken hardware"
+verdicts were wrong — the deep-memory read and now `Trig:Pos` — and both times
+the fault was in the test, not the board. Before concluding a command is
+broken, check it is being exercised in the state it is meant for.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — noise floor with 50 Ω terminators
 
 Kevin fitted terminators on IN1 and IN2, nothing else connected. This is the

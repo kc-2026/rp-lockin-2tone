@@ -187,25 +187,30 @@ once, and its `VERIFY:` note either removed or replaced with a confirmation.
       Irrelevant at the 991.8 kHz operating point, and it does not affect edge
       timing, which threshold interpolation handles. Worth knowing if anyone
       ever compares absolute amplitudes between the two channels.
-- [x] **H4.4 PARTIAL.** `ACQ:TRig CH2_PE` with `ACQ:TRig:LEV 0.1` does trigger
-      the acquisition from IN2 — confirmed. And with the level set to 2.0 V,
-      above the 0.5 V signal, it correctly does **not** fire and `wait_until`
-      raises cleanly instead of hanging (which also covers H7.2's failure
-      mode).
-      **But where the trigger lands in the record is UNRESOLVED, and this
-      blocks H6.4.** The first edge in the record was 9.71 µs in and falling;
-      its interval signature identifies it as the pattern's 41 µs edge, so the
-      record starts at table-time 31.3 µs while the rising edge that fired the
-      trigger was at 25 µs. In other words the DMA ring was already running and
-      **buffer offset 0 is not the trigger instant** — it is wherever the write
-      pointer happened to be. `ACQ:AXI:SOUR<n>:Trig:Pos?` exists to resolve
-      this and returns 0x7F800000, the float bit pattern for infinity.
-      Two ways forward, in preference order: find a working spelling or method
-      for the trigger position, or locate everything from the IN2 edge pattern
-      itself — the wavelength calibration already derives from recorded edges
-      rather than from the acquisition trigger, so this may be sufficient. The
-      ring wrap still has to be unwrapped either way, which needs the write
-      pointer.
+- [x] **H4.4 DONE.** `ACQ:TRig CH2_PE` with `ACQ:TRig:LEV 0.1` triggers the
+      acquisition from IN2. With the level set to 2.0 V, above the 0.5 V
+      signal, it correctly does **not** fire and `wait_until` raises cleanly
+      instead of hanging — which also covers **H7.2**'s failure mode.
+      **Where the trigger lands is now known.**
+      `ACQ:AXI:SOUR<n>:Trig:Pos?` returns the trigger's sample index. It reads
+      0x7F800000 only when no trigger has occurred, which is why an earlier
+      pass — taken idle and after `ACQ:TRig NOW` — wrongly concluded it was
+      broken. Validated by reading a known distance before it: across four
+      captures with different positions, the rising edge appeared at exactly
+      the expected offset each time. It sits a fixed **1.14 samples (9.1 ns)
+      after** the true threshold crossing, reproducible to 0.00 samples;
+      subtract it only if the absolute instant matters.
+      Note the DMA ring is already running when the trigger fires, so **buffer
+      offset 0 is not the trigger instant** — it is wherever the write pointer
+      happened to be. Reads must be referenced to `Trig:Pos`, which
+      `acquire_deep_fast` now does.
+      **H6.4 is unblocked.** `acquire_deep_fast(trigger="CH2_PE",
+      preroll_samples=...)` delivers pre-trigger data, verified at 5k, 25k and
+      100k samples of pre-roll: the rising edge lands at the requested offset
+      each time and the pre-roll region carries the same rms as the rest of the
+      record, so it is real signal rather than leftovers. The 22 ms of filter
+      settling H6.4 needs is 2.75 M samples at decimation 2, comfortably
+      within the region.
 
 ### H4 — trigger digitisation (original wording)
 
