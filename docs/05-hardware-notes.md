@@ -272,8 +272,38 @@ Against a 512 MB ceiling — the size of the upper half:
 | 4 | 62.5 MS/s | 31.2 MHz | 238 MB | yes | 2.4 s | 31–60 MHz folds |
 | 8 | 31.2 MS/s | 15.6 MHz | 119 MB | yes | 1.2 s | 15.6–60 MHz folds |
 
-Decimation 2 is the operating point, as ADR-0002 always intended. Decimation 1
-does not fit.
+### Decimation costs far less noise than ADR-0002 assumes — MEASURED
+
+ADR-0002 rejects decimation beyond 2 on the grounds that everything above the
+new Nyquist folds into the record. That is true in principle but the penalty is
+small, because **the board applies its own anti-alias filter when decimating.**
+Measured 2026-08-14, outputs off, loopback cables attached:
+
+| Decimation | Rate | σ per output point | Cost vs dec 2 | Signal for SNR 10 | 1 s, 2 ch |
+|---:|---:|---:|---:|---:|---:|
+| 2 | 125 MS/s | 3.29 µV | — | 36.0 µV | 477 MB |
+| 4 | 62.5 MS/s | 3.65 µV | +0.9 dB | 39.8 µV | 238 MB |
+| **8** | **31.2 MS/s** | **3.75 µV** | **+1.1 dB** | **40.9 µV** | **119 MB** |
+| 16 | 15.6 MS/s | 4.58 µV | +2.9 dB | 50.1 µV | 60 MB |
+
+**Decimation 8 is the practical operating point on a 128 MB region.** It runs a
+full 1 s two-channel capture for a 14% sensitivity cost, and avoids needing the
+DMA region moved into the upper half of RAM — an edit that changes a node name,
+an alias, and places the region outside the kernel's memory map, with a
+non-booting board as the failure mode.
+
+Note the margin is thin: 1 s at decimation 8 is 119 MB, and 43 ms of pre-roll
+adds ~5 MB, so ~124 MB of 128 MB. Decimation 16 leaves comfortable headroom
+(63 MB) for +2.9 dB if that becomes awkward.
+
+**Why the folding penalty is small here.** Nothing in this measurement has
+high-frequency content to fold: the photodetector returns only the ~1 MHz
+intermodulation response, so only *noise* folds, not signal. The naive estimate
+(~6 dB at decimation 8, from counting alias bands) is wrong because it ignores
+the decimation filter.
+
+Decimation 2 remains the best operating point if the memory is ever available,
+and decimation 1 does not fit at any region size.
 
 **Decimation 2 is right for the real measurement but wrong for loopback
 testing, and this is not a contradiction.** At decimation 2 the Nyquist limit

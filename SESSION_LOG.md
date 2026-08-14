@@ -421,6 +421,46 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — decimation costs little; skip the memory move
+
+Kevin asked whether the upper-half DMA move is needed only for loopback testing
+or for the real experiment. The honest answer was "for the real experiment, as
+designed" — a 1 s two-channel capture at decimation 2 is 477 MB. But the choice
+of decimation 2 rested on an *argument* (ADR-0002: the analog rolloff sits below
+the decimation-2 Nyquist, so nothing folds) and had never been measured against
+the alternatives. Measured it before taking a boot risk:
+
+| Decimation | σ per output point | Cost vs dec 2 | Signal for SNR 10 | 1 s, 2 ch |
+|---:|---:|---:|---:|---:|
+| 2 | 3.29 µV | — | 36.0 µV | 477 MB |
+| 4 | 3.65 µV | +0.9 dB | 39.8 µV | 238 MB |
+| **8** | **3.75 µV** | **+1.1 dB** | **40.9 µV** | **119 MB** |
+| 16 | 4.58 µV | +2.9 dB | 50.1 µV | 60 MB |
+
+**Decimation 8 costs 1.1 dB and fits the existing 128 MB region.**
+
+**Recommendation: do not do the upper-half device-tree move.** It changes a
+node name, an alias that refers to it by name, and puts the region outside the
+kernel's memory map, with a non-booting board as the failure mode and recovery
+requiring an ext4 reader. All to buy 1.1 dB.
+
+I had estimated ~6 dB for decimation 8 by counting alias bands. That was wrong,
+and wrong in the direction that would have justified the risk. **The board
+applies its own anti-alias filter when decimating**, so the naive Nyquist
+arithmetic badly overstates the penalty. Worth remembering as a general point:
+ADR-0002's reasoning is sound but its practical conclusion is much weaker than
+it sounds.
+
+It also helps that nothing here has high-frequency content to fold — the
+photodetector returns only the ~1 MHz response, so only noise folds, not
+signal.
+
+**Caveat on margin:** 1 s at decimation 8 is 119 MB and 43 ms of pre-roll adds
+~5 MB, so ~124 MB of 128 MB. It fits with almost nothing to spare. Decimation
+16 gives comfortable headroom (63 MB) for +2.9 dB if that becomes awkward.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — H6.4 passes; pre-roll proven
 
 | | Trace starts | Result |
