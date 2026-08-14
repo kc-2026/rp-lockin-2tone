@@ -421,6 +421,53 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — noise floor with 50 Ω terminators
+
+Kevin fitted terminators on IN1 and IN2, nothing else connected. This is the
+textbook H3.3 configuration, which the earlier measurements did not use.
+
+| Configuration | IN1 density @ 991.821 kHz | σ per quadrature* |
+|---|---:|---:|
+| **50 Ω terminated** (board's intrinsic floor) | **34.6 nV/√Hz** | 2.39 µV |
+| Short loopback cable, output off | 51.7 nV/√Hz | 3.57 µV |
+| Ratio | **0.67×** | |
+
+\* using the measured 4763 Hz noise gain, not the nominal 2250 Hz bandwidth.
+
+**The cable adds about 50% to the noise floor.** That is pickup, not a
+measurement artefact — the terminated figure is the board's own floor and the
+cable figure is what you get once anything is plugged in.
+
+**Which number to plan with: the cable one, or worse.** The real input is a
+cable from a photodetector, longer than our 30 cm loopback lead and in a
+noisier environment. 34.6 nV/√Hz is a floor the real system will not see.
+**SNR 10 per trace point needs ~36 µV with a cable; ~24 µV is the unreachable
+best case.** Hand the 36 µV figure to whoever answers Q11.
+
+**The spur family is partly conducted and partly picked up**, which matters
+because the two have different remedies:
+
+| | IN1 505 kHz | IN1 1011 kHz | IN2 505 kHz | IN2 1011 kHz |
+|---|---:|---:|---:|---:|
+| Terminated | 163.6 nV/√Hz, 4.7× floor | 179.3, 5.2× | 69.1, 2.0× | 60.8, 1.7× |
+| With cable | 439.1, 8.5× | 484.7, 9.4× | — | — |
+
+It **survives termination on IN1** at roughly 5× the local floor, so part of it
+is conducted — supply-borne, internal, and not fixable by cabling or shielding
+at the input. The cable roughly triples it, so the rest is antenna pickup. On
+IN2 termination removes it almost entirely.
+
+Consequence for the real experiment: better cabling and shielding will reduce
+the spur but cannot eliminate it. The forbidden-zone warning stands unchanged —
+**do not place the difference frequency on 505.447 kHz or its multiples.**
+
+Also settled: terminated, the spurs sit at exactly 505.447 and 1010.895 kHz,
+the frequencies originally logged. The ~1.9 kHz offset I saw earlier was the
+1907 Hz Welch bin resolution, exactly as suspected. It was correctly **not**
+reported as switcher drift.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — H4: edges recovered, trigger position not
 
 **H4.1 passes comfortably.** A six-edge pattern played from the ASG table and
