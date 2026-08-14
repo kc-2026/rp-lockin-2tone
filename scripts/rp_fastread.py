@@ -56,6 +56,10 @@ DEFAULT_BASE = 0x1000000
 DEFAULT_SIZE = 0x8000000
 DEFAULT_PORT = 9999
 
+# Bytes per socket write. Bounds peak memory on the board, which has only
+# ~375 MB free -- a single large slice is what killed an earlier version.
+CHUNK = 1 << 20
+
 
 def serve(base: int, size: int, port: int) -> None:
     # O_RDONLY + PROT_READ: writing to physical memory is not possible here.
@@ -109,7 +113,15 @@ def serve(base: int, size: int, port: int) -> None:
                         print(f"  refused out-of-range {off}+{length} "
                               f"(size {size})", flush=True)
                     else:
-                        conn.sendall(mem[off:off + length])
+                        # Send in 1 MB pieces. `mem[off:off+length]` in one go
+                        # materialises the whole slice as a bytes object first,
+                        # and a 50 MB request killed the helper outright on a
+                        # board with ~375 MB free. Chunking caps the copy.
+                        end = off + length
+                        while off < end:
+                            n = min(CHUNK, end - off)
+                            conn.sendall(mem[off:off + n])
+                            off += n
                 else:
                     print(f"  bad request {req!r}", flush=True)
             finally:
