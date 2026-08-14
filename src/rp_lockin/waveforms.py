@@ -226,7 +226,7 @@ def make_am_waveform(carrier: float, modulation: float,
     fs/N. The real ASG does not: it always traverses a fixed 16384-entry table.
     Loading the 50-sample buffer this returns and playing it at 5 MHz produces
     NO OUTPUT AT ALL -- measured, min -2 max +4 counts. See the module header
-    and docs/05-hardware-notes.md.
+    and docs/04-hardware-reference.md.
 
     The buffer must contain a whole number of cycles of BOTH the carrier and
     the modulation, so the minimal length is the smallest N with N*carrier/fs

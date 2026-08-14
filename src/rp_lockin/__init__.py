@@ -13,8 +13,10 @@ dsp         Demodulation. Pure numpy/scipy, fully tested offline. TRUSTED.
 waveforms   Drive waveform construction and the two-tone frequency planner.
 planning    Capture sizing: memory budget, decimation, aliasing.
 emulator    Synthetic DUT output for loopback testing.
-hardware    SCPI transport. NOT VERIFIED AGAINST HARDWARE -- see the module
-            docstring and docs/04-test-plan.md task H1.
+wavelength  Trace -> wavelength, the laser/board clock check, and the
+            off-by-one-trigger guard. Offline-tested; has never seen a laser.
+hardware    SCPI transport. VERIFIED against the board, Phase 1 complete
+            2026-08-14. See docs/07-phase1-loopback.md.
 
 Start here
 ----------

@@ -40,7 +40,7 @@ export RP_HOST=<board ip>
 pytest tests/hardware -m hardware
 ```
 
-Read `docs/04-test-plan.md` first. The loopback wiring must be in place and the
+Read `docs/07-phase1-loopback.md` first. The loopback wiring must be in place and the
 DUT must not be connected.
 
 ## Layout
@@ -49,12 +49,16 @@ DUT must not be connected.
 CLAUDE.md          agent onboarding — read first
 SESSION_LOG.md     continuity between sessions
 docs/
-  01-project-spec.md    goals, requirements, phasing
-  02-architecture.md    design decisions and their rationale
-  03-frequency-plan.md  why 5/6/1 MHz and a 250-sample buffer
-  04-test-plan.md       phased loopback plan + what it cannot test
-  05-hardware-notes.md  board specifics, SCPI, DMA region, safety
-  06-open-questions.md  what is still undecided
+  00-index.md              START HERE — what each doc is for
+  01-overview.md           goals, requirements, the four phases
+  02-architecture.md       design decisions and their rationale
+  03-frequency-plan.md     why the frequencies are what they are
+  04-hardware-reference.md how the board behaves; SCPI, memory, safety
+  05-results.md            every number this project has measured
+  06-phase0-offline.md     offline development — COMPLETE
+  07-phase1-loopback.md    the loopback campaign, H1–H7 — COMPLETE
+  08-phase2-hardware.md    what Phase 2 needs; risks U1–U12; steps P1–P6
+  10-open-questions.md     what is undecided, and what was decided
 src/rp_lockin/     the package
 tests/             offline suite + hardware-gated loopback suite
 scripts/           command-line entry points

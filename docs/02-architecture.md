@@ -23,7 +23,7 @@ layer.**
 `wavelength.py` follows the same principle for the laser: it holds **no serial
 commands at all** and takes the laser's wavelength table as an argument. The
 Santec transport is not written, and must not be written from memory — see
-`07-phase2-prep.md`.
+`08-phase2-hardware.md`.
 
 ## Signal chain
 
@@ -129,5 +129,5 @@ would have reported a phantom 2× amplitude error. Caught by
   shortened. See `planning.recommended_tail()`.
 - No averaging across sweeps yet. Straightforward to add if wanted (Q13).
 - **The largest single risk is now the Santec serial link**, which does not
-  exist yet and cannot be written from memory. See `07-phase2-prep.md`. It is
+  exist yet and cannot be written from memory. See `08-phase2-hardware.md`. It is
   the one subsystem whose silent failure is invisible in the output.

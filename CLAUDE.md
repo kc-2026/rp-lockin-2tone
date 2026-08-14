@@ -7,7 +7,7 @@ but is not watching continuously.
 **Read in this order before doing anything:**
 
 1. This file.
-2. `docs/01-project-spec.md` — what is being built and why.
+2. `docs/01-overview.md` — what is being built and why.
 3. `SESSION_LOG.md` — what previous sessions did and what state things are in.
 4. Whatever doc covers the area you are about to touch.
 
@@ -54,7 +54,7 @@ Loopback phase only, for now. Within that:
 - **Leave outputs off when you finish.** `tests/hardware/conftest.py` does this
   automatically; preserve that behaviour.
 - Going beyond loopback requires a dedicated planning session with the human.
-  There is a placeholder for it in `docs/04-test-plan.md`. Do not start it
+  There is a placeholder for it in `docs/07-phase1-loopback.md`. Do not start it
   unilaterally.
 
 ### Verified versus unverified code
@@ -76,7 +76,7 @@ This distinction matters more than usual here.
 produces a connection error rather than corrupted physics. **Keep it that way.**
 Do not move signal processing into the transport layer.
 
-Your first hardware task is H1 in `docs/04-test-plan.md`: walk `hardware.py`
+Your first hardware task is H1 in `docs/07-phase1-loopback.md`: walk `hardware.py`
 method by method and confirm each SCPI command against the board's actual OS
 version. Every method carries a `VERIFY:` note naming what to check.
 
@@ -145,9 +145,9 @@ wrong answers rather than crashes:
 - The board's SCPI server must be running: web interface → Development → SCPI
   server → Run. Port 5000.
 - SSH access to the board is available for the device-tree change described in
-  `docs/05-hardware-notes.md`. Rebooting the board is permitted.
+  `docs/04-hardware-reference.md`. Rebooting the board is permitted.
 - **OS version: 2.00, build 37** (Ubuntu 22.04.4, kernel 5.15.0-xilinx).
-  Recorded in `docs/05-hardware-notes.md`. It is in
+  Recorded in `docs/04-hardware-reference.md`. It is in
   `/opt/redpitaya/version.txt`, not `/etc/redpitaya_version`, which does not
   exist on this image.
 
@@ -162,7 +162,7 @@ pytest -q
 ## Current state — updated 2026-08-14
 
 **Phase 0 and Phase 1 are both COMPLETE.** 102 offline tests pass. Every
-loopback test in `04-test-plan.md` has been run against the board, except two
+loopback test in `07-phase1-loopback.md` has been run against the board, except two
 that were deliberately skipped and are recorded as such (H6.1, H5.2/H5.3).
 
 **Phase 2 has not started and is gated on a planning session with Kevin.** Do not
@@ -188,7 +188,7 @@ the agent's** (asked 2026-08-14).
 | H4.1–H4.4 trigger | done — edges recovered exactly, inputs aligned to 0.0005 samples, `Trig:Pos` solved |
 | H5.1 Deep Memory Gen | **answered: NOT AVAILABLE.** 16384-point ceiling is permanent |
 | H5.2 / H5.3 | superseded — H6.5 emulated the DUT by stepping amplitude instead |
-| H6.1 memory move | **deliberately not done, and no longer needed** — see `05-hardware-notes.md` |
+| H6.1 memory move | **deliberately not done, and no longer needed** — see `04-hardware-reference.md` |
 | H6.2 / H6.3 full capture | **done — exactly 5000 points at exactly 200.000 µs spacing** |
 | H6.4 pre-roll | done — and two real `acquire_deep_fast` defects fixed getting there |
 | H6.5 full capture | **PASSES** — the Phase 1 exit criterion |
@@ -205,7 +205,7 @@ loopback.
 set — the mapping, the clock measurement, and the alignment guards — with 20
 tests. **The serial transport is deliberately absent, and must stay absent until
 someone has the manual.** On this project a misspelled SCPI command returns zero
-bytes exactly like a correct one (see `05-hardware-notes.md`), so a guessed
+bytes exactly like a correct one (see `04-hardware-reference.md`), so a guessed
 Santec command set would fail *silently* and the wavelength axis is the one place
 where a silent failure is invisible in the output. Do not write it from memory.
 
@@ -215,7 +215,7 @@ last one decides whether the driver runs alongside the capture or after it.
 
 That change also **defused the decimation/memory question.** It was live only
 because the wavelength axis depended on recovering trigger intervals exactly; it
-no longer does. Do not start the device-tree move — see `05-hardware-notes.md`.
+no longer does. Do not start the device-tree move — see `04-hardware-reference.md`.
 
 **Two numbers from H3.3 not to re-derive or guess at:**
 
@@ -241,7 +241,7 @@ no longer does. Do not start the device-tree move — see `05-hardware-notes.md`
 3. Deep captures need `scripts/rp_fastread.py` running on the board. It lives
    in `/dev/shm`, which is RAM, so **it disappears on every reboot.**
 
-`docs/06-open-questions.md` lists what is still undecided. If you resolve one,
+`docs/10-open-questions.md` lists what is still undecided. If you resolve one,
 move it into the relevant doc and note it in the session log.
 
 ## Getting the environment up

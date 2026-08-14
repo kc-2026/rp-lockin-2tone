@@ -1,4 +1,4 @@
-# Project specification
+# Project overview
 
 ## Goal
 
@@ -128,7 +128,7 @@ planning, DUT emulator, test suite. No hardware. *Complete.*
 
 **Phase 1 — loopback.** Validate the SCPI transport, the transmit path, the
 receive path, trigger digitisation, and long captures, using only cables from
-the board to itself. Detailed in `04-test-plan.md`.
+the board to itself. Detailed in `07-phase1-loopback.md`.
 ***COMPLETE — 2026-08-14.*** Every loopback test passed, except H6.1 and
 H5.2/H5.3 which were deliberately skipped and recorded as such. 102 offline
 tests pass. A plain-language status of every step is at the top of
@@ -139,7 +139,7 @@ drive levels through the amplifier chain, the AOMs, the DUT, the photodetector,
 the laser trigger. Requires a dedicated planning session with the human before
 anything is connected. **Not started, and the gate is deliberate.**
 What that session needs, and what is still missing, is written up in
-`07-phase2-prep.md`. The session's *output* goes in `07-phase2-plan.md`.
+`08-phase2-hardware.md`. The session's *output* goes in `09-phase2-plan.md`.
 
 **Phase 3 — usability.** A GUI or equivalent, if wanted. Deferred.
 
@@ -148,7 +148,7 @@ What that session needs, and what is still missing, is written up in
 Phase 1 completing — every loopback test passing, with the untestable items
 explicitly enumerated rather than forgotten — was the agreed near-term
 definition of success. **That is met as of 2026-08-14:** all tests pass and
-the untestable items are enumerated as U1–U12 in `04-test-plan.md`.
+the untestable items are enumerated as U1–U12 in `07-phase1-loopback.md`.
 
 **Phase 2 criteria are still not set, and now need to be** (Q17). The results
 they were waiting on are in. The single most useful number to set them

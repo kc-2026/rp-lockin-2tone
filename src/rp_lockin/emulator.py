@@ -19,7 +19,7 @@ WHAT IT DOES NOT TEST
 ---------------------
 The DUT physics, the real optical path, the photodetector, the downstream
 amplifier chain, and the true 80 MHz drive amplitude. Those are the
-human-in-the-loop items in docs/04-test-plan.md.
+human-in-the-loop items in docs/07-phase1-loopback.md.
 """
 
 from __future__ import annotations
@@ -102,7 +102,7 @@ def synthesise_dut_output(difference: float, duration: float,
 
     Memory note: at 250 MS/s a 1 s sweep is 250 M samples (2 GB as float64).
     Loopback tests should use a short duration -- 50 ms exercises every code
-    path and still fits the default 32 MB DMA region. See docs/04-test-plan.md.
+    path and still fits the default 32 MB DMA region. See docs/07-phase1-loopback.md.
     """
     if duration <= 0:
         raise ValueError("duration must be positive")

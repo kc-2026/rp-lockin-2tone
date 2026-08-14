@@ -110,7 +110,7 @@ session with Kevin.
 - **H6.1** — the memory move. Rejected, and no longer needed.
 - **H5.2 / H5.3** — superseded by how H6.5 was done.
 - **U1–U12** — the list of things loopback physically cannot test. Enumerated in
-  `04-test-plan.md`, and the whole point of the Phase 2 planning session.
+  `07-phase1-loopback.md`, and the whole point of the Phase 2 planning session.
 
 ### What comes next
 
@@ -323,7 +323,7 @@ limitation disappears. Worth checking before anyone builds around 991.821 kHz.
   comparing or averaging phase *across* sweeps (bears directly on Q13).
 
   **RESOLVED AS NOT BLOCKING — Kevin, 2026-08-12: the deliverable is
-  amplitude only, not amplitude and phase.** `01-project-spec.md` updated.
+  amplitude only, not amplitude and phase.** `01-overview.md` updated.
 
   His reasoning, which is the physical argument and worth keeping over my
   inference: *the 80 MHz is only there to drive the AOM, so its phase carries
@@ -897,7 +897,7 @@ table. That is about as clean as this could have been.
 
 **The memory question is now properly closed.** Alignment needs one edge, not an
 intact train, so the 1.17% missed-interval figure cannot affect it. Recorded in
-`05-hardware-notes.md`. One honesty note kept there: **the memory question closed
+`04-hardware-reference.md`. One honesty note kept there: **the memory question closed
 because the requirement vanished, not because the fault was understood.** The
 missed-edge mechanism is still unexplained — the recorded cause is off by a
 factor of a hundred, see the entry below — and if some future design needs the
@@ -942,7 +942,7 @@ after a confusing result.**
 
 ### State of the trigger work
 
-`04-test-plan.md` H4 now reflects all of this. H4.4 — trigger the acquisition
+`07-phase1-loopback.md` H4 now reflects all of this. H4.4 — trigger the acquisition
 from IN2 and know where the trigger sits in the record — is the load-bearing
 test and passes, including the fixed 1.14 sample (9.1 ns) offset between
 `Trig:Pos` and the true threshold crossing, which should be subtracted when the
@@ -967,9 +967,9 @@ Pitaya's trigger input purely to align the sweep with the capture. The trigger
 pulses are no longer needed to carry the wavelength calibration.**
 
 This is the largest scope change since the amplitude-only decision, and it is a
-simplification. Written into `01-project-spec.md` (goal and R6/R6b),
-`04-test-plan.md` (H4 scope, the untestable table), `05-hardware-notes.md`
-(decimation), `06-open-questions.md` (Q18–Q20) and `CLAUDE.md`.
+simplification. Written into `01-overview.md` (goal and R6/R6b),
+`07-phase1-loopback.md` (H4 scope, the untestable table), `04-hardware-reference.md`
+(decimation), `10-open-questions.md` (Q18–Q20) and `CLAUDE.md`.
 
 ### What it fixes
 
@@ -1053,7 +1053,7 @@ outputs were off throughout and left off.
 
 ### The optimistic noise figure was still in every summary document
 
-`04-test-plan.md`, `06-open-questions.md` (Q8 and Q11) and `CLAUDE.md` all still
+`07-phase1-loopback.md`, `10-open-questions.md` (Q8 and Q11) and `CLAUDE.md` all still
 carried **45.6 nV/√Hz → σ = 2.96 µV → ≥30 µV for SNR 10**, superseded twice: by
 the independent re-measurement (~15% optimistic → 51.7 → 3.57 µV) and by the
 terminated measurement (the cable adds ~50%). The log had the corrections; the
@@ -1318,7 +1318,7 @@ Same constant 991.821 kHz signal on IN1, triggered from IN2, decimation 4. The
 pre-roll region reads 1.0 × steady rather than ~0, so it is genuine
 pre-trigger data and not unwritten memory.
 
-**Correction to the project's own framing.** `04-test-plan.md` said "without
+**Correction to the project's own framing.** `07-phase1-loopback.md` said "without
 this the first 2% of every sweep is garbage." It is not garbage — it is
 **absent**. `demodulate()` trims the settling transient internally, so it never
 reaches the output; the trace simply does not begin until the filter is valid.
@@ -1932,7 +1932,7 @@ ASCII and units to VOLTS. So the documented defect — that `acquire_deep_fast`
 and `acquire_deep_2ch` wipe what `setup_acquisition` applied — **is harmless for
 LV/DC work, because that is exactly what it resets to.** It would silently ruin
 an HV or AC-coupled deep capture. `ACQ:AXI:DEC` is set after the reset, so the
-decimation is fine. Recorded in `05-hardware-notes.md`.
+decimation is fine. Recorded in `04-hardware-reference.md`.
 
 **6. Nothing is inside the measurement band.** At 59.6 Hz resolution the worst
 in-band bin is 1.44× the local floor, which is what the maximum of 75 noise bins

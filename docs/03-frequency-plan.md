@@ -6,7 +6,7 @@
 > generator replays exactly the N samples you load. **Measured on the board,
 > it does not.** The ASG always traverses a fixed 16384-entry table, and
 > `SOUR:FREQ:FIX` sets the traversal rate. See "The arbitrary generator does
-> not work the way waveforms.py assumes" in `05-hardware-notes.md` for the
+> not work the way waveforms.py assumes" in `04-hardware-reference.md` for the
 > evidence.
 >
 > What survives: the *reasoning* about commensurability, the lock-in cycle

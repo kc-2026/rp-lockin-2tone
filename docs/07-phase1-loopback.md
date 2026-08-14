@@ -1,3 +1,25 @@
+# Phase 1 — loopback testing
+
+**Status: COMPLETE, 2026-08-14.** Every step passed, except two that were
+deliberately skipped and are marked as such (H6.1, and H5.2/H5.3).
+
+**Loopback means coax cables from the board's outputs to its own inputs.** The
+DUT, amplifiers, AOMs, photodetector and laser are not connected to anything
+during Phase 1.
+
+**Two failures are recorded here rather than hidden**, because "passed" and "we
+decided it did not matter" are very different things to inherit:
+
+- **H2.5 failed** — the OUT1/OUT2 relative phase is not repeatable. Downgraded
+  by Kevin, because the deliverable is amplitude only. Its one surviving risk
+  was later closed by H3.2.
+- **H7.4 failed, then was fixed** — outputs used to stay on after a crash.
+
+The numbers produced here are collected in `05-results.md`. What Phase 1 could
+**not** reach is in `08-phase2-hardware.md`.
+
+---
+
 # Test plan
 
 Phased. Run in order. Each phase assumes the previous one passed — debugging
@@ -29,18 +51,6 @@ Together these cover everything except the DUT physics and the analog chain.
 
 ---
 
-## Phase 0 — offline (COMPLETE)
-
-`pytest` — 102 tests, no hardware. Must stay green.
-
-Covers: demodulation accuracy, noise scaling, filter settling, streaming block
-equality, time-axis correctness, waveform commensurability, capture planning,
-emulator round-trip against ground truth, trigger edge recovery, and — added
-2026-08-14 — the wavelength mapping, the laser/board clock measurement, and the
-off-by-one-trigger guard (`test_wavelength.py`, 20 tests).
-
----
-
 ## Phase 1 — loopback
 
 ### H1 — transport validation
@@ -51,7 +61,7 @@ off-by-one-trigger guard (`test_wavelength.py`, 20 tests).
 been executed. Work through it method by method, confirming each SCPI command
 against the board's actual OS version. Every method carries a `VERIFY:` note.
 
-- [x] H1.1 Record the OS version into `docs/05-hardware-notes.md`.
+- [x] H1.1 Record the OS version into `docs/04-hardware-reference.md`.
       **Done 2026-08-12 — OS 2.00 build 37.**
 - [x] H1.2 Connect, `*IDN?`, confirm it is a 250-12 and not a 125-14. A 125-14
       would make every frequency in this project wrong, silently.
@@ -169,7 +179,7 @@ once, and its `VERIFY:` note either removed or replaced with a confirmation.
       Also found a switching-supply spur family at 504.868 kHz, ~32 µV per line,
       harmless at its present frequency but a real hazard if it drifts, and
       **partly conducted** so cabling alone cannot remove it — see
-      `05-hardware-notes.md`.
+      `04-hardware-reference.md`.
 - [x] H3.4 Confirm the √bandwidth law holds on real data, not just synthetic:
       halving the bandwidth should drop the noise by √2. **Done 2026-08-12 —
       holds to 2–4% across a factor of 8 in bandwidth, on one real capture.**
@@ -193,10 +203,16 @@ once, and its `VERIFY:` note either removed or replaced with a confirmation.
 
 ### H4 — trigger digitisation
 
-**SCOPE REDUCED 2026-08-14 (Kevin). Read this before drawing conclusions from
-the results below.** The wavelength axis now comes from the Santec laser's own
-serial report of wavelength against time, not from the intervals between trigger
-edges. The trigger output's only job is to **align the sweep with the capture**.
+**Wiring:** OUT2 → IN2 (H4.3 additionally needs OUT1 through a BNC tee).
+
+**All four steps PASS.** Read the scope note first — it changes which of them
+still matters.
+
+#### Scope reduced 2026-08-14 (Kevin)
+
+The wavelength axis now comes from the Santec laser's own serial report of
+wavelength against time, not from the intervals between trigger edges. The
+trigger output's only job is to **align the sweep with the capture**.
 
 What that changes:
 
@@ -212,7 +228,7 @@ What that changes:
   relative to the sweep. It is 0.0005 samples, so this is settled either way.
 - **The decimation-8 missed-edge problem largely dissolves.** Detecting one
   sweep-start edge is not the same task as recovering thousands of intervals
-  without losing any. See the decimation note in `05-hardware-notes.md`.
+  without losing any. See the decimation note in `04-hardware-reference.md`.
 
 **Confirmed 2026-08-14 (Kevin):** the Santec triggers at set **time** steps, so
 IN2 does carry a periodic pulse train — but **only the first edge is used**, to
@@ -236,15 +252,19 @@ looks entirely normal** — same shape, wrong labels. Arm before the sweep start
 and use pre-roll, then cross-check the pulse count in the record against the
 length of the laser's table.
 
-### H4 — results as measured (H4.1, H4.2, H4.4 done 2026-08-14)
+#### The steps, and what each found
 
-- [x] **H4.1 PASSES, comfortably.** Played a six-edge pattern from the ASG
-      table and recovered it on IN2. 733 edges over 122.1 table repeats
-      (expected 732). All six designed intervals recovered, **zero of 732
-      intervals failed to match a designed value**. Worst mean error 0.1 ns =
-      **0.007 samples**, far inside the "sample or two" this step asks for.
-- [x] **H4.2 timing resolution: 0.01 ns rms (0.002 samples)** at decimation 2,
-      where the sample period is 8 ns. Over a 1 s sweep that is 0.01 ppb.
+- [x] **H4.1 — play a known edge pattern via `make_trigger_sequence`, recover it
+      with `find_trigger_edges`, and confirm intervals to within a sample or
+      two. PASSES, comfortably.** Played a six-edge pattern from the ASG table
+      and recovered it on IN2. 733 edges over 122.1 table repeats (expected
+      732). All six designed intervals recovered, **zero of 732 intervals failed
+      to match a designed value**. Worst mean error 0.1 ns = **0.007 samples**,
+      far inside the "sample or two" this step asks for.
+- [x] **H4.2 — establish the timing resolution at the intended decimation and
+      confirm it is adequate for the wavelength calibration. Result: 0.01 ns rms
+      (0.002 samples)** at decimation 2, where the sample period is 8 ns. Over a
+      1 s sweep that is 0.01 ppb.
       **Do not read this as the resolution the real system will achieve.**
       Everything here shares one clock — the ASG steps one table entry per DAC
       tick and the ADC samples at exactly half that — so edges land at
@@ -252,8 +272,10 @@ length of the laser's table.
       to the board and will bring its own jitter and slower, noisier edges.
       This measures the *instrument's* contribution, which is negligible. The
       real limit is U7 on the untestable list.
-- [x] **H4.3 PASSES — the inputs are aligned to 0.004 ns = 0.0005 samples**,
-      2000× finer than one sample, repeatable to 0.002 ns across five
+- [x] **H4.3 — confirm IN1 and IN2 are sample-aligned**, since a fixed skew
+      between the signal and trigger channels would bias every wavelength
+      assignment. **PASSES — the inputs are aligned to 0.004 ns = 0.0005
+      samples**, 2000× finer than one sample, repeatable to 0.002 ns across five
       frequencies (1–20 MHz) and three captures each. **Q7 answered: no
       correction needed, and channel skew biases nothing.**
       Measured with OUT1 → BNC tee → two matched cables → IN1 and IN2, so both
@@ -267,10 +289,12 @@ length of the laser's table.
       Irrelevant at the 991.8 kHz operating point, and it does not affect edge
       timing, which threshold interpolation handles. Worth knowing if anyone
       ever compares absolute amplitudes between the two channels.
-- [x] **H4.4 DONE.** `ACQ:TRig CH2_PE` with `ACQ:TRig:LEV 0.1` triggers the
-      acquisition from IN2. With the level set to 2.0 V, above the 0.5 V
-      signal, it correctly does **not** fire and `wait_until` raises cleanly
-      instead of hanging — which also covers **H7.2**'s failure mode.
+- [x] **H4.4 — confirm triggering the acquisition from IN2 works, and determine
+      where the trigger lands in the record. DONE.** `ACQ:TRig CH2_PE` with
+      `ACQ:TRig:LEV 0.1` triggers the acquisition from IN2. With the level set
+      to 2.0 V, above the 0.5 V signal, it correctly does **not** fire and
+      `wait_until` raises cleanly instead of hanging — which also covers
+      **H7.2**'s failure mode.
       **Where the trigger lands is now known.**
       `ACQ:AXI:SOUR<n>:Trig:Pos?` returns the trigger's sample index. It reads
       0x7F800000 only when no trigger has occurred, which is why an earlier
@@ -291,23 +315,6 @@ length of the laser's table.
       record, so it is real signal rather than leftovers. The 22 ms of filter
       settling H6.4 needs is 2.75 M samples at decimation 2, comfortably
       within the region.
-
-### H4 — original wording, for reference only
-
-**Wiring:** OUT2 → IN2 (H4.3 additionally needs OUT1 through a BNC tee).
-
-**All four are DONE — see the section above.** The wording is kept because it
-states the intent more plainly than the results do; the unticked boxes were
-removed because they made H4 look untouched at a glance.
-
-- H4.1 Play a known edge pattern via `make_trigger_sequence`. Recover it with
-  `find_trigger_edges`. Confirm intervals to within a sample or two.
-- H4.2 Establish timing resolution at the intended decimation and confirm it is
-  adequate for the wavelength calibration.
-- H4.3 Confirm IN1 and IN2 are sample-aligned — a fixed skew between the signal
-  and trigger channels would bias every wavelength assignment.
-- H4.4 Confirm triggering the acquisition from IN2 works, and determine where
-  the trigger lands in the record.
 
 ### H5 — long waveform generation
 
@@ -334,13 +341,13 @@ The emulated-DUT test at full sweep length needs a waveform longer than the
 **Wiring:** OUT1 → IN1, OUT2 → IN2.
 
 - [ ] H6.1 Enlarge the reserved DMA region to 512 MB, **based at `0x20000000`,
-      not at `0x1000000`** (`docs/05-hardware-notes.md`). The board has 1 GB but
+      not at `0x1000000`** (`docs/04-hardware-reference.md`). The board has 1 GB but
       Linux is capped to the lower half by `mem=512M`; basing the region in the
       upper half costs the OS nothing, whereas the original instruction ran a
       512 MB region from the 16 MB mark straight through Linux's own memory.
       Back up `dtraw.dts` first. Reboot. Confirm `ACQ:AXI:SIZE?`.
 - [x] **H6.2 PASSES 2026-08-14**, at decimation 8 rather than 2 — see the
-      decimation note in `05-hardware-notes.md`; decimation 2 does not fit
+      decimation note in `04-hardware-reference.md`; decimation 2 does not fit
       the 128 MiB region and the move to buy it was rejected.
       32,812,500 samples on each channel, exactly as requested, both
       carrying signal. 125.2 MB, **97.8% of the region.**
@@ -436,7 +443,7 @@ The emulated-DUT test at full sweep length needs a waveform longer than the
       at the same point in the record to **6 ns rms** (range 19 ns, well
       inside one 32 ns sample). Drive held constant rather than stepped as
       H6.5 did, to separate sweep-to-sweep variation from within-sweep
-      structure. Phase is not a deliverable (see `01-project-spec.md`) so
+      structure. Phase is not a deliverable (see `01-overview.md`) so
       it is not quantified here; H3.2 covers phase stability.
       `Trig:Pos` scatters by 2.6 ms and that is expected — the trigger fires
       wherever the DMA ring pointer sits, which is why reads reference it
@@ -481,52 +488,3 @@ The emulated-DUT test at full sweep length needs a waveform longer than the
       tests in `tests/test_hardware_safety.py` pin it.
 
 ---
-
-## Cannot be tested in loopback
-
-Carry this list forward to the Phase 2 planning session. Each item is a place
-where a loopback pass does **not** imply the real system works.
-
-| # | Item | Why loopback cannot reach it | Risk if wrong |
-|---|---|---|---|
-| U1 | Absolute 80 MHz drive amplitude at the AOM | Round trip is attenuated twice; no calibrated reference | Under- or over-driving the AOM |
-| U2 | Amplifier chain linearity and saturation | Not in the loop | Intermodulation generated by the amplifiers, not the DUT — a false signal indistinguishable from the real one |
-| U3 | DUT mixing behaviour | Emulated, by construction | The entire measurement premise |
-| U4 | Photodetector bandwidth at 1 MHz | Not connected | Response rolled off or absent |
-| U5 | Photodetector output level and input range choice | Unknown until measured | Clipping, or burying the signal in ADC quantisation |
-| U6 | Real noise environment | Loopback is quiet | SNR far worse than predicted |
-| U7 | Santec trigger output: level, polarity, width, and whether it fires once per sweep or per step (Q18) | Emulated | Capture not triggered, or a pulse train appears where one edge was expected |
-| U10 | The Santec serial link — command set, timing, and whether its reported wavelength is trustworthy | Laser not connected; no driver written yet | **The wavelength axis is now entirely dependent on this.** A wrong or mis-aligned report mislabels every point, and nothing in the trace would look wrong |
-| U11 | Clock relationship between the laser and the Red Pitaya (Q19) | Two instruments, one not present | Wavelength assignment drifts across the sweep even with the origin correctly aligned. **Mitigated:** the time-stepped trigger train measures this directly per sweep — see Q19 |
-| U12 | That both sides agree on which edge is "the first trigger" (Q21) | Needs the real laser and a real sweep | **Every wavelength offset by one time step, with a trace that looks perfectly normal.** The most dangerous item on this list, because it is silent |
-| U8 | Actual sweep repeatability of the laser | Not in the loop | Wavelength calibration drift |
-| U9 | Ground loops and pickup with everything connected | Single-box loopback | 80 MHz leakage into the detector path |
-
-**Note where the risk moved.** Taking the wavelength axis from the laser removes a hard problem (recovering thousands of edge intervals without losing one) and replaces it with a different one: trusting a second instrument's report and aligning two clocks. That is a good trade — the laser knows its own wavelength far better than we can infer it — but it is a trade, not a free win, and U10 and U11 are where it now lives. Both are invisible in loopback.
-
-U2 deserves particular attention. Amplifier intermodulation would appear at
-exactly |f2 − f1| — the same frequency as the real signal — and would look
-entirely legitimate. Worth designing a control measurement for it: for example,
-driving one tone only and confirming nothing appears at the difference
-frequency.
-
----
-
-## Phase 2 — planning session (not started)
-
-Do not begin connecting hardware without this. It needs, at minimum:
-
-- Safe drive levels for the amplifier chain and AOMs, from the human
-- Photodetector damage thresholds
-- An order of connection that fails safe
-- A control measurement for U2
-- Agreement on what the agent may command unattended versus what needs a human
-  present
-
-**The full brief is `07-phase2-prep.md`** — written 2026-08-14, once Phase 1
-completed. It lists what is missing, what has to be decided, a draft
-fail-safe connection order, and the work that can proceed meanwhile. Three
-things block Phase 2 and they are independent: **Q22** (the Santec command set),
-**Q11** (photodetector level and impedance) and **Q12** (safe drive levels).
-
-Write the outcome of the session into a new `docs/07-phase2-plan.md`.

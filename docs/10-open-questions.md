@@ -1,12 +1,16 @@
 # Open questions
 
+**Where to look:** blockers for Phase 2 first, then what was resolved and
+when. Every answered question names where the answer came from, so a claim can
+be traced back to the measurement that produced it.
+
 Resolve these as they come up. When one is settled, move the answer into the
 relevant doc and note it in `SESSION_LOG.md`.
 
 ## Blocking Phase 2 — read these first
 
 **Phase 1 is complete. These are what stand between here and Phase 2.**
-The full brief is `07-phase2-prep.md`.
+The full brief is `08-phase2-hardware.md`.
 
 | # | Question | Blocks |
 |---|---|---|
@@ -57,7 +61,7 @@ The full brief is `07-phase2-prep.md`.
 | Q3 | Does the generator accept a 250-sample arbitrary buffer? | **No — and the question was based on a wrong model.** The ASG always traverses a fixed 16384-entry table; `SOUR:FREQ:FIX` sets the traversal rate, not a per-sample clock. A 50-sample buffer produces no output at all. |
 | Q3a | Move the frequency plan onto the 15258.789 Hz grid? | **Yes, decided by Kevin 2026-08-12 and implemented.** Carrier 80.001831 MHz, f1 5.004883 MHz, f2 5.996704 MHz, difference **991.821 kHz**. The limitation this imposes is recorded in full in `SESSION_LOG.md` at his request — in particular, **do not hardcode 1e6 as the lock-in frequency.** |
 | Q8 | What is the real noise floor at the lock-in frequency? | **51.7 nV/√Hz on IN1** at 991.821 kHz, giving **σ = 3.57 µV per quadrature** at the operating bandwidth (decimation 2, DC, ±1 V range, outputs off, loopback cables fitted — Kevin accepted the cable-on configuration rather than a 50 Ω terminator on 2026-08-12, as it is the wiring Phase 1 runs in). 3.57 ppm of full scale. **Revised twice from an original 2.96 µV, which was ~15% optimistic** — re-measured independently by two mutually agreeing routes, and separately with 50 Ω terminators, which showed the loopback **cable adds ~50%** to the floor (terminated: 34.6 nV/√Hz, 2.39 µV). **A signal of ≥36 µV amplitude at the ADC gives SNR 10 on every trace point with no sweep averaging**; 24 µV is the unreachable terminated best case, and the real cable from a photodetector will be worse than ours, not better. On the ±20 V range, σ = 45 µV (2.3 ppm of range). Two caveats that matter: the conversion from density to σ uses a noise gain of **4232.7 Hz, which is 1.88× the nominal 2250 Hz bandwidth**, not equal to it; and a switching-supply harmonic sits 17.9 kHz off the lock-in frequency, rejected by >200 dB today but only **1.77% of switcher drift** away from landing on it — where it would read as a **32 µV steady amplitude, 11× the noise floor and indistinguishable from a healthy real signal.** Full detail and the five things this does not cover are in `SESSION_LOG.md` 2026-08-12. |
-| Q10 | τ = 30 µs or 71 µs? | **71 µs at 5000 points**, decided by Kevin 2026-08-12. Forcing 30 µs at 5000 points would fold 2805 Hz of noise onto every trace for 3.7 dB worse SNR, buying resolution a 5000-point grid cannot represent. The aliasing-free way to reach ~30 µs is 12500 points (τ = 28.3 µs); considered, not taken. Recorded in `01-project-spec.md`. |
+| Q10 | τ = 30 µs or 71 µs? | **71 µs at 5000 points**, decided by Kevin 2026-08-12. Forcing 30 µs at 5000 points would fold 2805 Hz of noise onto every trace for 3.7 dB worse SNR, buying resolution a 5000-point grid cannot represent. The aliasing-free way to reach ~30 µs is 12500 points (τ = 28.3 µs); considered, not taken. Recorded in `01-overview.md`. |
 
 ## Deferred
 

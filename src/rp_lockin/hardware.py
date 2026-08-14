@@ -1,15 +1,23 @@
 """
 SCPI transport for the Red Pitaya.
 
-*** UNVERIFIED AGAINST HARDWARE. ***
+*** VERIFIED AGAINST HARDWARE. Phase 1 complete, 2026-08-14. ***
 
-Everything in this module was written from the Red Pitaya 2.x documentation and
-has never been executed against a board. Command spellings drift between OS
-releases. Methods carry VERIFY notes naming the specific commands to confirm.
+Every method here has been executed against a SIGNALlab 250-12 running OS 2.00
+build 37. See docs/07-phase1-loopback.md (task H1) and docs/05-results.md.
+
+Two exceptions, both documented at their definitions:
+  - acquire_deep_2ch: the SCPI read returns garbage. Superseded by
+    acquire_deep_fast. Kept for reference; do not build on it.
+  - setup_am_generator: rewritten, not merely corrected -- the original modelled
+    a generator this board is not.
+
+The trap worth knowing before editing anything here: **a misspelled setting
+command returns zero bytes, exactly like a correct one.** Verify by setting and
+reading back, never by absence of an error.
 
 This layer is deliberately separate from dsp.py so that a wrong command string
-produces a connection error rather than corrupted physics. Task H1 in
-docs/04-test-plan.md is to walk this file and confirm each command.
+produces a connection error rather than corrupted physics. Keep it that way.
 """
 
 from __future__ import annotations
@@ -33,10 +41,12 @@ class RedPitaya:
     Enable the SCPI server first: on the board's web interface, open
     "Development -> SCPI server" and press Run. Default port is 5000.
 
-    *** Every method here is written from the Red Pitaya 2.x documentation but
-    has NOT been executed against hardware. Command spellings occasionally
-    change between OS releases -- if one errors, check it against
-    https://redpitaya.readthedocs.io for your installed version. ***
+    *** Every method here has been executed against a real board on OS 2.00
+    (Phase 1, complete 2026-08-14). Command spellings do change between OS
+    releases, so if one errors on a different image, check it against
+    https://redpitaya.readthedocs.io for that version -- and remember that a
+    misspelled SETTING command will not error at all, it will simply do
+    nothing. ***
     """
 
     def __init__(self, host: str, port: int = 5000, timeout: float = 15.0,
