@@ -603,48 +603,88 @@ connected yet.
 | Extinction ratio | 50–55 dB |
 | Rise time | 50 ns |
 
-### THE ATTENUATOR: 20 dB, and it is not optional
+### THE ATTENUATOR: 10 dB — revised from 20 dB once the real output was measured
 
-**With no attenuator the Red Pitaya at full scale sits exactly on the
-amplifier's absolute maximum input rating.** ±1 V into 50 Ω is +10 dBm; the
-damage rating is +10 dBm. **Zero margin.**
+**Measured by Kevin 2026-08-14: the board delivers 800 mVpp at 80 MHz on a
+scope, even when commanded to 2.7 V.** Its range clips the command and the 60 MHz
+rolloff takes the rest. **That is 8 dB below the +10 dBm an earlier version of
+this section assumed, and it changes the answer.**
 
 Everything below is peak envelope power (PEP), because that is what compresses an
 amplifier. With AM at depth ~1 — which H2.2 measured — PEP runs 6 dB above the
 carrier and 4.3 dB above the modulated average.
 
-| Attenuation | Amp in | Amp out | Backoff from P1dB | AOM drive | Diffraction | 1st order | Verdict |
-|---:|---:|---:|---:|---:|---:|---:|---|
-| 30 dB | −20 dBm | +12 dBm | 21 dB | 0.2% | 0.6% | 0.04 mW | safe, too little light |
-| 25 dB | −15 dBm | +17 dBm | 16 dB | 0.8% | 1.8% | 0.12 mW | safe, little light |
-| **20 dB** | **−10 dBm** | **+22 dBm** | **11 dB** | **2.4%** | **5.8%** | **0.39 mW** | **all three constraints met** |
-| 15 dB | −5 dBm | +27 dBm | 6 dB | 7.5% | 17.4% | 1.18 mW | compressing (U2), **and past detector saturation** |
-| 10 dB | 0 dBm | +32 dBm | 1 dB | 24% | 48% | 3.2 mW | at compression |
-| ≤6 dB | ≥+4 dBm | — | — | — | — | — | **at or over the amplifier's damage rating** |
+**If the scope was reading into 50 Ω, the board's PEP is +2.0 dBm:**
 
-**20 dB is the LEAST attenuation that satisfies all three of:**
+| Attenuation | Amp out | Backoff from P1dB | Diffraction | Verdict |
+|---:|---:|---:|---:|---|
+| none | +34 dBm | **−1 dB** | ~48% | **compressing** — this is the current setup |
+| 6 dB | +28 dBm | 5 dB | 21.8% | still compressing |
+| **10 dB** | **+24 dBm** | **9 dB** | **9.1%** | **the working point** |
+| 15 dB | +19 dBm | 14 dB | 2.9% | linear, little light |
+| 20 dB | +14 dBm | 19 dB | 0.9% | far too much attenuation |
 
-1. **Damage margin.** With 20 dB fitted the board would have to produce +30 dBm
-   to reach the amplifier's rating. It can produce +10 dBm. **Damage becomes
-   physically impossible, not merely unlikely.**
-2. **Linearity — the constraint that actually governs.** 11 dB below P1dB. This
-   matters more than the damage rating because **amplifier intermodulation lands
+**If the scope was a 1 MΩ input**, the real level into 50 Ω is half that
+(−4.0 dBm PEP) and every backoff above improves by 6 dB — 10 dB attenuation then
+gives 15 dB of backoff and 2.3% diffraction. **Confirm the scope's input
+impedance, or re-measure into a 50 Ω load, at P3.1.**
+
+**Specification: 10 dB fixed, 50 Ω, ≥0.5 W, one per channel — so two.**
+
+Three reasons that is the right number:
+
+1. **Damage stays impossible.** With 10 dB fitted the board would have to produce
+   +20 dBm to reach the amplifier's rating. Its absolute ceiling is +10 dBm
+   (±1 V into 50 Ω at DC), so **even a worst case with no rolloff at all leaves
+   10 dB of margin.**
+2. **Linearity, which governs.** ~9 dB below P1dB on the 50 Ω reading. This
+   matters more than the damage rating, because **amplifier intermodulation lands
    at exactly |f2 − f1|, the frequency being measured, and looks entirely
    legitimate** (U2). An amplifier near compression manufactures the signal.
-3. **Detector saturation.** 0.39 mW in the first order against the PDA05CF2's
-   0.96 mW ceiling. **At 15 dB the optical power alone would already saturate the
-   detector**, independently of the amplifier — the optics run out of headroom
-   before the electronics do, which was not obvious in advance.
+3. **It keeps useful diffraction.** ~9% rather than the 0.9% that 20 dB would
+   have given.
 
-**Specification: 20 dB fixed, 50 Ω, ≥0.5 W (2 W for margin), one per channel —
-so two.** Dissipation is at most 10 mW, so the power rating is not stressed.
+**The current no-attenuator setup sits 1 dB INTO compression**, which is exactly
+why it maximises light through the AOM — and is exactly what this measurement
+cannot use. See "why maximum light is the wrong target" below.
 
-**Do not reduce below 20 dB without re-running the U2 control measurement
-(P5.1).** If the signal turns out too small there, the escalation is: measure the
-board's real 80 MHz output first (its own 60 MHz rolloff means the delivered
-power is *below* +10 dBm, so effective attenuation is higher than nominal), then
-consider 15 dB with the U2 control repeated — accepting that it also needs
-optical attenuation to keep the detector out of saturation.
+**Do not go below 10 dB without running the U2 control measurement (P5.1) at the
+new level.**
+
+### Why maximum light is the wrong target
+
+The amplifier's P1dB is 2 W and the AOM's nominal drive is 2.5 W, so **full
+diffraction is unreachable without saturating the amplifier.** Tuning for maximum
+throughput therefore *necessarily* means running compressed. For CW work that is
+a perfectly sensible choice. For this measurement it is wrong twice, and the
+second reason is the one that is easy to miss:
+
+- A compressed amplifier generates intermodulation at |f2 − f1| that is
+  indistinguishable from the real signal (U2).
+- **Saturation flattens the AM envelope.** The measurement lives in the
+  *modulation*, not the average power. A saturated amplifier clips the envelope
+  peaks, so modulation depth out is less than in — **driving harder for more
+  light delivers less of the thing being measured.**
+
+The right target is not maximum η but maximum **dη/dP**, the slope that converts
+RF modulation into optical modulation. Since η = sin²(k√P), that peaks at
+**η = 50%, i.e. a quarter of full drive — 625 mW, +28 dBm.** Above it the curve
+flattens and each extra watt of RF buys less modulation.
+
+That optimum is not reachable linearly with this amplifier, so the practical
+answer is: **run as much drive as linearity allows, and set the optical level
+separately.**
+
+### RF level and laser power are independent knobs
+
+Worth stating because an earlier version of this document conflated them:
+
+- **RF drive** is set by **amplifier linearity** (U2).
+- **Laser power** is set by **detector headroom** — the PDA05CF2 saturates at
+  ~0.96 mW.
+
+If the detector is saturating, turn the laser down; do not starve the AOM of RF.
+They are separate constraints on separate parts of the chain.
 
 ### Two ordering rules that damage things if ignored
 

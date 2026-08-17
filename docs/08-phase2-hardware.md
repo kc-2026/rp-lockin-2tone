@@ -12,16 +12,22 @@ session's **output** goes in `09-phase2-plan.md`, which does not exist yet.
 
 ## The short version
 
-**Two of the three original blockers are down, both answered from manuals on
-2026-08-14. One remains.**
+**ALL THREE original blockers are down, as of 2026-08-14.**
 
 | | What | State |
 |---|---|---|
-| ~~1~~ | Santec TSL-770/775 command set (Q22) | **ANSWERED** from both manuals — `04-hardware-reference.md`. The driver can be written |
-| ~~2~~ | Photodetector level and impedance (Q11) | **ANSWERED** from the Thorlabs manual — PDA05CF2. **U4 closed too**: 150 MHz bandwidth, no rolloff at 991.821 kHz |
-| **3** | **Safe drive levels for the amplifiers and AOMs (Q12)** | **STILL BLOCKING.** The one that cannot come from a datasheet already in hand, and the hard gate on connecting anything |
+| ~~1~~ | Santec TSL-770/775 command set (Q22) | **ANSWERED** from both manuals — `04-hardware-reference.md` |
+| ~~2~~ | Photodetector level and impedance (Q11) | **ANSWERED** — PDA05CF2. **U4 closed too**: 150 MHz bandwidth, no rolloff at 991.821 kHz |
+| ~~3~~ | Safe drive levels (Q12) | **ANSWERED** — ZHL-1-2W+ and 1550AOM-1 datasheets. **Attenuator decided: 10 dB per channel** |
 
-**What the two answers changed, beyond unblocking:**
+**What is left before hardware goes in** is the planning session itself, plus:
+
+- an **optical damage threshold** for the detector (the manual gives saturation
+  but no damage figure),
+- confirmation of **whether there is a second ZHL-1-2W+** — the design needs two,
+- the **unattended-operation boundary**, deferred at Kevin's request.
+
+**Four things the answers changed, beyond unblocking:**
 
 - **The noise budget got worse.** The detector, not the ADC, will dominate:
   ~11 µV against the board's 3.57 µV, so **SNR 10 needs ~120 µV rather than
@@ -29,12 +35,14 @@ session's **output** goes in `09-phase2-plan.md`, which does not exist yet.
 - **The trigger worry got better.** The real trigger is 3.3 V, 25 µs wide, at
   most 20 kHz — 780 samples per pulse at decimation 8. Every anxiety about
   missed edges came from a synthetic 20 ns pattern that looks nothing like it.
+- **The attenuator moved from 20 dB to 10 dB** once Kevin measured the board's
+  real 80 MHz output: 800 mVpp, which is 8 dB below what the first estimate
+  assumed. **The current no-attenuator setup runs the amplifier ~1 dB into
+  compression** — which is why it maximises light, and why it cannot be used for
+  this measurement.
 - **A new assumption surfaced (Q26).** Neither manual says the laser logs one
   wavelength per trigger pulse, and the index-based mapping depends on it. One
   command and one capture settles it at P1.
-
-Everything else on this page is either a decision for the session, or work that
-can proceed regardless.
 
 ---
 
@@ -64,16 +72,17 @@ It is a **Thorlabs PDA05CF2**; full entry in `04-hardware-reference.md`.
   diagnostics, say so — the laser's own `:READout:DATa:POWer?` log can supply
   it instead.
 
-### The amplifier chain and AOMs (blocks connecting anything)
+### ~~The amplifier chain and AOMs~~ — ANSWERED 2026-08-14
 
-- **Maximum safe input** to the amplifier, and its gain.
-- **Maximum RF power** into the AOMs, and their damage threshold.
-- **Whether attenuators are needed** between the Red Pitaya's output and the
-  amplifier input — and if so, what value. The board can output up to ±1 V into
-  50 Ω, which may already be too much.
-- **Amplifier linearity**, if known. This is U2 and it matters more than it
-  sounds: amplifier intermodulation appears at exactly the same frequency as the
-  real signal and would look completely legitimate.
+**ZHL-1-2W+** (32 dB gain, P1dB +33 dBm, absolute max input +10 dBm) and
+**1550AOM-1** (2.5 W nominal RF at 80 MHz, 0.5 W optical handling). Full working
+in `04-hardware-reference.md`.
+
+**Decided: 10 dB attenuator, 50 Ω, ≥0.5 W, one per channel.**
+
+**One thing still to confirm: is there a second ZHL-1-2W+?** The design drives
+two AOMs, one per arm, so it needs two amplifiers and two attenuators. One
+datasheet proves the model, not the count.
 
 ---
 
@@ -221,7 +230,7 @@ Everything electrical, into a load or a scope, before anything optical exists.
 | P3.4 | Spectrum of each amplifier output on its own — catches gross nonlinearity early |
 | P3.5 | Both channels running: check for crosstalk between them, which is the mechanism that could produce a false difference-frequency signal |
 
-**Needs:** **two 20 dB attenuators** (50 Ω, ≥0.5 W — decided 2026-08-14, working in
+**Needs:** **two 10 dB attenuators** (50 Ω, ≥0.5 W — decided 2026-08-14, working in
 `04-hardware-reference.md`), a 50 Ω load, and a way to measure RF at 80 MHz.
 **This is the first step that can damage something, and the first that needs you
 present.**

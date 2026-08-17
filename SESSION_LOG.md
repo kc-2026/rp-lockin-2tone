@@ -529,6 +529,146 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — attenuator revised to 10 dB; Santec driver, unbiased amplitude, CSV output
+
+Kevin measured the board's real 80 MHz output and then went away, so the rest is
+offline. **147 offline tests pass, up from 107.** No hardware touched.
+
+### The attenuator drops from 20 dB to 10 dB
+
+**Measured: the board delivers 800 mVpp at 80 MHz on a scope, even commanded to
+2.7 V.** Its range clips the command and the 60 MHz rolloff takes the rest. That
+is **8 dB below the +10 dBm the first estimate assumed**, and it moves the answer.
+
+| Attenuation | Amp out | Backoff from P1dB | Diffraction |
+|---:|---:|---:|---:|
+| none — the current setup | +34 dBm | **−1 dB** | ~48% |
+| **10 dB** | **+24 dBm** | **9 dB** | **9.1%** |
+| 20 dB (the old answer) | +14 dBm | 19 dB | 0.9% |
+
+**Kevin's current no-attenuator setting sits about 1 dB INTO compression**, which
+is exactly why he found it maximises light through the AOM. It is also exactly
+what this measurement cannot use. The two facts are the same fact.
+
+Damage stays impossible at 10 dB: the board would need +20 dBm to reach the
+amplifier's rating and its absolute ceiling is +10 dBm, so **even with no rolloff
+at all there is 10 dB of margin.**
+
+**Still to confirm:** whether the scope was reading into 50 Ω or 1 MΩ. If 1 MΩ,
+the real level is 6 dB lower again and every backoff improves. Re-measure into a
+50 Ω load at P3.1.
+
+### Why maximum light is the wrong target, which is worth stating plainly
+
+The amplifier's P1dB is 2 W and the AOM's nominal drive is 2.5 W, so **full
+diffraction is unreachable without saturating the amplifier.** Tuning for maximum
+throughput therefore *necessarily* means running compressed. For CW work that is
+correct. Here it is wrong twice:
+
+- A compressed amplifier makes intermodulation at |f2 − f1| that is
+  indistinguishable from the real signal (U2).
+- **Saturation flattens the AM envelope.** The measurement lives in the
+  modulation, not the average power, so driving harder for more light delivers
+  *less* of the thing being measured.
+
+The right target is not maximum η but maximum **dη/dP**, which for
+η = sin²(k√P) peaks at **η = 50%, a quarter of full drive.** Unreachable
+linearly with this amplifier, so: run what linearity allows and set the optical
+level separately. **RF drive is set by amplifier linearity; laser power is set by
+detector headroom.** An earlier version of the notes conflated them.
+
+### `santec.py` — written from the manuals, never run against a laser
+
+17 tests, against a fake laser replaying the byte-level replies the manuals
+describe. Three things it gets right that a transport copied from `hardware.py`
+would get wrong, and each fails in a way that looks like something else:
+
+- **Bare CR, not CRLF.** The wrong delimiter hangs waiting for a newline that
+  never comes, and presents as a dead cable.
+- **Little-endian payloads.** The Red Pitaya's SCPI path is big-endian. Same
+  `#4nnnn` block header, opposite byte order.
+- **Two selectable command sets** return different payloads from the same
+  command — 4-byte integers in 0.1 pm, or 8-byte doubles in metres.
+  `read_wavelengths()` **infers which from the byte count** rather than being
+  told, because both decode without error and only one is right.
+
+Every setter reads back and raises on mismatch, since a setting command that
+silently does nothing is this project's signature failure. `set_trigger_setting`
+deliberately refuses to interpret its own argument — the two manuals define it
+with opposite encodings (Q24), so it takes the raw value and says so.
+
+### The unbiased amplitude estimator — and a measurement that changed the design
+
+`01-overview.md` has flagged since Phase 0 that `R = sqrt(X²+Y²)` reads high in
+noise. It matters more now: the detector puts the floor near 11 µV, so real
+signals sit only a few times above it, which is where the bias stops being a
+rounding error.
+
+`LockinResult.amplitude()` projects onto a common phase. Unbiased, and it can
+return negative values, which is what an honest estimator does when nothing is
+there.
+
+**Two things I had wrong, both caught by writing the tests:**
+
+**1. "Unbiased and quieter" was wrong.** With no signal, R's *variance* is
+actually LOWER — Rayleigh spread is 0.655σ against the projection's 1.0σ. What R
+carries instead is a 1.25σ offset that never averages away. The projection trades
+variance for removing that offset. It wins on total error, not on noise.
+
+**2. `debiased_amplitude()` is a bad default, and measuring said so.** The
+power-subtraction debias (√(R²−2σ²)) is only better than raw R below about
+**1.5σ**. Between 2σ and 6σ it overcorrects and is **worse than doing nothing** —
+and that band is exactly where our signals are expected. Mean error against
+truth:
+
+| A/σ | 0.5 | 1.0 | 2.0 | 3.0 | 4.0 |
+|---|---:|---:|---:|---:|---:|
+| raw R | +0.83 | +0.55 | +0.28 | +0.17 | +0.13 |
+| debiased | +0.05 | −0.20 | **−0.31** | **−0.22** | **−0.15** |
+| projection | +0.002 | +0.003 | +0.002 | +0.002 | −0.001 |
+
+**The projection is essentially exact everywhere.** So rather than recommend the
+magnitude route for phase-varying responses, `amplitude(smooth=N)` now tracks the
+phase *locally* — averaging the complex trace over N points and projecting onto
+that local angle. A DUT phase moves slowly with wavelength, so a window long
+against the noise and short against the resonance recovers the amplitude without
+the global angle's blind spots.
+
+**Its failure mode is asymmetric and worth knowing:** too long merely reverts to
+the global-angle problem; too SHORT is dangerous, because the reference then
+carries a share of the same noise it is projecting, the two correlate, and R's
+bias creeps back in a subtler form. Pinned by a test.
+
+`debiased_amplitude()` is kept for the case with no usable phase at all, with the
+table above in its docstring so nobody reaches for it by accident.
+
+### `output.py` — CSV, as decided
+
+`write_trace_csv` writes wavelength in nm and amplitude in volts, with provenance
+as `#` comment lines above a normal column row. Points with no wavelength — the
+pre-roll, normally — are dropped and **the count goes in the header** rather than
+silently vanishing. An all-invalid trace raises rather than writing an empty file
+that looks like a success until opened.
+
+One correction found by testing: numpy's text readers do NOT handle this cleanly.
+`loadtxt`'s `skiprows` counts comment lines and `genfromtxt(names=True)` takes the
+first *comment* line as its header. `pandas.read_csv(comment="#")`, the stdlib
+`csv` module and Excel all do. That is those numpy functions being awkward about
+an ordinary CSV, not a defect — a real column row is what makes the file useful to
+a person, which is the point of choosing CSV. The docstring said otherwise until
+a test disagreed.
+
+`write_raw_npz` saves the raw capture alongside, because a CSV of the finished
+trace cannot support revisiting a demodulation choice — something this project has
+already had to do more than once.
+
+### State
+
+147 offline tests. Nothing here has met an instrument: `santec.py` has never
+seen a laser, and the attenuator figure needs the scope impedance confirmed.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — Q12 answered: attenuator decided at 20 dB; Phase 2 is unblocked
 
 Kevin supplied the ZHL-1-2W+ and 1550AOM-1 datasheets, confirmed the laser's

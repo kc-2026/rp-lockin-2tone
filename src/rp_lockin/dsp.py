@@ -67,6 +67,70 @@ class LockinResult:
     def theta_deg(self) -> np.ndarray:
         return np.degrees(self.theta)
 
+    def amplitude(self, phase: float | None = None,
+                  smooth: int | None = None) -> np.ndarray:
+        """
+        Amplitude WITHOUT the upward bias that R carries in noise.
+
+        `R = sqrt(X^2 + Y^2)` is biased high: with no signal at all its mean is
+        sigma*sqrt(pi/2), not zero, because a magnitude cannot be negative and
+        noise in both quadratures always adds something. Near the noise floor
+        that turns absence into a small steady positive reading, which is
+        exactly where this measurement will live -- the detector puts the floor
+        at ~11 uV and the interesting signals are not far above it.
+
+        Projecting onto a common phase instead is unbiased: it returns sigma per
+        point, and noise can come out negative, which is what an honest
+        estimator does when there is nothing there.
+
+        **"Unbiased" rather than "quieter", and the distinction is worth
+        keeping.** With no signal, R's *variance* is actually lower than the
+        projection's -- a Rayleigh distribution has spread 0.655*sigma against
+        the projection's 1.0*sigma. What R has instead is a 1.25*sigma offset
+        that does not average away with more points. The projection trades a
+        little variance for the removal of that offset, so it wins on total
+        error wherever the bias matters, which is everywhere near the floor.
+
+        `phase` defaults to the angle of the vector mean, which is the right
+        choice when the response phase is steady across the record -- H3.2
+        measured 0.002 degrees of drift over 28 ms, so it is steady within a
+        capture.
+
+        **The assumption to watch: a response whose phase varies with
+        wavelength.** Near a DUT resonance it will, and then a single global
+        angle suppresses real signal wherever the phase has rotated away from
+        it.
+
+        `smooth=N` handles that by tracking the phase locally: it averages the
+        complex trace over N points and projects each sample onto the angle of
+        that local average. A DUT phase moves slowly with wavelength, so a
+        window that is long compared to the noise but short compared to the
+        resonance recovers the amplitude without the global angle's blind spots.
+
+        **Choose N with care in one direction only.** Too long merely
+        reintroduces the global-angle problem. Too SHORT is the dangerous one:
+        the reference then carries a real share of the same noise it is being
+        used to project, the two correlate, and R's upward bias creeps back --
+        the exact fault this method exists to remove, in a subtler form. Prefer
+        the longest window the response's phase variation tolerates.
+
+        (`debiased_amplitude()` is the last resort when there is no usable phase
+        at all. It is worse than it looks -- see its docstring.)
+        """
+        z = self.X + 1j * self.Y
+        if phase is not None:
+            ref = np.exp(1j * float(phase))
+        elif smooth:
+            n = int(smooth)
+            if n < 1:
+                raise ValueError(f"smooth must be >= 1, got {smooth}")
+            kernel = np.ones(n) / n
+            local = np.convolve(z, kernel, mode="same")
+            ref = np.exp(1j * np.angle(local))
+        else:
+            ref = np.exp(1j * float(np.angle(np.mean(z))))
+        return np.real(z * np.conj(ref))
+
     def summary(self) -> str:
         return (
             f"f_ref      = {self.f_ref / 1e6:.6f} MHz\n"
@@ -112,6 +176,48 @@ def _factorize(d: int, maxf: int = 8) -> list[int]:
             factors.append(d)
             d = 1
     return factors
+
+
+def debiased_amplitude(R: np.ndarray, sigma: float) -> np.ndarray:
+    """
+    Amplitude from the magnitude, with the noise contribution subtracted.
+
+    Use this when the response phase varies across the sweep, which is where
+    `LockinResult.amplitude()`'s single-angle projection stops being valid --
+    near a DUT resonance, for instance.
+
+    The identity is exact rather than approximate: for a signal of amplitude A
+    in complex Gaussian noise with `sigma` per quadrature,
+
+        E[R^2] = A^2 + 2*sigma^2
+
+    so subtracting `2*sigma^2` from `R^2` gives an unbiased estimate of `A^2`.
+    `sigma` is the per-quadrature noise -- the figure H3.3 measures, not the
+    spread of R.
+
+    **This is a last resort, and measurement says so.** The square root of an
+    unbiased estimate of A^2 is not an unbiased estimate of A -- sqrt is
+    concave, so it reads LOW -- and it overcorrects badly in the middle of the
+    range. Measured against the truth, mean error in units of sigma:
+
+        A/sigma:      0.5     1.0     1.5     2.0     3.0     4.0    10.0
+        raw R:      +0.83   +0.55   +0.38   +0.28   +0.17   +0.13   +0.05
+        debiased:   +0.05   -0.20   -0.31   -0.31   -0.22   -0.15   -0.05
+        projection: +0.002  +0.003  +0.002  +0.002  +0.002  -0.001  +0.000
+
+    So it helps only below about **1.5 sigma**. Between 2 and 6 sigma it is
+    WORSE than doing nothing, and that band is exactly where this project's
+    signals are expected to sit. Meanwhile the projection is essentially exact
+    everywhere.
+
+    **Use `LockinResult.amplitude(smooth=N)` instead** unless there is genuinely
+    no usable phase reference. This function is kept because that case exists,
+    not because it is a good default.
+    """
+    R = np.asarray(R, dtype=float)
+    if sigma < 0:
+        raise ValueError(f"sigma must be non-negative, got {sigma}")
+    return np.sqrt(np.maximum(R ** 2 - 2.0 * sigma ** 2, 0.0))
 
 
 def _kaiser_taps(cutoff: float, trans: float, fs: float,

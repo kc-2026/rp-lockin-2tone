@@ -13,6 +13,9 @@ dsp         Demodulation. Pure numpy/scipy, fully tested offline. TRUSTED.
 waveforms   Drive waveform construction and the two-tone frequency planner.
 planning    Capture sizing: memory budget, decimation, aliasing.
 emulator    Synthetic DUT output for loopback testing.
+santec      Santec TSL-770/775 transport. Written from the manuals; has
+            NEVER been run against a laser.
+output      Writing the deliverable: CSV trace, npz raw capture.
 wavelength  Trace -> wavelength, the laser/board clock check, and the
             off-by-one-trigger guard. Offline-tested; has never seen a laser.
 hardware    SCPI transport. VERIFIED against the board, Phase 1 complete
@@ -33,7 +36,15 @@ from .constants import (
     DMA_REGION_BASE,
     MAX_DMA_MB,
 )
-from .dsp import LockinResult, demodulate, estimate_frequency, min_record_seconds
+from .dsp import (
+    LockinResult,
+    debiased_amplitude,
+    demodulate,
+    estimate_frequency,
+    min_record_seconds,
+)
+from .output import write_raw_npz, write_trace_csv
+from .santec import TRIGGER_OUTPUT_MODES, SantecTSL, TriggerConfig
 from .emulator import (
     SyntheticResponse,
     find_trigger_edges,
@@ -83,13 +94,17 @@ __all__ = [
     "CaptureOption",
     "GridTwoTonePlan",
     "LockinResult",
+    "SantecTSL",
     "SweepTrace",
+    "TRIGGER_OUTPUT_MODES",
     "SyntheticResponse",
     "TrainAnalysis",
+    "TriggerConfig",
     "TwoTonePlan",
     "analyse_trigger_train",
     "asg_grid",
     "check_alignment",
+    "debiased_amplitude",
     "demodulate",
     "describe_capture_plan",
     "estimate_frequency",
@@ -107,5 +122,7 @@ __all__ = [
     "recommended_preroll",
     "recommended_tail",
     "settling_points",
+    "write_raw_npz",
+    "write_trace_csv",
     "synthesise_dut_output",
 ]

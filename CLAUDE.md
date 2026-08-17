@@ -63,7 +63,7 @@ This distinction matters more than usual here.
 
 | Area | Status |
 |---|---|
-| `src/rp_lockin/dsp.py` | **Trusted.** 102 offline tests. Do not change without re-running them. |
+| `src/rp_lockin/dsp.py` | **Trusted.** 147 offline tests. Do not change without re-running them. |
 | `planning.py`, `emulator.py` | **Trusted.** Same suite. |
 | `waveforms.py` — `make_am_table`, `plan_two_tone_grid` | **Trusted and hardware-verified.** Use these to drive the board. |
 | `waveforms.py` — `make_am_waveform`, `plan_two_tone` | **Sound arithmetic, WRONG hardware model.** Kept because their tests are worth having. Driving the board with them produces no output at all. |
@@ -161,7 +161,7 @@ pytest -q
 
 ## Current state — updated 2026-08-14
 
-**Phase 0 and Phase 1 are both COMPLETE.** 102 offline tests pass. Every
+**Phase 0 and Phase 1 are both COMPLETE.** 147 offline tests pass. Every
 loopback test in `07-phase1-loopback.md` has been run against the board, except two
 that were deliberately skipped and are recorded as such (H6.1, H5.2/H5.3).
 
@@ -252,7 +252,7 @@ move it into the relevant doc and note it in the session log.
 python -m venv .venv
 .venv/Scripts/python -m pip install -e ".[dev]"     # Windows
 .venv/bin/python -m pip install -e ".[dev]"         # Linux
-pytest -q                                            # expect 102 passed
+pytest -q                                            # expect 147 passed
 ```
 
 Most machines here run Windows; keep the suite passing on it. One test uses
