@@ -221,9 +221,22 @@ Everything electrical, into a load or a scope, before anything optical exists.
 | P3.4 | Spectrum of each amplifier output on its own — catches gross nonlinearity early |
 | P3.5 | Both channels running: check for crosstalk between them, which is the mechanism that could produce a false difference-frequency signal |
 
-**Needs:** **Q12** (safe input, gain, AOM rating), attenuators if required, a 50 Ω
-load, and a way to measure RF at 80 MHz — a scope or power meter. **This is the
-first step that can damage something, and the first that needs you present.**
+**Needs:** **two 20 dB attenuators** (50 Ω, ≥0.5 W — decided 2026-08-14, working in
+`04-hardware-reference.md`), a 50 Ω load, and a way to measure RF at 80 MHz.
+**This is the first step that can damage something, and the first that needs you
+present.**
+
+**Fit the attenuators before the amplifiers are powered at all.** Without them the
+board at full scale sits exactly on the amplifier's +10 dBm damage rating; with
+them the board cannot reach it whatever it is commanded to do.
+
+**Connect the AOM before applying RF.** The amplifier datasheet warns that an open
+load can damage it, and derates the maximum input by 20 dB with no load.
+
+**P3.1 has a specific job beyond checking a level:** measure what the board
+actually delivers at 80 MHz. Its own 60 MHz rolloff means the real output is
+below the +10 dBm the budget assumes, so the effective attenuation is higher than
+nominal — which matters if the signal later turns out too small.
 **Pass:** levels confirmed inside every rating, with margin, and no gross
 nonlinearity.
 **Closes:** U1, part of U2.

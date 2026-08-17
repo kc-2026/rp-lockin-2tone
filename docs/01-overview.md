@@ -61,6 +61,8 @@ and taking the real part is unbiased and quieter. Not yet implemented — see
 | R6b | Read the laser's wavelength-versus-time over serial, and map the trace onto it | wavelength axis (Kevin, 2026-08-14) |
 | R7 | Software only; no FPGA development | scope decision, see ADR-0001 |
 | R8 | Runs on a control PC over the network | environment |
+| R9 | **Output the trace as CSV** | Kevin, 2026-08-14. Keep the raw capture as `.npz` alongside |
+| R10 | **No averaging across sweeps** | Kevin, 2026-08-14 — each sweep is its own measurement |
 
 R4 and R5 together set the frequency plan. See `03-frequency-plan.md`.
 

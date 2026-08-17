@@ -577,6 +577,85 @@ instrument: **do not add a 50 Ω terminator when the load is already 50 Ω.** Th
 combined 25 Ω allows ~135 mA and damages the output driver. With the Red Pitaya's
 1 MΩ input this does not arise, but it would if a scope is teed in alongside.
 
+## The RF chain — ZHL-1-2W+ amplifier and 1550AOM-1
+
+From the Mini-Circuits and Aerodiode datasheets, both read 2026-08-14. Neither is
+connected yet.
+
+| Mini-Circuits ZHL-1-2W+ | |
+|---|---|
+| Frequency range | 5–500 MHz — 80 MHz is comfortably inside |
+| Gain | 29 dB min, **32 dB typ** |
+| Output at 1 dB compression | +32.5 dBm min, **+33 dBm typ** |
+| Output IP3 | +44 dBm typ |
+| **Absolute max input, no damage** | **+10 dBm** |
+| Supply | +24 V, 0.9 A |
+| Impedance | 50 Ω, BNC |
+
+| Aerodiode 1550AOM-1 | |
+|---|---|
+| Wavelength | 1470–1630 nm (typ 1550) — covers a 1520–1570 sweep |
+| **RF drive** | **2.5 W nominal**, 50 Ω, SMA |
+| **Frequency** | **80 MHz** — matches the carrier exactly |
+| Frequency shift | ±80 MHz |
+| **Average optical handling** | **0.5 W** |
+| Insertion loss | 2.0–3.0 dB (2.5 typ) |
+| Extinction ratio | 50–55 dB |
+| Rise time | 50 ns |
+
+### THE ATTENUATOR: 20 dB, and it is not optional
+
+**With no attenuator the Red Pitaya at full scale sits exactly on the
+amplifier's absolute maximum input rating.** ±1 V into 50 Ω is +10 dBm; the
+damage rating is +10 dBm. **Zero margin.**
+
+Everything below is peak envelope power (PEP), because that is what compresses an
+amplifier. With AM at depth ~1 — which H2.2 measured — PEP runs 6 dB above the
+carrier and 4.3 dB above the modulated average.
+
+| Attenuation | Amp in | Amp out | Backoff from P1dB | AOM drive | Diffraction | 1st order | Verdict |
+|---:|---:|---:|---:|---:|---:|---:|---|
+| 30 dB | −20 dBm | +12 dBm | 21 dB | 0.2% | 0.6% | 0.04 mW | safe, too little light |
+| 25 dB | −15 dBm | +17 dBm | 16 dB | 0.8% | 1.8% | 0.12 mW | safe, little light |
+| **20 dB** | **−10 dBm** | **+22 dBm** | **11 dB** | **2.4%** | **5.8%** | **0.39 mW** | **all three constraints met** |
+| 15 dB | −5 dBm | +27 dBm | 6 dB | 7.5% | 17.4% | 1.18 mW | compressing (U2), **and past detector saturation** |
+| 10 dB | 0 dBm | +32 dBm | 1 dB | 24% | 48% | 3.2 mW | at compression |
+| ≤6 dB | ≥+4 dBm | — | — | — | — | — | **at or over the amplifier's damage rating** |
+
+**20 dB is the LEAST attenuation that satisfies all three of:**
+
+1. **Damage margin.** With 20 dB fitted the board would have to produce +30 dBm
+   to reach the amplifier's rating. It can produce +10 dBm. **Damage becomes
+   physically impossible, not merely unlikely.**
+2. **Linearity — the constraint that actually governs.** 11 dB below P1dB. This
+   matters more than the damage rating because **amplifier intermodulation lands
+   at exactly |f2 − f1|, the frequency being measured, and looks entirely
+   legitimate** (U2). An amplifier near compression manufactures the signal.
+3. **Detector saturation.** 0.39 mW in the first order against the PDA05CF2's
+   0.96 mW ceiling. **At 15 dB the optical power alone would already saturate the
+   detector**, independently of the amplifier — the optics run out of headroom
+   before the electronics do, which was not obvious in advance.
+
+**Specification: 20 dB fixed, 50 Ω, ≥0.5 W (2 W for margin), one per channel —
+so two.** Dissipation is at most 10 mW, so the power rating is not stressed.
+
+**Do not reduce below 20 dB without re-running the U2 control measurement
+(P5.1).** If the signal turns out too small there, the escalation is: measure the
+board's real 80 MHz output first (its own 60 MHz rolloff means the delivered
+power is *below* +10 dBm, so effective attenuation is higher than nominal), then
+consider 15 dB with the U2 control repeated — accepting that it also needs
+optical attenuation to keep the detector out of saturation.
+
+### Two ordering rules that damage things if ignored
+
+**"Open load is not recommended, potentially can cause damage. With no load,
+derate max input power by 20 dB."** — from the amplifier datasheet. **Connect the
+AOM before applying RF**, and never power the amplifier into an open port.
+
+**The 12 mW laser is not a risk to the AOM** — 0.5 W rating is a 42× margin. The
+optical constraint is entirely at the far end, where the detector saturates at
+0.96 mW.
+
 ## Safety
 
 Loopback phase: the board's own specifications are the limit. Do not command

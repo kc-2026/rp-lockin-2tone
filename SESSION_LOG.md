@@ -529,6 +529,99 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — Q12 answered: attenuator decided at 20 dB; Phase 2 is unblocked
+
+Kevin supplied the ZHL-1-2W+ and 1550AOM-1 datasheets, confirmed the laser's
+interfaces, and delegated the remaining decisions. **All three Phase 2 blockers
+are now down.** Full working in `04-hardware-reference.md`.
+
+### The attenuator: 20 dB, and the reason is not the one I expected
+
+**Without an attenuator the Red Pitaya at full scale sits EXACTLY on the
+amplifier's absolute maximum input rating.** ±1 V into 50 Ω is +10 dBm; the
+ZHL-1-2W+ damage rating is +10 dBm. Zero margin, and the first thing anyone would
+have done is command full amplitude.
+
+Three constraints, evaluated as peak envelope power because that is what
+compresses an amplifier (AM at depth ~1, which H2.2 measured, puts PEP 6 dB above
+the carrier):
+
+| | Constraint | Binds at |
+|---|---|---|
+| 1 | Amplifier damage margin | ≤6 dB attenuation |
+| 2 | **Amplifier linearity — the governing one** | ≤15 dB |
+| 3 | **Detector saturation** | ≤15 dB |
+
+**20 dB is the least attenuation satisfying all three.** It gives 11 dB of
+backoff from P1dB, 0.39 mW in the first order against the detector's 0.96 mW
+ceiling, and makes damage *physically impossible* — the board would have to
+produce +30 dBm to reach the amplifier's rating and can produce +10.
+
+**Constraint 2 matters more than the damage rating**, which is the part worth
+remembering. Amplifier intermodulation lands at exactly |f2 − f1| — the frequency
+being measured — and looks entirely legitimate (U2). An amplifier near
+compression manufactures the signal we are looking for. Protecting the hardware
+is the easy half; protecting the *result* is what sets the number.
+
+**Constraint 3 was the surprise.** At 15 dB the first-order optical power alone
+saturates the photodetector, independently of anything electrical. **The optics
+run out of headroom before the electronics do**, which was not obvious before the
+arithmetic and would have been a confusing afternoon otherwise.
+
+**Specification: 20 dB fixed, 50 Ω, ≥0.5 W (2 W for margin), one per channel, so
+two.** Dissipation is 10 mW, so the rating is not stressed.
+
+### Two ordering rules that break hardware if ignored
+
+- **Fit the attenuators before the amplifiers are powered at all.**
+- **Connect the AOM before applying RF.** The amplifier datasheet warns that an
+  open load can damage it and derates maximum input by 20 dB with no load.
+
+### The optical side is comfortable, and the risk is at the far end
+
+12 mW into an AOM rated for **0.5 W average is a 42× margin** — no optical risk
+there at all. The constraint is entirely at the detector, which saturates at
+0.96 mW. On this model the first order lands at 0.39 mW, about 40% of the
+ceiling, before DUT losses. **Verify the detector's DC level at P4.1 before
+raising anything.**
+
+### P3.1 has a job beyond checking a level
+
+The board's own 60 MHz rolloff means the real 80 MHz output is **below** the
++10 dBm the budget assumes, so effective attenuation is higher than nominal. If
+the signal later turns out too small, that measurement is where the headroom
+question gets answered — **not** by reaching for a smaller attenuator, since
+15 dB fails two constraints at once.
+
+### Decisions Kevin delegated
+
+| | Decision |
+|---|---|
+| **Q13 averaging** | **No.** Detuning 1 is swept across ~11–13 discrete settings of detuning 2, so each sweep is its own measurement. Phase need not stay coherent between sweeps |
+| **Q15 format** | **CSV** for the transfer function. Recommending `.npz` kept alongside for the raw capture — CSV of 32 M samples would be absurd, and raw is the only way to revisit a demodulation choice afterwards |
+| **Laser interface** | BNC trigger out, USB mini, and LAN all present. **Recommend LAN**: it avoids the FTDI D2XX driver install the USB path requires, and is 30 Mb/s against 1 MB/s. Data volume is trivial either way (~160 kB per sweep), so this is about avoiding a driver, not speed |
+| Q14 GUI, unattended operation | **Deferred** at Kevin's request |
+
+Recorded as R9 and R10 in `01-overview.md`, since a deliverable format and "no
+averaging" are requirements rather than notes.
+
+### One thing to confirm
+
+**Is there a second ZHL-1-2W+?** The design drives two AOMs, one per arm, so it
+needs two amplifiers and two attenuators. Only one datasheet was supplied, which
+proves the model rather than the count.
+
+### State
+
+**All three Phase 2 blockers are down.** Q22 (Santec command set), Q11
+(photodetector) and Q12 (drive levels) are answered. What remains before hardware
+goes in is the planning session itself, plus an optical damage threshold for the
+detector and the deferred unattended-operation boundary.
+
+No hardware touched this session. 107 offline tests pass.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — Q25 measured: AC coupling is free, and a defect that would have hidden it
 
 Kevin started the SCPI server; loopback only, outputs off throughout and left off.
