@@ -12,51 +12,55 @@ session's **output** goes in `09-phase2-plan.md`, which does not exist yet.
 
 ## The short version
 
-Three things block Phase 2, and they are independent — none has to wait for the
-others:
+**Two of the three original blockers are down, both answered from manuals on
+2026-08-14. One remains.**
 
-| | What | Blocks |
+| | What | State |
 |---|---|---|
-| **1** | The Santec TSL-770/775 serial command set (Q22) | The laser driver, which is the critical path |
-| **2** | Photodetector output level and impedance (Q11) | Choosing the input range; getting it wrong means clipping or burying the signal |
-| **3** | Safe drive levels for the amplifiers and AOMs (Q12) | **Connecting anything at all.** A hard safety gate |
+| ~~1~~ | Santec TSL-770/775 command set (Q22) | **ANSWERED** from both manuals — `04-hardware-reference.md`. The driver can be written |
+| ~~2~~ | Photodetector level and impedance (Q11) | **ANSWERED** from the Thorlabs manual — PDA05CF2. **U4 closed too**: 150 MHz bandwidth, no rolloff at 991.821 kHz |
+| **3** | **Safe drive levels for the amplifiers and AOMs (Q12)** | **STILL BLOCKING.** The one that cannot come from a datasheet already in hand, and the hard gate on connecting anything |
 
-Everything else on this page is either a decision that can be made in the
-session, or work that can proceed regardless.
+**What the two answers changed, beyond unblocking:**
+
+- **The noise budget got worse.** The detector, not the ADC, will dominate:
+  ~11 µV against the board's 3.57 µV, so **SNR 10 needs ~120 µV rather than
+  36 µV**. See `05-results.md`.
+- **The trigger worry got better.** The real trigger is 3.3 V, 25 µs wide, at
+  most 20 kHz — 780 samples per pulse at decimation 8. Every anxiety about
+  missed edges came from a synthetic 20 ns pattern that looks nothing like it.
+- **A new assumption surfaced (Q26).** Neither manual says the laser logs one
+  wavelength per trigger pulse, and the index-based mapping depends on it. One
+  command and one capture settles it at P1.
+
+Everything else on this page is either a decision for the session, or work that
+can proceed regardless.
 
 ---
 
 ## 1. What I need from you — information
 
-### The laser (blocks the driver)
+### ~~The laser~~ — ANSWERED 2026-08-14
 
-- **The TSL-770/775 programming manual**, or the model's command reference. A
-  PDF, a link, or the part of it covering wavelength logging is enough.
-- **Which interface** the laser is connected by — USB, RS-232, GPIB or Ethernet —
-  and the port settings if serial.
-- **Whether the wavelength table streams during the sweep, or is read afterwards.**
-  This is structural, not a detail: it decides whether the driver runs alongside
-  the capture or after it.
-- **Do the 770 and 775 differ** in any of the above? If so, both.
+Both manuals read; the command set, data formats, interfaces and delimiter are
+in `04-hardware-reference.md`. **The driver is unblocked.**
 
-**Please do not paraphrase the commands from memory, and I will not guess them.**
-On this hardware a misspelled command returns zero bytes exactly like a correct
-one, and the wavelength axis is the one subsystem where a silent failure is
-completely invisible in the output — a mislabelled sweep looks exactly like a
-good one.
+Still needed, but only on the bench rather than from you: **which interface the
+laser is actually cabled on** (GPIB, USB or LAN are all supported) and its port
+settings. That is a look at the back panel, not a research question.
 
-### The photodetector (blocks the input-range choice)
+### ~~The photodetector~~ — ANSWERED 2026-08-14
 
-- **Typical and maximum output voltage** into a high-impedance input.
-- **Output impedance**, and whether it expects a 50 Ω or high-Z load.
-- **Bandwidth**, specifically whether it is flat at ~1 MHz. If it rolls off
-  there, the whole measurement premise needs revisiting (this is U4).
-- **Optical damage threshold**, for setting laser power safely.
+It is a **Thorlabs PDA05CF2**; full entry in `04-hardware-reference.md`.
+**U4 is closed** — 150 MHz bandwidth, so no rolloff anywhere near 991.821 kHz.
 
-The number to judge it against: on the ±1 V range the noise floor is
-**σ = 3.57 µV per trace point**, so the response needs **≥36 µV** to be clearly
-visible in a single sweep, and below ~4 µV it is not visible at all. The ±20 V
-range is 14× worse in absolute terms (σ = 45 µV, needing ≥454 µV).
+**Two things still wanted from you**, neither blocking:
+
+- **An optical damage threshold.** The manual gives saturation (~0.96 mW) but no
+  damage figure. Needed to set a safe starting laser power at P4.
+- **Confirmation that AC coupling is acceptable.** The 0–10 V unipolar output
+  cannot enter the ±1 V range as-is, and the alternative — the ±20 V range,
+  σ = 45 µV — would let the ADC dominate a measurement the detector should own.
 
 ### The amplifier chain and AOMs (blocks connecting anything)
 
@@ -114,7 +118,7 @@ ordered to close them.
 | U4 | Photodetector bandwidth at 1 MHz | Not connected | Response rolled off or absent |
 | U5 | Photodetector output level and input range choice | Unknown until measured | Clipping, or burying the signal in ADC quantisation |
 | U6 | Real noise environment | Loopback is quiet | SNR far worse than predicted |
-| U7 | Santec trigger output: level, polarity, width, and whether it fires once per sweep or per step (Q18) | Emulated | Capture not triggered, or a pulse train appears where one edge was expected |
+| ~~U7~~ | **Largely ANSWERED from the manual 2026-08-14.** TSL-775 p46: **3.3 V logic, 25 µs pulse width, 20 kHz maximum rate.** Needs **HV (±20 V) on IN2** — 3.3 V will not fit ±1 V — and `ACQ:SOUR<n>:GAIN` is per channel, so IN1 stays on LV. A 25 µs pulse is 780 samples at decimation 8, so **the missed-edge worry does not apply to the real trigger at all.** What remains untested is only that it physically fires the capture, which is P2.2 |
 | U8 | Actual sweep repeatability of the laser | Not in the loop | Wavelength calibration drift |
 | U9 | Ground loops and pickup with everything connected | Single-box loopback | 80 MHz leakage into the detector path |
 | U10 | The Santec serial link — command set, timing, and whether its reported wavelength is trustworthy | Laser not connected; no driver written yet | **The wavelength axis is now entirely dependent on this.** A wrong or mis-aligned report mislabels every point, and nothing in the trace would look wrong |
@@ -185,9 +189,9 @@ assumed.
 
 | Step | What it establishes |
 |---|---|
-| P2.1 | Measure the trigger electrically: amplitude, polarity, rise time, pulse width (**U7**) |
+| P2.1 | Confirm the trigger against the manual: **expect 3.3 V, 25 µs wide, ≥50 µs apart** (TSL-775 p46). Use **HV on IN2**. Measure the rise time, which the manual does not give (**U7**) |
 | P2.2 | Confirm it fires the acquisition, and find the right `ACQ:TRig:LEV` |
-| P2.3 | Confirm the recorded pulse count matches the table's row count — the off-by-one-trigger guard (**U12**) |
+| P2.3 | Compare the recorded pulse count against `:READout:POINts?`. This is both the off-by-one-trigger guard (**U12**) and the test of whether logging is one-per-pulse at all (**Q26**), which no manual states |
 | P2.4 | Measure the laser/board clock ratio across a full sweep (**U11**) |
 | P2.5 | **Confirm the decimation choice against the REAL trigger.** Loopback showed zero lost edges at decimation 8, but with a 20 ns synthetic edge. If the real edges are much faster, this is where that shows |
 

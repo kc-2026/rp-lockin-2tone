@@ -5,10 +5,18 @@ The wavelength axis comes from the laser, not from trigger-edge intervals
 (Kevin, 2026-08-14). A Santec TSL-770/775 sweeps, emits a trigger pulse per step,
 and logs its own wavelength at each pulse.
 
-**The log is wavelength ONLY -- one value per trigger pulse, with no timestamps.**
-Confirmed against both manuals 2026-08-14; an earlier note here said the laser
-reported wavelength against time, and it does not. `:READout:DATa?` returns a
-bare array and `:READout:POINts?` returns its length.
+**The log is wavelength ONLY, with no timestamps.** That much is documented:
+`:READout:DATa?` returns "a header and wavelength data array" and
+`:READout:POINts?` returns "the number of data points recorded by wavelength
+logging" (TSL-775 manual p93, TSL-770 p93). An earlier note here said the laser
+reported wavelength against time; it does not.
+
+**That there is exactly one log point per trigger pulse is an ASSUMPTION, not
+something either manual states.** It is the natural reading -- the manuals
+discuss logging and trigger output together (TSL-775 p47) -- and it is how this
+family of instruments is generally understood to work, but it is not written
+down. **Verify it at P1 before relying on any of this**: run a sweep and compare
+`:READout:POINts?` against the number of trigger pulses in the record. See Q26.
 
 So the pairing is **by index**: the laser's Nth logged wavelength belongs to the
 Nth trigger pulse in the record. Feed that in by passing the recorded edge times
@@ -256,12 +264,17 @@ def check_alignment(edges: np.ndarray, table_t: np.ndarray,
     """
     Guard against the off-by-one-trigger error (Q21/U12).
 
-    One pulse per row of the laser's log is not an assumption -- it is how the
-    instrument is documented to work, and `:READout:POINts?` returns that row
-    count directly, so the comparison below is against a number the laser itself
-    reports rather than an inferred one. This still returns a diagnosis rather
-    than raising, so a caller can override if a particular setup behaves
-    differently.
+    One pulse per row of the laser's log IS an assumption -- neither Santec
+    manual states it (see the module docstring and Q26). What the laser does
+    give you is the row count, from `:READout:POINts?`, so the comparison below
+    is at least against a number the instrument reports rather than an inferred
+    one.
+
+    **Running this on a real sweep is how the assumption gets tested.** If the
+    counts match, one-per-pulse holds for that configuration. If they differ by a
+    constant factor, logging and triggering are on different divisors and the
+    indexing needs that factor. Either way this reports rather than raises, so a
+    caller can proceed knowingly.
 
     The tell for a late start is that the record holds fewer pulses than the
     table holds rows, and the edges span a correspondingly shorter interval.

@@ -427,10 +427,18 @@ line reader unchanged.
 | `:READout:DATa?` | the wavelength log |
 | `:READout:DATa:POWer?` | the power log, 32-bit float, dBm — a free cross-check |
 
-**The log is wavelength ONLY: one value per trigger pulse, with no timestamps.**
-This is the single most important fact about the laser for this project, and an
-earlier note in the session log got it wrong. The pairing to time is **by index**
-against the trigger pulses recorded on IN2.
+**The log is wavelength ONLY, with no timestamps.** Documented: `:READout:DATa?`
+returns "a header and wavelength data array", `:READout:POINts?` returns "the
+number of data points recorded by wavelength logging" (TSL-775 p93, TSL-770 p93
+and its command index). An earlier note said the laser reports wavelength against
+time. It does not.
+
+**That there is exactly one log point per trigger pulse is an ASSUMPTION.**
+Neither manual states it. It is the natural reading — logging and trigger output
+are discussed together on TSL-775 p47 — but it is not written down, and the whole
+index-based mapping rests on it. **Test it at P1**: run a sweep, compare
+`:READout:POINts?` against the pulses in the record. That is Q26, and it is one
+command plus one capture.
 
 Both `:READout:DATa?` responses are IEEE 488.2 definite-length blocks — the same
 `#4nnnn` header the Red Pitaya uses — followed by:
@@ -452,6 +460,35 @@ opposite of the Red Pitaya's SCPI path, which is big-endian — the same trap th
 | `:TRIGger:OUTPut:ACTive` | 0 rising, 1 falling |
 | `:TRIGger:OUTPut:STEP[:WIDTh]` | the step size, 0.1 pm resolution |
 | `:TRIGger:OUTPut:SETTing` | selects whether the step is in wavelength or in time — **see the warning below** |
+
+### The trigger output's electrical spec — U7, answered from the manual
+
+TSL-775 p46, section 6.5:
+
+| | |
+|---|---|
+| Levels | **3.3 V high, 0 V low** |
+| **Pulse width** | **25 µs** |
+| **Maximum repetition rate** | **20 kHz** (so pulses are ≥50 µs apart) |
+| Minimum trigger step | depends on sweep speed — 0.1 pm at 0.5–2 nm/s, rising to 10 pm at 200 nm/s |
+
+**Three consequences, and they settle arguments this project has been having.**
+
+**1. It will not fit the ±1 V range.** 3.3 V needs **HV (±20 V) on IN2**. That is
+fine and costs nothing: `ACQ:SOUR<n>:GAIN` is **per channel**, so IN1 stays on LV
+for the signal while IN2 runs HV for the trigger.
+
+**2. The missed-edge worry is dead on the real signal.** A 25 µs pulse is **780
+samples at decimation 8**, and pulses are at least 1560 samples apart. Every
+anxiety about losing edges came from a synthetic 20 ns pattern that was an
+artefact of the ASG's 4 ns table step — nothing like this. **Decimation 8 is
+comfortably adequate for the real trigger.**
+
+**3. The point count is modest.** At 20 kHz for 1 s that is at most 20,000
+pulses, far below the 500,000-point logging ceiling and far sparser than the
+122,000-pulse train used in H7.1.
+
+### Trigger output mode
 
 **`:TRIGger:OUTPut:SETTing` is documented with INVERTED encodings between the two
 models:**
