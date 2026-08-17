@@ -28,13 +28,22 @@ trigger the capture from the laser's trigger output on IN2, demodulate in
 software, and deliver a 5000-point trace of **amplitude** across the sweep.
 
 **The wavelength axis comes from the laser over serial, not from trigger timing**
-(Kevin, 2026-08-14). The Santec reports wavelength against relative time from its
-first trigger; that trigger also starts the capture, so both share t = 0. Reading
-the Santec is new work that exists nowhere in the codebase yet.
+(Kevin, 2026-08-14). **The laser logs wavelength VALUES with no timestamps** — an
+earlier note here said otherwise and was wrong. Its trigger also starts the
+capture, so both share t = 0, and each logged wavelength sits at
+`first_edge + i × step`. `santec.py` reads the log; `wavelength.py` places it in
+time. **Neither has ever met a laser.**
 
-**The trap to design against is Q21:** both sides call t = 0 "the first trigger",
-independently. Latch the second pulse instead of the first and every wavelength
-is off by one time step, with a trace that looks entirely normal.
+**Two traps to design against:**
+
+- **Q21** — both sides call t = 0 "the first trigger", independently. Latch the
+  second pulse instead of the first and every wavelength is off by one step,
+  with a trace that looks entirely normal. Use
+  `wavelength.logged_point_times()`, which locates ONE edge and indexes from it,
+  so a missed edge mid-record changes nothing.
+- **Q26** — **neither Santec manual says the log is one point per trigger pulse.**
+  That is an assumption the whole mapping rests on. One sweep settles it:
+  compare `:READout:POINts?` against the pulses in the record.
 
 Everything is done in software on a control PC. There is no FPGA work in scope.
 
@@ -54,8 +63,11 @@ Loopback phase only, for now. Within that:
 - **Leave outputs off when you finish.** `tests/hardware/conftest.py` does this
   automatically; preserve that behaviour.
 - Going beyond loopback requires a dedicated planning session with the human.
-  There is a placeholder for it in `docs/07-phase1-loopback.md`. Do not start it
-  unilaterally.
+  **Phase 1 is complete; what Phase 2 needs is in `docs/08-phase2-hardware.md`.**
+  Do not start it unilaterally.
+- **When the amplifiers go in, the attenuators go in first.** 10 dB per channel.
+  Without them the board runs the amplifier into compression, which manufactures
+  a false signal at exactly the measurement frequency.
 
 ### Verified versus unverified code
 
@@ -70,7 +82,9 @@ This distinction matters more than usual here.
 | `hardware.py` — SCPI transport, generator, `acquire`, `acquire_deep_fast` | **Verified against the board 2026-08-12.** |
 | `hardware.py` — `acquire_deep_2ch` | **The SCPI read is broken.** Arming is fine; the read returns garbage. Use `acquire_deep_fast`. |
 | `scripts/rp_fastread.py` | **Runs ON THE BOARD**, not the control PC. The one deliberate exception to "everything runs on the PC". |
-| `wavelength.py` | **Trusted, 20 offline tests, but never run against a real laser.** Maps a trace onto wavelength and guards the off-by-one trigger. Contains NO serial code — see below. |
+| `wavelength.py` | **Offline-tested, never run against a real laser.** Maps a trace onto wavelength, measures the laser/board clock ratio, and guards the off-by-one trigger. Contains NO serial code. |
+| `santec.py` | **Written from the TSL-770/775 manuals. NEVER RUN AGAINST A LASER.** Bare-CR delimiter and little-endian payloads — both the opposite of `hardware.py`. Every setter reads back. |
+| `output.py` | CSV deliverable plus the raw `.npz`. Trusted, offline. |
 
 `hardware.py` is deliberately isolated from the maths so a wrong command string
 produces a connection error rather than corrupted physics. **Keep it that way.**
@@ -119,8 +133,12 @@ wrong answers rather than crashes:
 4. **The time axis is not zero-based.** `LockinResult.t` is referenced to the
    start of the input record and already compensates settling and group delay.
    Do not add your own offset — the wavelength calibration depends on this.
-5. **`mean(R)` is a biased amplitude estimator** in noise. Use the vector mean
-   of X + jY.
+5. **`mean(R)` is a biased amplitude estimator** in noise — it reads 1.25σ with
+   no signal at all. Use `LockinResult.amplitude()`, which projects onto a
+   common phase and is unbiased, or `amplitude(smooth=N)` if the response phase
+   moves across the sweep. **Do not reach for
+   `debiased_amplitude()`** — measured, it is worse than raw R between 2σ and 6σ,
+   which is exactly where our signals will sit.
 6. **Streaming block boundaries are periodic.** An artefact there lands at the
    same place in every sweep and looks like DUT structure. `test_chunked_equals_
    single_shot` pins this to exact equality; keep it exact, not approximate.
