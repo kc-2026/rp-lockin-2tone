@@ -94,6 +94,32 @@ def test_original_exception_survives_a_failing_disarm(monkeypatch):
     assert s.closed
 
 
+def test_deep_capture_restores_coupling_after_the_reset(fake, monkeypatch):
+    """
+    ACQ:RST silently reverts coupling to DC and gain to LV.
+
+    Without restoring them, an AC-coupled deep capture comes back DC coupled --
+    and it succeeds, and looks entirely normal. That matters now the real input
+    is a photodetector with a 0-10 V pedestal that only AC coupling removes.
+
+    Checked at the command level, since the failure is invisible in the data.
+    """
+    rp = RedPitaya("fake-host")
+    rp.setup_acquisition(decimation=2, coupling="AC", gain="HV")
+    fake.sent.clear()
+    rp._reapply_front_end()
+    assert "ACQ:SOUR1:COUP AC" in fake.sent
+    assert "ACQ:SOUR2:COUP AC" in fake.sent
+    assert "ACQ:SOUR1:GAIN HV" in fake.sent
+    assert "ACQ:SOUR2:GAIN HV" in fake.sent
+
+
+def test_front_end_defaults_match_what_the_reset_leaves(fake):
+    """Before setup_acquisition, the remembered state must be ACQ:RST's own."""
+    rp = RedPitaya("fake-host")
+    assert (rp.coupling, rp.gain) == ("DC", "LV")
+
+
 def test_opting_out_leaves_the_outputs_alone(fake):
     """The escape hatch has to actually work, or people will avoid close()."""
     rp = RedPitaya("fake-host")

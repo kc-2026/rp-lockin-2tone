@@ -58,9 +58,11 @@ It is a **Thorlabs PDA05CF2**; full entry in `04-hardware-reference.md`.
 
 - **An optical damage threshold.** The manual gives saturation (~0.96 mW) but no
   damage figure. Needed to set a safe starting laser power at P4.
-- **Confirmation that AC coupling is acceptable.** The 0–10 V unipolar output
-  cannot enter the ±1 V range as-is, and the alternative — the ±20 V range,
-  σ = 45 µV — would let the ADC dominate a measurement the detector should own.
+- **Confirmation that AC coupling is acceptable on your side.** It is measured
+  and free on ours (Q25: 17.0 Hz corner, no noise penalty), but it does remove
+  any DC information about average optical power. If that matters for
+  diagnostics, say so — the laser's own `:READout:DATa:POWer?` log can supply
+  it instead.
 
 ### The amplifier chain and AOMs (blocks connecting anything)
 
@@ -248,7 +250,9 @@ land near **11–12 µV** and SNR 10 should need **~120 µV**. If it comes back 
 3.6 µV, suspect the detector is not actually in the path; above ~25 µV, something
 is wrong beyond the datasheet. **AC-couple IN1** — the 0–10 V pedestal will not
 fit the ±1 V range otherwise, and the ±20 V range would put the ADC back in
-charge at 45 µV (Q25).
+charge at 45 µV. **Q25 measured this on 2026-08-14 and it is free**: the corner is
+17.0 Hz, so attenuation at 991.821 kHz is 10⁻⁹ dB, and the noise floor is
+unchanged AC coupled.
 **Pass:** detector output sits comfortably inside a range, is flat at ~1 MHz, and
 the real noise floor is known.
 **Closes:** Q11, U4, U5, U6.

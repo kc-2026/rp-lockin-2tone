@@ -55,6 +55,10 @@ class RedPitaya:
         self.port = port
         self.base_rate = base_rate
         self.decimation = 1
+        # What ACQ:RST leaves behind, so the deep-capture paths restore a known
+        # state even if setup_acquisition was never called.
+        self.coupling = "DC"
+        self.gain = "LV"
         self._sock = socket.create_connection((host, port), timeout=timeout)
         self._sock.settimeout(timeout)
         self._buf = b""
@@ -239,17 +243,35 @@ class RedPitaya:
     def setup_acquisition(self, decimation: int = 1, coupling: str = "DC",
                           gain: str = "LV") -> None:
         """
-        VERIFY: ACQ:SOUR<n>:COUP is 250-12 only. ACQ:SOUR<n>:GAIN takes LV/HV,
-        which on the 250-12 select the 1:1 and 1:20 attenuators.
+        VERIFIED on OS 2.00. ACQ:SOUR<n>:COUP is 250-12 only. ACQ:SOUR<n>:GAIN
+        takes LV/HV, selecting the 1:1 and 1:20 attenuators.
+
+        Both are **per channel**, which matters for the real experiment: the
+        photodetector wants LV on IN1 for sensitivity, while the laser's 3.3 V
+        trigger needs HV on IN2. This sets both channels the same; use the raw
+        commands if they need to differ.
+
+        The choice is REMEMBERED, and `acquire_deep_fast` re-applies it after its
+        `ACQ:RST`. Without that an AC-coupled deep capture is impossible, because
+        `ACQ:RST` silently reverts coupling to DC -- and the capture succeeds and
+        looks entirely normal, just DC coupled.
         """
         self.write("ACQ:RST")
         self.write(f"ACQ:DEC {int(decimation)}")
         self.decimation = int(decimation)
+        self.coupling = coupling
+        self.gain = gain
         for ch in (1, 2):
             self.write(f"ACQ:SOUR{ch}:COUP {coupling}")
             self.write(f"ACQ:SOUR{ch}:GAIN {gain}")
         self.write("ACQ:DATA:FORMAT BIN")
         self.write("ACQ:DATA:Units RAW")
+
+    def _reapply_front_end(self) -> None:
+        """Restore coupling and gain after an ACQ:RST has wiped them."""
+        for ch in (1, 2):
+            self.write(f"ACQ:SOUR{ch}:COUP {self.coupling}")
+            self.write(f"ACQ:SOUR{ch}:GAIN {self.gain}")
 
     # -- fast bulk read ----------------------------------------------------
 
@@ -440,6 +462,10 @@ class RedPitaya:
             )
 
         self.write("ACQ:RST")
+        # ACQ:RST reverts coupling to DC and gain to LV. Put back whatever
+        # setup_acquisition asked for, or an AC-coupled or HV capture silently
+        # comes back DC/LV -- succeeding, and looking completely normal.
+        self._reapply_front_end()
         self.write(f"ACQ:AXI:DEC {int(decimation)}")
         self.decimation = int(decimation)
 
@@ -557,6 +583,10 @@ class RedPitaya:
         See SESSION_LOG.md 2026-08-12 for the diagnosis.
         """
         self.write("ACQ:RST")
+        # ACQ:RST reverts coupling to DC and gain to LV. Put back whatever
+        # setup_acquisition asked for, or an AC-coupled or HV capture silently
+        # comes back DC/LV -- succeeding, and looking completely normal.
+        self._reapply_front_end()
         self.write(f"ACQ:AXI:DEC {int(decimation)}")
         self.decimation = int(decimation)
 

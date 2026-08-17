@@ -529,6 +529,80 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — Q25 measured: AC coupling is free, and a defect that would have hidden it
+
+Kevin started the SCPI server; loopback only, outputs off throughout and left off.
+
+### A defect had to be fixed before the measurement was even possible
+
+`ACQ:RST` reverts coupling to DC and gain to LV. Both deep-capture paths issue
+it, so **an AC-coupled deep capture was impossible** — it would succeed, return
+plausible data, and be DC coupled. Confirmed on the board: set AC, `ACQ:RST`,
+read back DC.
+
+This was already recorded as "harmless, because LV/DC is what it resets *to*".
+That stopped being true the moment the real input became a photodetector with a
+0–10 V pedestal that only AC coupling removes. **A caveat that is harmless today
+is worth re-reading whenever the requirements move.**
+
+Fixed: `setup_acquisition` now remembers the choice and both deep paths restore
+it after the reset. Two offline tests pin it at the command level, since the
+failure is invisible in the data. Also documented that gain and coupling are
+**per channel**, which the real experiment needs — LV on IN1 for the
+photodetector, HV on IN2 for the laser's 3.3 V trigger.
+
+### Q25 answered: the AC corner is 17.0 Hz, and it costs nothing
+
+Measured as the AC/DC amplitude ratio on a driven tone, so the counts-to-volts
+calibration cancels and Q23 cannot affect the result.
+
+| Frequency | AC/DC | Implied corner |
+|---:|---:|---:|
+| 3 Hz | 0.1724 | 17.14 Hz |
+| 10 Hz | 0.5057 | 17.06 Hz |
+| 30 Hz | 0.8728 | 16.78 Hz |
+| ≥300 Hz | 0.998–1.002 | flat |
+
+**Three points fit a single pole at 17.0 Hz to 2%.** At the lock-in frequency the
+attenuation is **1.3 × 10⁻⁹ dB** — sixty thousand times above the corner — and AC
+coupling does not cost even 0.1 dB until below ~78 Hz.
+
+**The noise floor is unchanged too**: demodulated σ was 0.00601 counts DC against
+0.00586 AC, a 2.5% difference on 392 output points whose own uncertainty is 3.6%.
+**Every figure in `05-results.md` carries over to AC coupling.** The deep captures
+also read back `AC` afterwards, which is the fix working.
+
+So the input-stage plan is settled: **AC-couple IN1, keep the ±1 V range.** The
+alternative — ±20 V at σ = 45 µV — would have let the ADC dominate a measurement
+the detector should own.
+
+### One artefact, recorded so nobody re-derives it
+
+The 100 Hz point reads AC/DC = 1.37, which is not a real response. The DC-coupled
+record carries a ~27 count offset, and at that decimation the record holds 13.42
+cycles, so DC leaks across bins and *depresses* the DC-coupled reading. The
+AC-coupled record has no offset to leak. Points at ≥300 Hz sit near whole cycle
+counts and are unaffected. **An artefact of a single-bin DFT, not of the
+instrument** — and a reminder that a ratio can look like a response.
+
+### What AC coupling does cost
+
+Nothing at the operating point, but it removes any DC reading of average optical
+power. If that is ever wanted for diagnostics, the laser's own
+`:READout:DATa:POWer?` log supplies it — noted in `08-phase2-hardware.md` rather
+than left to be discovered.
+
+### State
+
+107 offline tests pass, up from 105. Board left with outputs off.
+
+**Q25 closed.** Of everything blocking Phase 2, **only Q12 — safe drive levels
+for the amplifiers and AOMs — still gates connecting anything.** The remaining
+asks are small: which socket the laser is cabled on, an optical damage threshold,
+and four decisions that need no measurement.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — photodetector manual read; Kevin's start-trigger idea adopted
 
 Two things this session: Kevin's PDA05CF2 manual, and a question from him that

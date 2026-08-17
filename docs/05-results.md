@@ -30,6 +30,40 @@ number was obtained**, step by step, is in `07-phase1-loopback.md`.
 noise floor, and the fact that the demodulator's noise gain is **not** the
 nominal bandwidth. Both are below.
 
+## AC coupling — measured 2026-08-14, and it is free at the operating point
+
+The photodetector's 0–10 V unipolar output has to be AC coupled to reach the
+±1 V range. Two things were unverified: where the coupling rolls off, and whether
+the noise floor changes. **Both now measured. Neither is a problem.**
+
+**The high-pass corner is 17.0 Hz**, single-pole. Measured as the AC/DC amplitude
+ratio at a driven tone, so the counts-to-volts calibration cancels and Q23 cannot
+affect it. Three points fit one pole to 2%:
+
+| Frequency | AC/DC | Implied corner |
+|---:|---:|---:|
+| 3 Hz | 0.1724 | 17.14 Hz |
+| 10 Hz | 0.5057 | 17.06 Hz |
+| 30 Hz | 0.8728 | 16.78 Hz |
+| ≥300 Hz | 0.998–1.002 | flat |
+
+**At 991.821 kHz the attenuation is 1.3 × 10⁻⁹ dB** — sixty thousand times above
+the corner. AC coupling costs nothing at the operating point, and does not
+measurably start costing anything until below ~78 Hz (0.1 dB).
+
+**The noise floor is unchanged.** Demodulated σ came out 0.00601 counts DC
+coupled against 0.00586 AC — a 2.5% difference on 392 output points, whose own
+uncertainty is ~3.6%. **So every figure in this document carries over to AC
+coupling unchanged.**
+
+One measurement artefact worth recording so nobody re-derives it: the 100 Hz
+point reads AC/DC = 1.37, which is not a real response. The DC-coupled record
+carries a ~27 count offset, and at that decimation the record holds 13.42
+cycles, so DC leaks across bins into the signal bin and *depresses* the DC-coupled
+reading. The AC-coupled record has no offset to leak. Points at ≥300 Hz sit near
+whole cycle counts and are unaffected. It is an artefact of a single-bin DFT, not
+of the instrument.
+
 ## Predicted noise floor with the photodetector connected
 
 **Everything above was measured with loopback cables. The real input is a

@@ -11,8 +11,6 @@ Every "verified" claim here was checked against OS 2.00 during Phase 1
 
 ---
 
-# Hardware notes — SIGNALlab 250-12
-
 ## Specifications that matter here
 
 | | |
@@ -561,8 +559,11 @@ Ten volts against a ±1 V range is a problem, and the answer is almost certainly
 drops the pedestal and lets the sensitive ±1 V range see only the modulation.
 The alternative — the ±20 V range — is a bad trade: σ there is 45 µV, four times
 the detector's own noise, so the ADC would dominate a measurement it currently
-does not. **See Q25: the AC-coupling corner has not been checked, and every noise
-figure in `05-results.md` was measured DC-coupled.**
+does not. **Measured 2026-08-14 (Q25) and it is free: the corner is 17.0 Hz, single-pole,
+so attenuation at 991.821 kHz is 1.3×10⁻⁹ dB, and the noise floor is unchanged
+AC coupled.** The one thing AC coupling does cost is any DC reading of average
+optical power; the laser's own `:READout:DATa:POWer?` log can supply that if it
+is ever wanted.
 
 ### Saturation and damage
 

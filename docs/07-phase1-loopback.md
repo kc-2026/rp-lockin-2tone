@@ -20,14 +20,10 @@ The numbers produced here are collected in `05-results.md`. What Phase 1 could
 
 ---
 
-# Test plan
+## How this was run
 
-Phased. Run in order. Each phase assumes the previous one passed — debugging
-H3 while H1 is broken wastes a lot of time.
-
-Loopback means **coax cables from the board's outputs to its own inputs**. The
-DUT, amplifiers, AOMs, photodetector and laser are not connected to anything
-during Phase 1.
+Phased, in order. Each step assumes the previous one passed — debugging H3 while
+H1 is broken wastes a lot of time.
 
 ---
 
