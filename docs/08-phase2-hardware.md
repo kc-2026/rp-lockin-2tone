@@ -186,7 +186,9 @@ no optics, and the Red Pitaya switched off.
 | P1.4 | Confirm whether the table streams during the sweep or is dumped after it |
 | P1.5 | Run the same sweep twice and compare the tables — sweep repeatability (**U8**) |
 
-**Needs:** the serial cable/adapter and the laser powered. **The manuals are read
+**Ready to run: python scripts/p1_laser_check.py <laser-ip>.** Read-only by default; the only write is behind --set-trigger-step.
+
+**Needs:** the laser on the LAN and its IP address (front panel: Other -> Communication -> LAN). **The manuals are read
 and the command set is recorded** in `04-hardware-reference.md` — Q22 answered
 2026-08-14 — so P1 is unblocked.
 
