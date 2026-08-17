@@ -529,6 +529,91 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — attenuator recommendation WITHDRAWN; Kevin's tuning was right
+
+**Three attenuator recommendations (20 dB, 10 dB, 6 dB) and a "turn the drive
+down 4 dB" are all withdrawn. Kevin's drive level is correct and must not be
+changed.** Recorded in full because the mistake is a natural one and the two
+pictures give opposite advice about the same knob.
+
+### What Kevin actually did, and why it is right
+
+Laser CW, unmodulated 80 MHz through the amplifier into the AOM, Red Pitaya
+output tuned until the diffracted light on a scope peaked. Standard AOM tuning.
+
+**The drive is depth-1 AM.** H2.2 measured sideband/carrier = 0.5, and
+sideband/carrier is m/2, so m = 1.0 — **the RF envelope reaches zero on every
+cycle.** The AOM is switched fully on and off. It is *not* held at a bias point
+with a small excursion on top.
+
+So the envelope sweeps the entire diffraction curve each cycle, dark to peak.
+There is no operating point whose slope matters; what matters is how bright the
+"on" end is, which is exactly what maximising CW diffraction finds.
+
+| Envelope peak | η at peak | signal at f1 | signal at 2f1 |
+|---:|---:|---:|---:|
+| 0.75 × Pπ | 96% | 0.523 | 0.041 |
+| **1.00 × — Kevin's tuning** | **100%** | **0.567** | **0.000** |
+| 1.25 × | 97% | 0.570 | 0.055 |
+| 1.50 × | 88% | 0.545 | 0.116 |
+
+**99.4% of the theoretical best, with zero frequency doubling.** The 2f1 term
+appears only when the envelope *overshoots* the peak — the light then dips at the
+top of each cycle, two dips per period. Kevin's setting is the exact point where
+the envelope touches the peak and turns around, which is the one place that
+cannot happen. It is a genuine optimum, not luck.
+
+### The error, and what made it plausible
+
+The withdrawn analysis assumed **small-signal** modulation: a carrier at a bias
+point with a small wiggle, response `dη/dP × ΔP`, so a peak means zero slope
+means no signal. **That is the standard lock-in picture and it is correct — for a
+different experiment.**
+
+This one is large-signal switching. The two regimes give **opposite advice about
+the same knob**, and the small-signal picture is the more natural one to reach
+for, especially when the words "lock-in" and "modulation" are in the air.
+
+Two things made it worse rather than catching it:
+
+- **Kevin's own observation was read as confirmation.** "Less light either side"
+  was taken as "you are at a stationary point, therefore no first-order
+  response". True for a small excursion. Irrelevant when the excursion covers the
+  whole curve. **The datum was right and the inference from it was wrong.**
+- **Each revision felt like convergence.** 20 → 10 → 6 dB each followed a real
+  measurement replacing an assumption, which reads like a process working. All
+  three were refining a number that should not have existed.
+
+**Kevin's pushback is what settled it** — "I'm not changing the voltage in the
+actual experiment", then a plain description of the CW tuning procedure. The
+second made the modulation regime explicit and the analysis fell out in one
+calculation.
+
+### What survives
+
+- **No attenuator for protection either.** The amplifier sees −4 dBm against a
+  +10 dBm rating — 14 dB of margin — and the board's 14 dB rolloff at 80 MHz
+  means it cannot get closer. A pad would only matter if somebody ran this below
+  the rolloff, where the board *can* reach +10 dBm.
+- **The one-tone control measurement (P5.1) is unaffected and still matters.**
+  Drive f1 alone, look for anything at |f2 − f1|. It tests whether the amplifiers
+  or the detector manufacture a false signal, and that is independent of drive
+  level.
+- **14 dB of board rolloff at 80 MHz** stands, and still answers U1. If drive
+  ever falls short, commanding a bigger number will not help — the board is
+  already clamping at its range.
+
+### Where the tuning could still be improved, if ever needed
+
+Kevin's procedure maximises CW throughput, which here is within 0.6% of
+maximising the f1 signal. If that last fraction is ever wanted, the direct
+version is the same procedure with one change: **apply the AM and maximise the
+photodetector's component at f1**, rather than the DC level. Not worth doing for
+0.6%, but it is the measurement that answers the question directly rather than
+through a model.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — attenuator revised to 10 dB; Santec driver, unbiased amplitude, CSV output
 
 Kevin measured the board's real 80 MHz output and then went away, so the rest is

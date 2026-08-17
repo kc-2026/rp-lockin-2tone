@@ -18,7 +18,7 @@ session's **output** goes in `09-phase2-plan.md`, which does not exist yet.
 |---|---|---|
 | ~~1~~ | Santec TSL-770/775 command set (Q22) | **ANSWERED** from both manuals — `04-hardware-reference.md` |
 | ~~2~~ | Photodetector level and impedance (Q11) | **ANSWERED** — PDA05CF2. **U4 closed too**: 150 MHz bandwidth, no rolloff at 991.821 kHz |
-| ~~3~~ | Safe drive levels (Q12) | **ANSWERED** — ZHL-1-2W+ and 1550AOM-1 datasheets. **Attenuator decided: 10 dB per channel** |
+| ~~3~~ | Safe drive levels (Q12) | **ANSWERED** — ZHL-1-2W+ and 1550AOM-1 datasheets. **No attenuator needed; Kevin's CW tuning is correct** |
 
 **What is left before hardware goes in** is the planning session itself, plus:
 
@@ -35,11 +35,13 @@ session's **output** goes in `09-phase2-plan.md`, which does not exist yet.
 - **The trigger worry got better.** The real trigger is 3.3 V, 25 µs wide, at
   most 20 kHz — 780 samples per pulse at decimation 8. Every anxiety about
   missed edges came from a synthetic 20 ns pattern that looks nothing like it.
-- **The attenuator moved from 20 dB to 10 dB** once Kevin measured the board's
-  real 80 MHz output: 800 mVpp, which is 8 dB below what the first estimate
-  assumed. **The current no-attenuator setup runs the amplifier ~1 dB into
-  compression** — which is why it maximises light, and why it cannot be used for
-  this measurement.
+- **The attenuator moved 20 dB → 10 dB → 6 dB** as measurements replaced assumptions.
+  Kevin measured 800 mVpp at 80 MHz on a **1 MΩ** scope, and the amplifier's
+  50 Ω halves that — so the amplifier sees −4 dBm and runs **5 dB BELOW**
+  compression. Earlier notes here said it was saturated; it is not. The same
+  reading also gives **14 dB of board rolloff at 80 MHz**, which answers U1.
+  **An RF voltage without its impedance is not a measurement** — that is what
+  cost three revisions.
 - **A new assumption surfaced (Q26).** Neither manual says the laser logs one
   wavelength per trigger pulse, and the index-based mapping depends on it. One
   command and one capture settles it at P1.
@@ -78,7 +80,11 @@ It is a **Thorlabs PDA05CF2**; full entry in `04-hardware-reference.md`.
 **1550AOM-1** (2.5 W nominal RF at 80 MHz, 0.5 W optical handling). Full working
 in `04-hardware-reference.md`.
 
-**Decided: 10 dB attenuator, 50 Ω, ≥0.5 W, one per channel.**
+**Decided: NO attenuator.** Kevin's CW tuning maximises the diffracted light,
+and because the drive is depth-1 AM (the envelope reaches zero every cycle) that
+is also within 0.6% of maximising the signal at f1. Three earlier revisions
+recommending 20, 10 and 6 dB were withdrawn — see `04-hardware-reference.md`.
+The amplifier has 14 dB of margin to its damage rating as wired.
 
 **One thing still to confirm: is there a second ZHL-1-2W+?** The design drives
 two AOMs, one per arm, so it needs two amplifiers and two attenuators. One
@@ -230,8 +236,8 @@ Everything electrical, into a load or a scope, before anything optical exists.
 | P3.4 | Spectrum of each amplifier output on its own — catches gross nonlinearity early |
 | P3.5 | Both channels running: check for crosstalk between them, which is the mechanism that could produce a false difference-frequency signal |
 
-**Needs:** **two 10 dB attenuators** (50 Ω, ≥0.5 W — decided 2026-08-14, working in
-`04-hardware-reference.md`), a 50 Ω load, and a way to measure RF at 80 MHz.
+**Needs:** a 50 Ω load and a way to measure RF at 80 MHz. **No attenuators** — see
+`04-hardware-reference.md`; the drive level Kevin already tuned is correct.
 **This is the first step that can damage something, and the first that needs you
 present.**
 

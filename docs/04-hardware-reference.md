@@ -603,88 +603,69 @@ connected yet.
 | Extinction ratio | 50–55 dB |
 | Rise time | 50 ns |
 
-### THE ATTENUATOR: 10 dB — revised from 20 dB once the real output was measured
+### RF DRIVE LEVEL: leave it where Kevin tuned it. No attenuator.
 
-**Measured by Kevin 2026-08-14: the board delivers 800 mVpp at 80 MHz on a
-scope, even when commanded to 2.7 V.** Its range clips the command and the 60 MHz
-rolloff takes the rest. **That is 8 dB below the +10 dBm an earlier version of
-this section assumed, and it changes the answer.**
+**Recommendation withdrawn 2026-08-14.** Three revisions of this section (20 dB,
+then 10 dB, then 6 dB of attenuation, then "turn the drive down 4 dB") were all
+solving a problem this experiment does not have. **Kevin's tuning is correct and
+should not be changed.** The reasoning is recorded because the mistake is an easy
+one to repeat.
 
-Everything below is peak envelope power (PEP), because that is what compresses an
-amplifier. With AM at depth ~1 — which H2.2 measured — PEP runs 6 dB above the
-carrier and 4.3 dB above the modulated average.
+**What Kevin did:** laser CW, unmodulated 80 MHz through the amplifier into the
+AOM, tuned the Red Pitaya output until the diffracted light on a scope was at its
+maximum. Standard AOM tuning.
 
-**If the scope was reading into 50 Ω, the board's PEP is +2.0 dBm:**
+**Why that is right here.** The drive is **depth-1 AM** — H2.2 measured
+sideband/carrier = 0.5, and sideband/carrier is m/2, so m = 1.0. **The RF
+envelope goes all the way to zero on every cycle.** The AOM is switched fully on
+and off; it is not held at a bias point with a small wiggle on top.
 
-| Attenuation | Amp out | Backoff from P1dB | Diffraction | Verdict |
-|---:|---:|---:|---:|---|
-| none | +34 dBm | **−1 dB** | ~48% | **compressing** — this is the current setup |
-| 6 dB | +28 dBm | 5 dB | 21.8% | still compressing |
-| **10 dB** | **+24 dBm** | **9 dB** | **9.1%** | **the working point** |
-| 15 dB | +19 dBm | 14 dB | 2.9% | linear, little light |
-| 20 dB | +14 dBm | 19 dB | 0.9% | far too much attenuation |
+So the envelope sweeps the *entire* diffraction curve each cycle, from dark to
+peak. There is no operating point whose slope matters. What matters is how bright
+the "on" end is — which is exactly what maximising the CW diffraction finds.
 
-**If the scope was a 1 MΩ input**, the real level into 50 Ω is half that
-(−4.0 dBm PEP) and every backoff above improves by 6 dB — 10 dB attenuation then
-gives 15 dB of backoff and 2.3% diffraction. **Confirm the scope's input
-impedance, or re-measure into a 50 Ω load, at P3.1.**
+| Envelope peak | η at peak | signal at f1 | signal at 2f1 |
+|---:|---:|---:|---:|
+| 0.50 × Pπ | 80% | 0.425 | 0.062 |
+| 0.75 × | 96% | 0.523 | 0.041 |
+| **1.00 × — Kevin's tuning** | **100%** | **0.567** | **0.000** |
+| 1.25 × | 97% | 0.570 | 0.055 |
+| 1.50 × | 88% | 0.545 | 0.116 |
 
-**Specification: 10 dB fixed, 50 Ω, ≥0.5 W, one per channel — so two.**
+**99.4% of the theoretical best, and zero frequency doubling.** The 2f1 term
+appears only when the envelope *overshoots* the peak — the light then dips at the
+top of every cycle, giving two dips per period. Kevin's setting is precisely the
+point where the envelope touches the peak and turns around, which is the one
+place that cannot happen.
 
-Three reasons that is the right number:
+### The mistake, recorded so it is not repeated
 
-1. **Damage stays impossible.** With 10 dB fitted the board would have to produce
-   +20 dBm to reach the amplifier's rating. Its absolute ceiling is +10 dBm
-   (±1 V into 50 Ω at DC), so **even a worst case with no rolloff at all leaves
-   10 dB of margin.**
-2. **Linearity, which governs.** ~9 dB below P1dB on the 50 Ω reading. This
-   matters more than the damage rating, because **amplifier intermodulation lands
-   at exactly |f2 − f1|, the frequency being measured, and looks entirely
-   legitimate** (U2). An amplifier near compression manufactures the signal.
-3. **It keeps useful diffraction.** ~9% rather than the 0.9% that 20 dB would
-   have given.
+The withdrawn analysis assumed **small-signal** modulation: a carrier at a bias
+point with a small excursion, where the response is `dη/dP × ΔP` and sitting on a
+peak means zero slope means no signal. That is the standard lock-in picture and
+it is correct — **for a different experiment.**
 
-**The current no-attenuator setup sits 1 dB INTO compression**, which is exactly
-why it maximises light through the AOM — and is exactly what this measurement
-cannot use. See "why maximum light is the wrong target" below.
+This one is large-signal switching. The distinction is not a detail: the two
+pictures give opposite advice about the same knob, and the small-signal one is
+the more natural thing to reach for.
 
-**Do not go below 10 dB without running the U2 control measurement (P5.1) at the
-new level.**
+**The tell was in what Kevin observed** — "less light either side" — which was
+read as "you are at a stationary point, therefore no first-order response". True
+for a small excursion; irrelevant when the excursion covers the whole curve.
 
-### Why maximum light is the wrong target
+### What still holds
 
-The amplifier's P1dB is 2 W and the AOM's nominal drive is 2.5 W, so **full
-diffraction is unreachable without saturating the amplifier.** Tuning for maximum
-throughput therefore *necessarily* means running compressed. For CW work that is
-a perfectly sensible choice. For this measurement it is wrong twice, and the
-second reason is the one that is easy to miss:
-
-- A compressed amplifier generates intermodulation at |f2 − f1| that is
-  indistinguishable from the real signal (U2).
-- **Saturation flattens the AM envelope.** The measurement lives in the
-  *modulation*, not the average power. A saturated amplifier clips the envelope
-  peaks, so modulation depth out is less than in — **driving harder for more
-  light delivers less of the thing being measured.**
-
-The right target is not maximum η but maximum **dη/dP**, the slope that converts
-RF modulation into optical modulation. Since η = sin²(k√P), that peaks at
-**η = 50%, i.e. a quarter of full drive — 625 mW, +28 dBm.** Above it the curve
-flattens and each extra watt of RF buys less modulation.
-
-That optimum is not reachable linearly with this amplifier, so the practical
-answer is: **run as much drive as linearity allows, and set the optical level
-separately.**
-
-### RF level and laser power are independent knobs
-
-Worth stating because an earlier version of this document conflated them:
-
-- **RF drive** is set by **amplifier linearity** (U2).
-- **Laser power** is set by **detector headroom** — the PDA05CF2 saturates at
-  ~0.96 mW.
-
-If the detector is saturating, turn the laser down; do not starve the AOM of RF.
-They are separate constraints on separate parts of the chain.
+- **No attenuator is needed for protection.** The amplifier sees −4 dBm against a
+  +10 dBm rating: 14 dB of margin, and the board's 14 dB rolloff at 80 MHz means
+  it cannot get closer. The only scenario needing a pad is somebody running this
+  below the rolloff, where the board *can* reach +10 dBm.
+- **The one-tone control measurement (P5.1) is unaffected and still matters.**
+  Drive f1 alone and look for anything at |f2 − f1|. That tests whether the
+  amplifiers or the detector manufacture a false signal, and it is worth running
+  whatever the drive level is.
+- **The 14 dB of board rolloff at 80 MHz stands** and still answers U1. If drive
+  ever falls short, commanding a bigger number will not help — the board is
+  already clamping.
 
 ### Two ordering rules that damage things if ignored
 

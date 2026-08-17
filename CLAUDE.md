@@ -65,9 +65,13 @@ Loopback phase only, for now. Within that:
 - Going beyond loopback requires a dedicated planning session with the human.
   **Phase 1 is complete; what Phase 2 needs is in `docs/08-phase2-hardware.md`.**
   Do not start it unilaterally.
-- **When the amplifiers go in, the attenuators go in first.** 10 dB per channel.
-  Without them the board runs the amplifier into compression, which manufactures
-  a false signal at exactly the measurement frequency.
+- **Do not "fix" the RF drive level.** Kevin tuned it by maximising the
+  diffracted light with an unmodulated carrier, and that is correct here:
+  the drive is depth-1 AM, so the envelope reaches zero every cycle and the AOM
+  is switched fully on and off rather than held at a bias point. Three separate
+  attenuator recommendations were made and all three were withdrawn. See
+  `docs/04-hardware-reference.md` — the reasoning is recorded because the mistake
+  is an easy one to repeat.
 
 ### Verified versus unverified code
 
