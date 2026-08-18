@@ -30,10 +30,13 @@ trigger the capture from the laser's trigger output on IN2, demodulate in
 software, and deliver a 5000-point trace of **amplitude** across the sweep.
 
 **The wavelength axis comes from the laser over serial, not from trigger timing**
-(Kevin, 2026-08-14). **The laser logs wavelength VALUES with no timestamps** — an
-earlier note here said otherwise and was wrong. Its trigger also starts the
-capture, so both share t = 0, and each logged wavelength sits at
-`first_edge + i × step`. `santec.py` reads the log; `wavelength.py` places it in
+(Kevin, 2026-08-14). The laser logs **wavelength values with the time axis
+IMPLICIT** — `:READout:DATa?` returns a bare array, so `wavelength[i]` is the
+wavelength at trigger pulse `i`. With the trigger stepping in time that is
+wavelength against relative time from the first trigger, exactly as Kevin
+described; the times are simply reconstructed rather than read, as
+`first_edge + i × step`. Its trigger also starts the capture, so both share
+t = 0. `santec.py` reads the log; `wavelength.py` places it in
 time. **Neither has ever met a laser.**
 
 **Two traps to design against:**

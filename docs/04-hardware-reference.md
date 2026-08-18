@@ -425,11 +425,19 @@ line reader unchanged.
 | `:READout:DATa?` | the wavelength log |
 | `:READout:DATa:POWer?` | the power log, 32-bit float, dBm — a free cross-check |
 
-**The log is wavelength ONLY, with no timestamps.** Documented: `:READout:DATa?`
-returns "a header and wavelength data array", `:READout:POINts?` returns "the
-number of data points recorded by wavelength logging" (TSL-775 p93, TSL-770 p93
-and its command index). An earlier note said the laser reports wavelength against
-time. It does not.
+**The log carries wavelength values; the time axis is implicit.** Documented:
+`:READout:DATa?` returns "a header and wavelength data array", `:READout:POINts?`
+returns "the number of data points recorded by wavelength logging" (TSL-775 p93,
+TSL-770 p93 and its command index). No time column is transmitted.
+
+**That is not the same as the times being unknown.** `wavelength[i]` belongs to
+trigger pulse `i`, so with the trigger stepping in time the log *is* wavelength
+against relative time from the first trigger — the times are reconstructed as
+`first_edge + i × step` rather than read. The distinction matters only because a
+reconstructed axis depends on two things a transmitted one would not: that the
+trigger really is stepping in time (**Q24**) and that there is one log point per
+pulse (**Q26**). If either is false the times are wrong and nothing in the data
+would say so.
 
 **That there is exactly one log point per trigger pulse is an ASSUMPTION.**
 Neither manual states it. It is the natural reading — logging and trigger output

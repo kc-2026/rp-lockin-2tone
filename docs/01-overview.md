@@ -31,9 +31,11 @@ second. It is a **Santec**, and it can report its own wavelength against time
 over a serial link.
 
 **Wavelength calibration comes from the laser over serial, NOT from trigger-edge
-timing (Kevin, 2026-08-14).** The laser logs **wavelength VALUES with no
-timestamps** — `:READout:DATa?` returns a bare array and `:READout:POINts?` its
-length. Its trigger output fires at fixed steps and goes to the Red Pitaya's
+timing (Kevin, 2026-08-14).** The laser logs **wavelength values with the time axis
+IMPLICIT** — `:READout:DATa?` returns a bare array and `:READout:POINts?` its
+length, so `wavelength[i]` belongs to trigger pulse `i`. With the trigger
+stepping in time, that is wavelength against relative time from the first
+trigger; the times are reconstructed rather than transmitted. Its trigger output fires at fixed steps and goes to the Red Pitaya's
 trigger input; **only the first edge is used**, to give both instruments the same
 t = 0. Each logged wavelength then sits at `first_edge + i × step`, so the
 deliverable becomes power against wavelength directly.

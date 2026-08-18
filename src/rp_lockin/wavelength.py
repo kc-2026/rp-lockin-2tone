@@ -5,11 +5,17 @@ The wavelength axis comes from the laser, not from trigger-edge intervals
 (Kevin, 2026-08-14). A Santec TSL-770/775 sweeps, emits a trigger pulse per step,
 and logs its own wavelength at each pulse.
 
-**The log is wavelength ONLY, with no timestamps.** That much is documented:
+**The log carries wavelength values; the time axis is implicit.** Documented:
 `:READout:DATa?` returns "a header and wavelength data array" and
 `:READout:POINts?` returns "the number of data points recorded by wavelength
-logging" (TSL-775 manual p93, TSL-770 p93). An earlier note here said the laser
-reported wavelength against time; it does not.
+logging" (TSL-775 manual p93, TSL-770 p93). No time column is transmitted.
+
+`wavelength[i]` belongs to trigger pulse `i`, so with the trigger stepping in
+time the log IS wavelength against relative time from the first trigger -- the
+times are reconstructed rather than read. That is why this module exists: the
+reconstruction depends on the trigger stepping in time (Q24) and on one log point
+per pulse (Q26), and if either is false the times are wrong with nothing in the
+data to show it.
 
 **That there is exactly one log point per trigger pulse is an ASSUMPTION, not
 something either manual states.** It is the natural reading -- the manuals

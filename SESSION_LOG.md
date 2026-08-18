@@ -529,6 +529,44 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — correction: Kevin's Q20 answer was right after all
+
+An earlier entry today is titled "Q22 answered, Q20 was WRONG" and says Kevin's
+description of the laser log was mistaken. **It was not, and this corrects it.**
+The entry is left in place as history; the live documents are fixed.
+
+**What Kevin said:** the laser reports wavelength against relative time from the
+first trigger.
+
+**What the manual says:** `:READout:DATa?` returns "a header and wavelength data
+array" — 500 points in 2000 bytes, all wavelength. No time column on the wire.
+
+**Both are true.** `wavelength[i]` belongs to trigger pulse `i`, and with the
+trigger stepping in time that is exactly wavelength against relative time from
+the first trigger. Kevin described the **semantics**; the manual describes the
+**wire format**. The time axis is **implicit, not absent**, and calling his
+answer "wrong in a way that matters" was itself wrong.
+
+**What survives, and it is the only part with practical content.** Because the
+times are reconstructed rather than read, they depend on two things a timestamped
+log would not:
+
+- the trigger really stepping in **time** rather than wavelength (**Q24** — the
+  two manuals define that encoding oppositely), and
+- exactly **one log point per pulse** (**Q26** — no manual states it).
+
+If either is false the reconstructed times are wrong and **nothing in the data
+would show it**. That is why `check_alignment` exists and why both are on the P1
+list. The guard was right; the story told about why was not.
+
+**The habit worth keeping from this.** Finding that a manual describes something
+differently from how a person described it is not the same as finding the person
+wrong — they may be describing different layers of the same thing. Checking
+which before writing "and was wrong" into four documents would have cost one
+sentence of thought.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — the 80 MHz belongs to the AOM, not the DUT
 
 **Kevin, 2026-08-14: the DUT does not require 80 MHz.** The spec has said it did
