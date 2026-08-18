@@ -2,11 +2,13 @@
 
 Two-tone lock-in detection on a Red Pitaya SIGNALlab 250-12.
 
-Two 80 MHz carriers, amplitude modulated at 5 and 6 MHz, drive a DUT through
-AOMs. The DUT mixes them and a photodetector returns the intermodulation
-response at their 1 MHz difference. A laser sweeps wavelength over ~1 s; we
-capture the response and the laser's trigger train, demodulate in software, and
-deliver a 5000-point amplitude/phase trace across the sweep.
+Two AOMs gate light — one at 5 MHz, one at 6 MHz — by amplitude modulating the
+80 MHz acoustic drive each AOM needs. **That 80 MHz is the AOM's requirement, not
+the DUT's; the DUT only ever sees light varying in brightness.** The DUT mixes the
+two, and a photodetector returns the intermodulation response at their ~1 MHz
+difference. A Santec laser sweeps wavelength over ~1 s; we capture the response
+and the laser's trigger, demodulate in software, and deliver a 5000-point
+amplitude trace against wavelength.
 
 No FPGA development. Everything runs on a control PC over the network.
 

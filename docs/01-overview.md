@@ -5,23 +5,41 @@
 Measure a DUT's two-tone intermodulation response as a function of laser
 wavelength, using lock-in detection on a Red Pitaya SIGNALlab 250-12.
 
-The DUT has two inputs and one output. Both inputs are driven with an 80 MHz
-carrier (required by the DUT, via AOMs). One input is held at constant
-amplitude and modulated at f1; the other is modulated at f2. The DUT's
-nonlinearity mixes them, and the response appears at the difference frequency
-|f2 − f1|. A photodetector returns that response and nothing else.
+The DUT has two inputs and one output, and both are fed with **light whose
+intensity is modulated** — one at f1, the other at f2. The DUT's nonlinearity
+mixes them, and the response appears at the difference frequency |f2 − f1|. A
+photodetector returns that response and nothing else.
+
+**The 80 MHz is the AOM's requirement, not the DUT's** (Kevin, 2026-08-14). An
+acousto-optic modulator diffracts light only while it is driven acoustically, and
+the Aerodiode 1550AOM-1 is an 80 MHz part. Amplitude-modulating that 80 MHz —
+sweeping its envelope from zero to full — gates the light, and that is what
+produces the optical modulation at f1 and f2.
+
+**The DUT never sees 80 MHz at all.** It sees light, varying in brightness at f1
+and f2. The 80 MHz exists solely to make the AOMs work, and if the AOMs were a
+different part it would be a different number.
+
+One consequence worth recording: the ASG grid forces the carrier to
+80.001831 MHz rather than 80.000000 (see `03-frequency-plan.md`). **That 1.8 kHz
+offset is irrelevant to the AOM**, whose acoustic passband is megahertz-wide. The
+grid constraint comes from the Red Pitaya's waveform buffer needing whole cycles
+to avoid glitching at wrap — it is not a modulator requirement.
 
 Meanwhile a laser sweeps its wavelength across a span in approximately one
 second. It is a **Santec**, and it can report its own wavelength against time
 over a serial link.
 
 **Wavelength calibration comes from the laser over serial, NOT from trigger-edge
-timing (Kevin, 2026-08-14).** The laser reports **wavelength against relative time
-from its first trigger**. Its trigger output fires at fixed time steps and goes to
-the Red Pitaya's trigger input; **only the first edge is used**, to give both
-instruments the same t = 0. The wavelength for each trace point is then a lookup
-against the laser's table, with no sweep-rate assumption anywhere, and the
+timing (Kevin, 2026-08-14).** The laser logs **wavelength VALUES with no
+timestamps** — `:READout:DATa?` returns a bare array and `:READout:POINts?` its
+length. Its trigger output fires at fixed steps and goes to the Red Pitaya's
+trigger input; **only the first edge is used**, to give both instruments the same
+t = 0. Each logged wavelength then sits at `first_edge + i × step`, so the
 deliverable becomes power against wavelength directly.
+
+**That the log holds one point per trigger pulse is an ASSUMPTION** — no Santec
+manual states it, and the whole mapping rests on it. See Q26.
 
 **The one silent failure to design against:** both sides define t = 0 as "the
 first trigger", but independently. If the acquisition arms late and latches the
@@ -52,7 +70,7 @@ and taking the real part is unbiased and quieter. Not yet implemented — see
 
 | # | Requirement | Source |
 |---|---|---|
-| R1 | 80 MHz carrier on both drive outputs | DUT |
+| R1 | 80 MHz carrier on both drive outputs | **AOM** — the 1550AOM-1's acoustic drive frequency. Not a DUT requirement; the DUT never sees it |
 | R2 | Independent amplitude modulation at f1 and f2 | measurement principle |
 | R3 | Demodulate at \|f2 − f1\| | measurement principle |
 | R4 | Integration time ≥ 5–10 periods of \|f2 − f1\| | lock-in validity |
@@ -105,8 +123,8 @@ The board has two inputs and two outputs. All four are committed.
 
 | Port | Use |
 |---|---|
-| OUT1 | 80 MHz carrier, AM at f1 = 5 MHz |
-| OUT2 | 80 MHz carrier, AM at f2 = 6 MHz |
+| OUT1 | 80 MHz AOM drive, AM at f1 — gates the light at f1 |
+| OUT2 | 80 MHz AOM drive, AM at f2 — gates the light at f2 |
 | IN1 | Photodetector — response at \|f2 − f1\| |
 | IN2 | Laser trigger train — digitised for calibration, and the acquisition trigger source |
 

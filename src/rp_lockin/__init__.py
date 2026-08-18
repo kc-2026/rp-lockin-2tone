@@ -1,10 +1,11 @@
 """
 rp_lockin -- two-tone lock-in detection on a Red Pitaya SIGNALlab 250-12.
 
-Measures a DUT's intermodulation response: two 80 MHz carriers amplitude
-modulated at f1 and f2 drive the device, which mixes them, and the response
+Measures a DUT's intermodulation response. Two AOMs gate light at f1 and f2 by
+amplitude modulating the 80 MHz acoustic drive they require -- the DUT sees only
+the gated light, never the 80 MHz itself. The DUT mixes the two, and the response
 appears at |f2 - f1|. That difference frequency is demodulated in software and
-delivered as a time-series trace across a laser wavelength sweep.
+delivered as a trace against laser wavelength.
 
 Module map
 ----------

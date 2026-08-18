@@ -20,8 +20,10 @@ enough that a fresh agent can resume without re-deriving anything.
 
 ## The one-paragraph summary
 
-Two 80 MHz carriers, amplitude modulated at f1 = 5 MHz and f2 = 6 MHz, drive a
-DUT through AOMs. The DUT mixes them; a photodetector returns the
+Two AOMs gate light, one at f1 = 5 MHz and one at f2 = 6 MHz, by amplitude
+modulating the 80 MHz acoustic drive each AOM needs. **The 80 MHz is the AOM's
+requirement, not the DUT's — the DUT only ever sees light varying in
+brightness.** The DUT mixes the two; a photodetector returns the
 intermodulation response at |f2 − f1| ≈ 991.821 kHz and nothing else. A **Santec**
 laser sweeps its wavelength over ~1 s. We capture the photodetector on IN1,
 trigger the capture from the laser's trigger output on IN2, demodulate in

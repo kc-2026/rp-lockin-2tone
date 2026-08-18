@@ -1,7 +1,9 @@
 """
 Drive waveform construction for the two-tone AOM experiment.
 
-Both outputs carry an 80 MHz carrier amplitude-modulated at f1 and f2. The DUT
+Both outputs carry an 80 MHz AOM drive amplitude-modulated at f1 and f2. The
+80 MHz is what the acousto-optic modulators need in order to diffract at all;
+the DUT never sees it, only light gated at f1 and f2. The DUT
 mixes them and the response appears at |f2 - f1|.
 
 The whole design turns on one arithmetic fact: a repeating buffer only replays

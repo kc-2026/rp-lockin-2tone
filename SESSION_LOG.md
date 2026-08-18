@@ -529,6 +529,43 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — the 80 MHz belongs to the AOM, not the DUT
+
+**Kevin, 2026-08-14: the DUT does not require 80 MHz.** The spec has said it did
+since Phase 0 and it was wrong.
+
+**What is actually true.** An acousto-optic modulator only diffracts while it is
+driven acoustically, and the Aerodiode 1550AOM-1 is an 80 MHz part. Amplitude
+modulating that 80 MHz — sweeping its envelope from zero to full — gates the
+light. That is what produces optical modulation at f1 and f2.
+
+**The DUT never sees 80 MHz at all.** It sees light, varying in brightness. If the
+AOMs were a different part, 80 MHz would be a different number and nothing else
+about the measurement would change.
+
+Corrected in `01-overview.md` (goal, R1's Source column, the channel table),
+`CLAUDE.md`, `README.md`, `waveforms.py` and `__init__.py`. R1's source now reads
+**AOM** rather than **DUT**.
+
+**Why it matters beyond tidiness.** Recorded as a DUT requirement, 80 MHz looks
+like physics that constrains the experiment. It is not — it is a property of a
+component, and the frequency plan's real constraints (the ASG grid, buffer
+commensurability) come from the Red Pitaya. Anyone reasoning about whether the
+carrier could move would have been reasoning about the wrong thing.
+
+Added the related reassurance while in there: the grid snap puts the carrier at
+80.001831 MHz rather than 80.000000, and **that 1.8 kHz is nothing to an AOM**
+whose acoustic passband is megahertz-wide. The snap exists for the Red Pitaya's
+buffer, not the modulator.
+
+**Also fixed here:** `01-overview.md` still said the laser "reports wavelength
+against relative time from its first trigger". That was corrected in the code and
+the other documents earlier today but missed here — the log holds wavelength
+values with no timestamps. Third document found carrying it; worth a sweep next
+time a claim is corrected rather than fixing them as they surface.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — attenuator recommendation WITHDRAWN; Kevin's tuning was right
 
 **Three attenuator recommendations (20 dB, 10 dB, 6 dB) and a "turn the drive
