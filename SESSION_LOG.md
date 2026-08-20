@@ -529,6 +529,77 @@ so it cannot silently regress.
 
 ---
 
+## 2026-08-14 — Claude (Claude Code) — P1 attempted: the laser does not answer, and the host side is eliminated
+
+Kevin ran a patch cable and a BNC, so serial, the laser trigger output and the
+laser light are all available. **P1 ran and failed, but usefully: the fault is
+narrowed to a laser-side setting.**
+
+### What was tried
+
+| | Result |
+|---|---|
+| COM29 enumerates | yes — "USB Serial Port (COM29)" |
+| Port opens and writes | yes, every time |
+| `*IDN?` at 6 baud rates × 3 terminators × 2 flow-control states | **silence, all 18** |
+| Anything unprompted | nothing |
+| Same over the **D2XX** driver path | **silence** |
+| D2XX enumeration | `desc='TSL-775' serial='2601S967' id=0x2428:0116 flags=0` |
+
+`flags=0` means nothing else held the device, so we were not fighting Santec's
+own software.
+
+### What that eliminates
+
+Cable, driver, COM port, baud rate, terminator, flow control, and the choice of
+driver interface — an FTDI device can be reached two ways and **both were
+silent while the device enumerated cleanly**. The chip is fine and reachable.
+**The laser's firmware is not replying.**
+
+That is worth stating precisely because it is the useful half of a failed test:
+there is nothing left to try on this machine.
+
+### The leading candidate, from the manual
+
+**The delimiter is selectable on the front panel** — Other tab → Communication →
+GPIB — between **CR, LF, CR+LF and EOI** (TSL-775 p55). **EOI is a GPIB hardware
+signal that cannot be sent over USB at all.** With the delimiter on EOI the laser
+can never see a complete command over serial, and would answer nothing, forever,
+regardless of baud rate. That matches what we see exactly.
+
+Note the manual is internally inconsistent here: sections 7.2.2 (USB) and 7.3.2
+(LAN) both state flatly that "the delimiter of the command is CR", while 7.1.3
+presents it as a user setting with four values. **Trust the setting over the
+prose.**
+
+Also worth noting from the same section: a **REMOTE** state exists in which all
+front-panel keys but LOCAL are disabled. Stuck state is unlikely to block
+comms, but a power cycle is free.
+
+### Asked of Kevin, cheapest first
+
+1. **Other tab → Communication → delimiter.** If EOI, set it to CR. Also note
+   whether the command set is Legacy or SCPI.
+2. **Power-cycle the laser**, to clear any stuck REMOTE state.
+3. **Santec's own software, if supplied.** If it connects, the laser is listening
+   and a setting is wrong on our side; if it does not, the fault is not ours.
+
+**LAN remains a fallback that sidesteps all of it** — the TCP transport is
+written, and the LAN section documents its own delimiter independently.
+
+### Added
+
+`scripts/laser_comms_diag.py`, read-only, sends nothing but `*IDN?`. Sweeps the
+serial combinations and the D2XX path, and — the part that matters — prints what
+each outcome *means*, including the EOI trap, so the next person does not have to
+re-derive the reasoning from a wall of empty byte strings. Today's observation is
+recorded in its docstring.
+
+**No code changed.** `santec.py` may be perfectly correct; it has still never had
+a reply to check it against.
+
+---
+
 ## 2026-08-14 — Claude (Claude Code) — correction: Kevin's Q20 answer was right after all
 
 An earlier entry today is titled "Q22 answered, Q20 was WRONG" and says Kevin's
