@@ -5,8 +5,9 @@ Runs with **no RF, no optics, and the Red Pitaya switched off**. Nothing here ca
 damage anything: it identifies the laser, reads back how its trigger output is
 configured, and reads whatever wavelength log is already in memory.
 
-    python scripts/p1_laser_check.py 192.168.1.50
-    python scripts/p1_laser_check.py 192.168.1.50 --port 5000
+    python scripts/p1_laser_check.py --serial COM29
+    python scripts/p1_laser_check.py --serial COM29 --baud 115200
+    python scripts/p1_laser_check.py --lan 192.168.1.50
 
 It does NOT start a sweep and does NOT change any laser setting unless you pass
 `--set-trigger-step`, which is the one action that writes. A log can only be read
@@ -27,6 +28,8 @@ What this settles, none of which any manual answers:
        8 means IEEE doubles in metres.
   --   Whether `santec.py` works at all. It was written entirely from the
        manuals and has never spoken to an instrument.
+  --   On serial, the baud rate -- which the manual never states. Omit --baud
+       and the standard rates are probed until one answers sensibly.
 """
 
 from __future__ import annotations
@@ -38,13 +41,65 @@ import numpy as np
 
 sys.path.insert(0, "src")
 
-from rp_lockin.santec import TRIGGER_OUTPUT_MODES, SantecTSL  # noqa: E402
+from rp_lockin.santec import (  # noqa: E402
+    COMMON_BAUD_RATES,
+    TRIGGER_OUTPUT_MODES,
+    SantecTSL,
+)
+
+
+def open_laser(args):
+    """
+    Connect, probing the baud rate if we are on serial and none was given.
+
+    The manual documents the delimiter and the throughput for USB but **never a
+    baud rate**, so guessing one and baking it in would be exactly the kind of
+    silent-wrong-setting this project keeps tripping over. Probing is cheap and
+    answers it: a wrong rate returns nothing, or bytes that are not ASCII, and
+    `*IDN?` is a read that cannot disturb the instrument.
+    """
+    if args.lan:
+        print(f"connecting over LAN to {args.lan}:{args.port} ...")
+        return SantecTSL.over_lan(args.lan, args.port, timeout=args.timeout)
+
+    rates = [args.baud] if args.baud else list(COMMON_BAUD_RATES)
+    if len(rates) > 1:
+        print(f"connecting over serial to {args.serial}, probing baud "
+              f"{', '.join(str(r) for r in rates)} ...")
+        print("  (the manual states no baud rate for USB, so this finds it)")
+    for rate in rates:
+        laser = None
+        try:
+            laser = SantecTSL.over_serial(args.serial, rate, timeout=1.5)
+            idn = laser.idn()
+            if idn and idn.isprintable() and len(idn) > 3:
+                print(f"  {rate:>7} baud -> {idn}")
+                print(f"\n*** baud rate is {rate}. Pass --baud {rate} to skip "
+                      f"the probe next time. ***")
+                return laser
+            print(f"  {rate:>7} baud -> unusable reply {idn!r}")
+        except Exception as exc:
+            print(f"  {rate:>7} baud -> {type(exc).__name__}")
+        if laser is not None:
+            laser.close()
+    raise ConnectionError(
+        f"no baud rate in {rates} produced a sensible *IDN?. Check the laser is "
+        f"powered and that {args.serial} is the right port -- Device Manager "
+        f"shows it under Ports (COM & LPT) once the VCP driver is bound."
+    )
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("host", help="laser IP address or hostname (LAN)")
-    ap.add_argument("--port", type=int, default=5000)
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--serial", metavar="PORT",
+                     help="serial port, e.g. COM29 (USB via the FTDI VCP driver)")
+    src.add_argument("--lan", metavar="HOST",
+                     help="IP address or hostname, for the LAN port")
+    ap.add_argument("--baud", type=int, default=None,
+                    help="serial baud rate. Omitted, the standard rates are "
+                         "probed -- the manual does not state one.")
+    ap.add_argument("--port", type=int, default=5000, help="LAN port")
     ap.add_argument("--timeout", type=float, default=10.0)
     ap.add_argument(
         "--set-trigger-step", action="store_true",
@@ -54,15 +109,12 @@ def main() -> int:
              "check the log against.")
     args = ap.parse_args()
 
-    print(f"connecting to {args.host}:{args.port} over LAN ...")
     try:
-        laser = SantecTSL(args.host, args.port, timeout=args.timeout)
-    except OSError as exc:
-        print(f"  FAILED: {type(exc).__name__}: {exc}")
-        print("\n  Check: is the laser on the LAN and is this its IP? The front")
-        print("  panel shows it under Other -> Communication -> LAN. USB and")
-        print("  GPIB are also supported, but LAN avoids the FTDI driver.")
+        laser = open_laser(args)
+    except Exception as exc:
+        print(f"\n  FAILED: {type(exc).__name__}: {exc}")
         return 1
+    print(f"connected: {laser.description}")
 
     ok = True
     try:
@@ -76,9 +128,6 @@ def main() -> int:
                       "Everything below assumes that command set.")
         except Exception as exc:
             print(f"  *IDN? FAILED: {type(exc).__name__}: {exc}")
-            print("  If this timed out, suspect the delimiter. This driver "
-                  "sends a bare CR;\n  the Red Pitaya's CRLF would hang exactly "
-                  "like this.")
             return 1
 
         # ---- trigger configuration --------------------------------------

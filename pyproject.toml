@@ -12,6 +12,9 @@ dependencies = ["numpy>=1.24", "scipy>=1.10"]
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-timeout"]
 plot = ["matplotlib>=3.6"]
+# Only the Santec laser needs this, and only over USB/serial. Kept out of
+# the core dependencies so the package imports and the suite runs without it.
+laser = ["pyserial>=3.5"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

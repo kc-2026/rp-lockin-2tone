@@ -1,16 +1,19 @@
 """
 Tests for the Santec transport, against a fake laser.
 
-No hardware. A fake socket replays the byte-level replies the manuals describe,
-which is enough to pin the three things most likely to be got wrong and most
-likely to fail silently: the CR delimiter, the little-endian payload, and the
-two command sets returning different units in the same command.
+No hardware. A fake transport replays the byte-level replies the manuals
+describe, which is enough to pin the three things most likely to be got wrong
+and most likely to fail silently: the CR delimiter, the little-endian payload,
+and the two command sets returning different units from the same command.
 
 None of this proves the laser behaves as documented. It proves we read what the
 manual says the laser sends. P1 is where those meet.
+
+The fake sits at the transport seam, so these tests cover the serial path and the
+LAN path identically -- which is the point of having that seam. Only the bytes'
+route differs, and neither route is exercised here.
 """
 
-import socket
 import struct
 
 import numpy as np
@@ -20,16 +23,16 @@ from rp_lockin.santec import TRIGGER_OUTPUT_MODES, SantecTSL
 
 
 class FakeLaser:
-    """Replies to queries from a script; records what was sent."""
+    """A transport that answers queries from a script, and records what was sent."""
 
     def __init__(self, replies=None):
         self.sent: list[str] = []
         self.replies = dict(replies or {})
+        self.description = "fake"
         self._out = b""
         self.closed = False
 
-    # -- socket interface --------------------------------------------------
-    def sendall(self, data: bytes) -> None:
+    def send(self, data: bytes) -> None:
         assert data.endswith(b"\r"), "Santec delimiter is a bare CR"
         assert not data.endswith(b"\r\n"), "CRLF is the Red Pitaya's, not this"
         cmd = data[:-1].decode("ascii")
@@ -44,28 +47,23 @@ class FakeLaser:
         out, self._out = self._out[:n], self._out[n:]
         return out
 
-    def settimeout(self, _t) -> None:
-        pass
-
     def close(self) -> None:
         self.closed = True
+
+
+@pytest.fixture
+def laser():
+    return FakeLaser()
+
+
+def connect(fake):
+    return SantecTSL(fake)
 
 
 def block(payload: bytes) -> bytes:
     """Wrap bytes in an IEEE 488.2 definite-length block, as the manuals show."""
     n = str(len(payload))
     return b"#" + str(len(n)).encode() + n.encode() + payload
-
-
-@pytest.fixture
-def laser(monkeypatch):
-    fake = FakeLaser()
-    monkeypatch.setattr(socket, "create_connection", lambda *a, **k: fake)
-    return fake
-
-
-def connect(fake):
-    return SantecTSL("fake-laser")
 
 
 # ------------------------------------------------------------- the basics
@@ -224,3 +222,78 @@ def test_context_manager_closes(laser):
         laser.replies["*IDN?"] = "SANTEC,TSL-770,1,1"
         rp.idn()
     assert laser.closed
+
+
+# --------------------------------------------------- the serial transport
+
+
+class StubSerial:
+    """Enough of pyserial's Serial to exercise the chunking logic."""
+
+    def __init__(self, data=b""):
+        self.buf = bytearray(data)
+        self.written = bytearray()
+        self.closed = False
+        self.read_sizes = []
+
+    @property
+    def in_waiting(self):
+        return len(self.buf)
+
+    def read(self, n):
+        self.read_sizes.append(n)
+        out, self.buf = bytes(self.buf[:n]), self.buf[n:]
+        return out
+
+    def write(self, data):
+        self.written += data
+
+    def flush(self):
+        pass
+
+    def close(self):
+        self.closed = True
+
+
+def test_serial_transport_never_asks_for_more_than_is_buffered():
+    """
+    The one piece of real logic in the serial transport.
+
+    pyserial's read(n) blocks until n bytes arrive OR the timeout expires. Asking
+    for 4096 when three bytes are waiting would stall for the whole timeout on
+    every single line read, turning a fast link into a crawl. So it asks for what
+    is buffered, and for at least one byte so the caller's loop still advances.
+    """
+    from rp_lockin.santec import SerialTransport
+    stub = StubSerial(b"ABC")
+    t = SerialTransport("COM_TEST", _serial=stub)
+    assert t.recv(4096) == b"ABC"
+    assert stub.read_sizes == [3], "should ask for exactly what was buffered"
+    # Nothing buffered: still asks for one byte rather than returning empty,
+    # so a blocking read can wait for the reply that has not arrived yet.
+    t.recv(4096)
+    assert stub.read_sizes[-1] == 1
+
+
+def test_serial_transport_sends_and_closes():
+    from rp_lockin.santec import SerialTransport
+    stub = StubSerial()
+    t = SerialTransport("COM_TEST", baud=115200, _serial=stub)
+    assert "115200 baud" in t.description
+    t.send(b"*IDN?\r")
+    assert bytes(stub.written) == b"*IDN?\r"
+    t.close()
+    assert stub.closed
+
+
+def test_the_same_client_works_over_serial(laser):
+    """
+    The seam earning its keep: identical behaviour whichever transport is under
+    it. This is the serial path, byte for byte the same test as the LAN one.
+    """
+    from rp_lockin.santec import SantecTSL, SerialTransport
+    stub = StubSerial()
+    transport = SerialTransport("COM_TEST", _serial=stub)
+    client = SantecTSL(transport)
+    client.write("*IDN?")
+    assert bytes(stub.written) == b"*IDN?\r", "bare CR over serial too"

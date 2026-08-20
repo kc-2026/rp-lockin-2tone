@@ -408,7 +408,9 @@ bench — that is P1 in `08-phase2-hardware.md`.
 
 | | |
 |---|---|
-| Interfaces | GPIB (IEEE-488), USB (type B, "USB DEVICE" socket, FTDI D2XX driver, ~1 MB/s), LAN (100BASE-TX, TCP/IP, configurable IP and port, ~30 Mb/s) |
+| Interfaces | GPIB (IEEE-488), USB (type B, **"USB DEVICE"** socket — *not* "USB HOST" — ~1 MB/s), LAN (100BASE-TX, TCP/IP, configurable IP and port, ~30 Mb/s) |
+| **In use here** | **USB, as `COM29`** (Kevin, 2026-08-14) |
+| **Baud rate** | **NOT STATED IN THE MANUAL.** Probed by `scripts/p1_laser_check.py` |
 | **Delimiter** | **bare `CR`** |
 | Command sets | Two, selectable. A legacy TSL-550-compatible set, and the native TSL-770/775 SCPI set. **They differ in response formats AND in the binary logging format** |
 
@@ -416,6 +418,31 @@ bench — that is P1 in `08-phase2-hardware.md`.
 `CR` alone. A transport written for one will hang waiting on the other, and the
 symptom is a timeout that looks like a dead cable. Do not reuse `hardware.py`'s
 line reader unchanged.
+
+### Getting USB working — the two-stage FTDI install
+
+Done 2026-08-14; recorded because the intermediate state looks like a failure.
+
+1. Install the Santec driver (ships on a disk with the laser). The device appears
+   under **USB controllers** as "Santec USB TSL-775" — that is the **D2XX** node,
+   and `pyserial` cannot see it.
+2. **Device Manager → that device → Properties → Advanced → tick "Load VCP"**,
+   then unplug and replug. A "USB Serial Port" child appears, initially under
+   **Other devices** with no driver — which looks like it failed, and has not.
+3. **Right-click that child → Update driver.** Windows Update usually has FTDI's
+   VCP driver; otherwise browse to the Santec folder, or take it from
+   `ftdichip.com/drivers/vcp-drivers`.
+4. It moves to **Ports (COM & LPT)** with a COM number. **Here: COM29.**
+
+**The baud rate is not in the manual** — the USB section documents the delimiter
+and the throughput and nothing about line settings. `p1_laser_check.py` probes
+9600 through 230400 and reports which answers `*IDN?` sensibly, rather than a
+guess being baked into the driver. Once known, pass `--baud`.
+
+The D2XX route (`ftd2xx`) would also work and needs no VCP checkbox, but VCP is
+simpler and `pyserial` is a better-behaved dependency. **Do not reach for
+`pyftdi`** — it wants the driver replaced with libusb/WinUSB, which would break
+Santec's own software.
 
 ### Reading the wavelength log — the commands that matter
 

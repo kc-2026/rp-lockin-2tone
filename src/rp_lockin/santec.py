@@ -9,19 +9,33 @@ is invisible in the output.
 
 **NOT YET RUN AGAINST A LASER.** That is P1 in `08-phase2-hardware.md`.
 
-Three ways this differs from `hardware.py`, each of which breaks a transport
-written for the other instrument:
+Two transports, because the laser offers GPIB, USB and LAN and which one is
+convenient is a bench question, not a design one:
+
+    laser = SantecTSL.over_serial("COM29")      # USB, via the FTDI VCP driver
+    laser = SantecTSL.over_lan("192.168.1.50")  # LAN
+
+Everything above the transport is identical either way -- same commands, same
+delimiter, same binary framing. Only the bytes' route changes.
+
+Three things this gets right that a transport copied from `hardware.py` would
+get wrong, each of which fails as something else:
 
   * **The delimiter is a bare CR**, not CRLF. Reusing the Red Pitaya's line
-    reader hangs waiting for a newline that never arrives, and the symptom is a
-    timeout indistinguishable from a dead cable.
+    reader hangs waiting for a newline that never arrives, and presents as a
+    dead cable.
   * **Binary payloads are little-endian.** The Red Pitaya's SCPI path is
     big-endian. Same IEEE 488.2 `#4nnnn` block header, opposite byte order.
   * **Two selectable command sets** change the payload itself: a legacy
     TSL-550-compatible set returns 4-byte integers in units of 0.1 pm, the
     native set returns 8-byte IEEE-754 doubles in metres. `read_wavelengths()`
-    works this out from the byte count rather than being told, so neither has to
-    be assumed.
+    works this out from the byte count rather than being told, because both
+    decode without error and only one is right.
+
+**On USB the manual never states a baud rate** -- it documents the delimiter and
+the throughput and nothing about line settings. Rather than bake in a guess, the
+default is 9600 and `scripts/p1_laser_check.py` probes the standard set and
+reports which one answers. Settle it there, then pass it explicitly.
 
 What the manuals do NOT say, and this module therefore does not assume: that
 there is exactly one logged wavelength per trigger pulse. See Q26, and
@@ -35,10 +49,83 @@ from dataclasses import dataclass
 
 import numpy as np
 
-__all__ = ["SantecTSL", "TriggerConfig", "TRIGGER_OUTPUT_MODES"]
+__all__ = [
+    "SantecTSL",
+    "TriggerConfig",
+    "TcpTransport",
+    "SerialTransport",
+    "TRIGGER_OUTPUT_MODES",
+    "COMMON_BAUD_RATES",
+]
 
 # :TRIGger:OUTPut -- TSL-775 manual p98, TSL-770 p98.
 TRIGGER_OUTPUT_MODES = {0: "none", 1: "stop", 2: "start", 3: "step"}
+
+# For the probe in p1_laser_check.py. The manual gives no baud rate for USB.
+COMMON_BAUD_RATES = (9600, 19200, 38400, 57600, 115200, 230400)
+
+
+class TcpTransport:
+    """Raw bytes over TCP, for the laser's LAN port."""
+
+    def __init__(self, host: str, port: int = 5000, timeout: float = 10.0):
+        self.description = f"{host}:{port}"
+        self._sock = socket.create_connection((host, port), timeout=timeout)
+        self._sock.settimeout(timeout)
+
+    def send(self, data: bytes) -> None:
+        self._sock.sendall(data)
+
+    def recv(self, n: int) -> bytes:
+        return self._sock.recv(n)
+
+    def close(self) -> None:
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+
+
+class SerialTransport:
+    """
+    Raw bytes over a serial port, for USB via the FTDI VCP driver.
+
+    `pyserial` is an OPTIONAL dependency (`pip install -e ".[laser]"`), imported
+    here rather than at module scope so the package still imports, and the test
+    suite still runs, on a machine that has never seen the laser.
+    """
+
+    def __init__(self, port: str, baud: int = 9600, timeout: float = 2.0,
+                 _serial=None):
+        self.description = f"{port} @ {baud} baud"
+        if _serial is not None:  # test seam; see tests/test_santec.py
+            self._ser = _serial
+            return
+        try:
+            import serial
+        except ImportError as exc:  # pragma: no cover - environment dependent
+            raise ImportError(
+                "the serial transport needs pyserial: "
+                'pip install -e ".[laser]"'
+            ) from exc
+        self._ser = serial.Serial(port=port, baudrate=baud, timeout=timeout)
+
+    def send(self, data: bytes) -> None:
+        self._ser.write(data)
+        self._ser.flush()
+
+    def recv(self, n: int) -> bytes:
+        # Read what is buffered, but block for at least one byte so the caller's
+        # loop makes progress. Asking pyserial for a big n directly would wait
+        # out the whole timeout on every read, which makes line reads crawl.
+        want = self._ser.in_waiting or 1
+        return self._ser.read(max(1, min(n, want)))
+
+    def close(self) -> None:
+        try:
+            self._ser.close()
+        except Exception:  # pragma: no cover - pyserial raises various things
+            pass
 
 
 @dataclass
@@ -68,32 +155,56 @@ class TriggerConfig:
 
 class SantecTSL:
     """
-    Minimal client for a TSL-770/775 over LAN.
+    Minimal client for a TSL-770/775, over USB/serial or LAN.
 
-    LAN rather than USB deliberately: the USB path needs an FTDI D2XX driver
-    installed, and the data volume here is trivial either way -- a 1 s sweep at
-    the 20 kHz maximum trigger rate is at most 20000 points, well under the
-    500,000 the laser can log and only ~160 kB on the wire.
+    Build one with a factory rather than the constructor:
 
-    This class is READ-MOSTLY on purpose. It will report what the laser is doing
-    and read its logs, but every method that changes laser state has `set_` in
-    its name, so nothing here alters a sweep by accident.
+        laser = SantecTSL.over_serial("COM29")       # USB, FTDI VCP driver
+        laser = SantecTSL.over_lan("192.168.1.50")   # LAN
+
+    Which transport is convenient is a bench question. Nothing above the
+    transport differs -- same commands, same bare-CR delimiter, same `#4nnnn`
+    binary framing, same little-endian payloads.
+
+    Data volume is trivial either way: a 1 s sweep at the laser's 20 kHz maximum
+    trigger rate is at most 20000 points, well under the 500,000 it can log, and
+    about 160 kB on the wire.
+
+    This class is READ-MOSTLY on purpose. It reports what the laser is doing and
+    reads its logs; every method that changes laser state has `set_` in its name,
+    so nothing here alters a sweep by accident.
     """
 
-    def __init__(self, host: str, port: int = 5000, timeout: float = 10.0):
-        self.host = host
-        self.port = port
-        self._sock = socket.create_connection((host, port), timeout=timeout)
-        self._sock.settimeout(timeout)
+    def __init__(self, transport):
+        self._t = transport
         self._buf = b""
+
+    @classmethod
+    def over_serial(cls, port: str, baud: int = 9600,
+                    timeout: float = 2.0) -> "SantecTSL":
+        """
+        USB, through the FTDI virtual COM port.
+
+        **The manual states no baud rate for USB** -- only the delimiter and the
+        throughput. 9600 is a starting point, not a documented value; use
+        `scripts/p1_laser_check.py` to probe, then pass the answer explicitly.
+        """
+        return cls(SerialTransport(port, baud, timeout))
+
+    @classmethod
+    def over_lan(cls, host: str, port: int = 5000,
+                 timeout: float = 10.0) -> "SantecTSL":
+        """LAN. 100BASE-TX, TCP/IP, port set on the laser's front panel."""
+        return cls(TcpTransport(host, port, timeout))
+
+    @property
+    def description(self) -> str:
+        return getattr(self._t, "description", "unknown transport")
 
     # -- plumbing ----------------------------------------------------------
 
     def close(self) -> None:
-        try:
-            self._sock.close()
-        except OSError:
-            pass
+        self._t.close()
 
     def __enter__(self) -> "SantecTSL":
         return self
@@ -102,26 +213,35 @@ class SantecTSL:
         self.close()
 
     def write(self, cmd: str) -> None:
-        # Bare CR. See the module docstring -- CRLF is the Red Pitaya's.
-        self._sock.sendall(cmd.encode("ascii") + b"\r")
+        # Bare CR. See the module docstring -- CRLF is the Red Pitaya's, and
+        # sending it here would leave a stray byte for the next read to trip on.
+        self._t.send(cmd.encode("ascii") + b"\r")
 
     def _read_exact(self, n: int) -> bytes:
         while len(self._buf) < n:
-            chunk = self._sock.recv(max(65536, n - len(self._buf)))
+            chunk = self._t.recv(max(4096, n - len(self._buf)))
             if not chunk:
-                raise ConnectionError("laser closed the connection mid-transfer")
+                raise ConnectionError(
+                    f"laser stopped responding mid-transfer after "
+                    f"{len(self._buf)} of {n} bytes. On serial, suspect the baud "
+                    f"rate; on LAN, the connection."
+                )
             self._buf += chunk
         out, self._buf = self._buf[:n], self._buf[n:]
         return out
 
     def _read_line(self) -> str:
         while b"\r" not in self._buf:
-            chunk = self._sock.recv(65536)
+            chunk = self._t.recv(4096)
             if not chunk:
-                raise ConnectionError("laser closed the connection")
+                raise ConnectionError(
+                    f"no reply terminated with CR (got {self._buf[:40]!r}). On "
+                    f"serial, a wrong baud rate looks exactly like this -- "
+                    f"either nothing, or bytes that are not ASCII."
+                )
             self._buf += chunk
         line, self._buf = self._buf.split(b"\r", 1)
-        return line.decode("ascii").strip()
+        return line.decode("ascii", errors="replace").strip()
 
     def query(self, cmd: str) -> str:
         self.write(cmd)
