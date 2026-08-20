@@ -297,3 +297,30 @@ def test_the_same_client_works_over_serial(laser):
     client = SantecTSL(transport)
     client.write("*IDN?")
     assert bytes(stub.written) == b"*IDN?\r", "bare CR over serial too"
+
+
+# ------------------------------------------------------- the command set
+
+
+def test_command_set_is_reported(laser):
+    for reply, want in (("1", "SCPI"), ("+1", "SCPI"),
+                        ("0", "Legacy"), ("+0", "Legacy")):
+        laser.replies[":SYST:COMM:CODE?"] = reply
+        assert connect(laser).command_set() == want
+
+
+def test_scalar_wavelength_refuses_the_legacy_command_set(laser):
+    """
+    The two sets answer :WAVelength? in different UNITS -- metres in SCPI,
+    nanometres in Legacy. Returning one as the other is wrong by 10^9 and
+    nothing in the number would say so, so this refuses instead of guessing.
+    """
+    laser.replies[":SYST:COMM:CODE?"] = "0"
+    with pytest.raises(RuntimeError, match="NANOMETRES"):
+        connect(laser).wavelength_m()
+
+
+def test_scalar_wavelength_works_in_scpi(laser):
+    laser.replies[":SYST:COMM:CODE?"] = "+1"
+    laser.replies[":WAV?"] = "+1.55000000E-006"
+    assert connect(laser).wavelength_m() == pytest.approx(1550e-9)

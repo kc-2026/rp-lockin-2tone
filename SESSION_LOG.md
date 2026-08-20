@@ -17,111 +17,150 @@ Template:
 
 ---
 
-## STATUS AT A GLANCE — updated 2026-08-14
+## HANDOFF / STATUS — updated 2026-08-14, read this first
 
-Read this before the entries below. They are chronological and long; this is
-where things actually stand.
+**Phase 0 and Phase 1 are COMPLETE.** 153 offline tests pass. Phase 2 has not
+started; all three of its original blockers are answered. **The live problem is
+that the Santec laser does not reply over USB.** Everything else is either done
+or waiting on that.
 
-**Phase 0 (offline) — COMPLETE. Phase 1 (loopback) — COMPLETE.**
-102 offline tests pass. Phase 2 has not started and is gated on a planning
-session with Kevin.
+### Where to look
 
-### Phase 0 — everything that needed no hardware
+| Want | Go to |
+|---|---|
+| What each doc is for | `docs/00-index.md` |
+| Any measured number | `docs/05-results.md` |
+| What the board does, and the traps it sets | `docs/04-hardware-reference.md` |
+| Phase 1, step by step | `docs/07-phase1-loopback.md` |
+| Phase 2: risks U1–U12, steps P1–P6 | `docs/08-phase2-hardware.md` |
+| Anything undecided | `docs/10-open-questions.md` |
+| Agent ground rules and traps | `CLAUDE.md` |
 
-| Step | In plain words | State |
-|---|---|---|
-| Signal processing | Turn a raw recording into an amplitude trace (the lock-in maths) | done |
-| Waveform construction | Build the drive signals the board will play | done |
-| Capture planning | Work out how long, how fast, and how much memory a sweep needs | done |
-| DUT emulator | Fake the experiment's physics so the maths can be checked against a known answer | done |
-| Test suite | 102 tests, no hardware needed | done, must stay green |
+### THE ONE LIVE BLOCKER: the laser is silent
 
-### Phase 1 — loopback: the board wired to itself, nothing else connected
+Kevin has serial (**COM29**), the laser trigger output on a BNC, and the laser
+light. P1 ran and got **nothing back at all**.
 
-**H1 — can we talk to the board, and are our commands right?**
+**Eliminated — do not retry these:** cable, driver, COM port, baud rate (6
+tried), terminator (CR/LF/CRLF), flow control (both states), and the driver
+interface — the device enumerates cleanly over **both** VCP and D2XX
+(`desc='TSL-775' serial='2601S967' id=0x2428:0116 flags=0`) and is silent on
+both. The host side is done. `scripts/laser_comms_diag.py` reruns all of it and
+explains what each outcome means.
 
-| Step | In plain words | State |
-|---|---|---|
-| H1.1 | Write down which operating system the board runs | done — OS 2.00, build 37 |
-| H1.2 | Make sure it is the 250-12 model, not the 125-14 | done — but `*IDN?` cannot tell you; confirmed by label and `monitor -f` |
-| H1.3 | Confirm it really samples at 250 million times a second | done, by measurement |
-| H1.4 | Find out how much capture memory is reserved | done — 2 MiB as shipped, enlarged to 128 MiB |
-| H1.5 | Check every command we send actually works | done — one whole function had to be rewritten, not just corrected |
-| H1.6 | Confirm bulk data comes back correctly | done |
+**The EOI hypothesis is DEAD.** The manual (p55) presents the delimiter as a
+four-valued setting including EOI, which would have explained everything — but
+Kevin reports **no delimiter option on the front panel**. So the USB delimiter is
+CR as sections 7.2.2 and 7.3.2 state, and CR was tried.
 
-**H2 — can the board produce the drive signals?**
+**What is left to try, in order:**
 
-| Step | In plain words | State |
-|---|---|---|
-| H2.1 | Make a modulated 80 MHz signal, check the three expected tones appear | done — all three exactly where predicted |
-| H2.2 | Check the modulation depth is the right size, not just present | done — 0.512 / 0.488 against 0.500 ideal |
-| H2.3 | Check the looping waveform does not glitch each time it wraps | done — worst junk 48 dB down |
-| H2.4 | Run both output channels at once | done — within 0.6% of each other |
-| H2.5 | Check the two outputs keep a repeatable phase relationship | **FAILED** — scatters 71–82°. Kevin ruled it does not matter, because we only deliver amplitude. Its one surviving risk was later killed by H3.2 |
+1. **Line settings other than 8N1.** The sweep covered baud, terminator and flow
+   control but **not data bits, parity or stop bits**. 7E1 and 8E1 are worth a
+   look. **This is the biggest untried gap and it is cheap.**
+2. **Power-cycle the laser.** A REMOTE state exists (p54) in which all front-panel
+   keys but LOCAL are disabled. Free to rule out.
+3. **Santec's own software, if supplied.** If it connects, the laser is listening
+   and our settings are wrong; if it does not, the fault is not ours. **Highest
+   information per minute of anything on this list.**
+4. **LAN.** Sidesteps all of it. `SantecTSL.over_lan()` is written, and the LAN
+   section documents its own delimiter. Needs an IP set on the laser
+   (Other → Communication → LAN).
 
-**H3 — can we measure what comes back?**
+### Command set: use SCPI, and it is not cosmetic
 
-| Step | In plain words | State |
-|---|---|---|
-| H3.1 | Does a bigger signal read as proportionally bigger? | done — linear over 2.4 decades |
-| H3.2 | Does the phase stay steady during one recording? | done — 0.002° over 28 ms |
-| H3.3 | How small a signal is lost in the noise? | done — **σ = 3.57 µV per point; a real signal needs ≥36 µV to be clearly visible.** Revised twice; do not quote the older 2.96 µV |
-| H3.4 | Does narrowing the filter reduce noise by the expected amount? | done — holds to 2–4% across 8× |
-| H3.5 | Does the filter reject signals at the wrong frequency? | done — **matches the design to 0.0 dB** |
+Kevin's front panel offers **Legacy** or **SCPI**. **Choose SCPI.**
 
-**H4 — can we find the laser's trigger in the recording?**
+The two answer the *same query in different units*: SCPI gives `:WAVelength?` in
+**metres** and the log as 8-byte doubles in metres; Legacy gives **nanometres**
+and the log as 4-byte integers in 0.1 pm. `read_wavelengths()` infers the log
+format from the byte count and is safe either way, but **scalars are not**.
+`wavelength_m()` now calls `command_set()` and **raises rather than returning
+nanometres as metres** — an error of 10⁹ that nothing in the number would reveal.
 
-| Step | In plain words | State |
-|---|---|---|
-| H4.1 | Play a known pulse pattern and recover it | done — zero of 732 intervals wrong |
-| H4.2 | How precisely can we time an edge? | done — 0.01 ns, but that is the *board's* contribution only |
-| H4.3 | Do the two inputs record at exactly the same instant? | done — aligned to 0.0005 of a sample |
-| H4.4 | Start a recording from the trigger, and know where the trigger sits in it | done — **this is the one that matters now** (see below) |
+### Ready to run the moment serial works
 
-**H5 — can the board play a waveform longer than its buffer?**
+```bash
+python scripts/p1_laser_check.py --serial COM29     # read-only, probes baud
+python scripts/laser_comms_diag.py --serial COM29   # read-only, why is it silent
+```
 
-| Step | In plain words | State |
-|---|---|---|
-| H5.1 | Is "Deep Memory Generation" available? | done — **NO, and permanently.** The ceiling is 16384 points = 65.5 µs |
-| H5.2 / H5.3 | Play a long fake DUT response | **superseded** — H6.5 instead stepped the amplitude during the capture |
-| H5.4 | Fall back to short waveforms and record the limit | done, by taking that route |
+P1 settles **Q24** (the two manuals define `:TRIGger:OUTPut:SETTing` with
+**opposite** encodings — set it and read it back, never hardcode a literal),
+**half of Q26**, and whether `santec.py` works at all. **It has never had a
+reply.**
 
-**H6 — a full one-second sweep**
+### Then P2, which needs only the BNC already fitted
 
-| Step | In plain words | State |
-|---|---|---|
-| H6.1 | Enlarge the capture memory to 512 MB | **deliberately not done.** Buys 1.1 dB for a risk of a non-booting board, and the reason it was wanted has since evaporated |
-| H6.2 | Record a full second on both channels | done — 32.8 M samples each, 97.8% of the available memory |
-| H6.3 | Turn that into exactly 5000 trace points | done — **exactly 5000, at exactly 200.000 µs spacing** |
-| H6.4 | Start recording *before* the trigger, so the filter is ready | done — and proved that without it the trace silently starts late |
-| H6.5 | The whole chain end to end | done — **seven amplitude levels all within 1%** |
+Confirm the trigger fires the capture, then compare the pulse count in a Red
+Pitaya capture against `:READout:POINts?`. That **completes Q26** and settles
+U7, U11 and U12. Two things: **IN2 must be on HV (±20 V)** because the trigger is
+3.3 V, and gain/coupling are **per channel**, so IN1 stays on LV.
 
-**H7 — does it survive things going wrong?**
+### Tier 1 — needs no hardware, and is NOT done
 
-| Step | In plain words | State |
-|---|---|---|
-| H7.1 | Repeat the whole sweep 20 times and see how much it varies | done — **20/20, amplitude repeats to 0.003%** |
-| H7.2 | What if the trigger never comes? | done — fails cleanly after 8 s. **Fixing it also fixed a defect that left the board unusable** |
-| H7.3 | What if the connection drops mid-recording? | done — all three ways of dropping it fail cleanly, board stays healthy |
-| H7.4 | Are the outputs off after a crash? | **FAILED, then fixed.** They used to stay on. `close()` now switches them off |
+The best use of time while the laser is uncooperative:
 
-### What is NOT done, and is not meant to be
+1. **The end-to-end pipeline.** `demodulate` → `find_trigger_edges` →
+   `logged_point_times` → `map_to_wavelength` → `write_trace_csv` all exist and
+   are tested individually, but **nothing joins them**. That path is the
+   deliverable.
+2. **A synthetic full sweep in the emulator** — two AOM curves, DUT
+   nonlinearity, detector noise at ~11 µV, a trigger train, a matching laser
+   log — so the pipeline can be checked against known truth. This is the Phase 0
+   method that caught three real bugs, applied to code that has never run end to
+   end.
+3. **Bench scripts for P3–P6**, in the style of `p1_laser_check.py`.
+4. **A code-review pass.** Nothing written on 2026-08-14 has had a second look.
 
-- **H6.1** — the memory move. Rejected, and no longer needed.
-- **H5.2 / H5.3** — superseded by how H6.5 was done.
-- **U1–U12** — the list of things loopback physically cannot test. Enumerated in
-  `07-phase1-loopback.md`, and the whole point of the Phase 2 planning session.
+### Five traps that have already cost time
 
-### What comes next
+1. **A misspelled SCPI setting command returns zero bytes, exactly like a correct
+   one.** Verify by set-then-read-back, never by absence of an error. The single
+   most expensive lesson here.
+2. **`ACQ:RST` silently reverts coupling to DC and gain to LV**, and both
+   deep-capture paths issue it. `setup_acquisition` now remembers and restores;
+   do not undo that.
+3. **The capture needs a TAIL as well as pre-roll.** `LockinResult.t` compensates
+   group delay, so a record stopping at trigger + 1 s yields 4943 points, not
+   5000 — no error, the trace just ends early. Use `planning.recommended_tail()`.
+4. **`mean(R)` reads 1.25σ with no signal at all.** Use
+   `LockinResult.amplitude()`. **Do not use `debiased_amplitude()`** — measured,
+   it is worse than raw R between 2σ and 6σ, which is exactly our range.
+5. **Do not "fix" the RF drive level.** Kevin's CW tuning is correct, because the
+   drive is depth-1 AM and the AOM is switched fully on and off rather than held
+   at a bias point. Three attenuator recommendations were made and all three
+   withdrawn.
 
-1. **The Santec laser driver.** This is the critical path and it is **blocked on
-   Q22**: the TSL-770/775 command set, the port settings, and whether the
-   wavelength table streams during the sweep or is dumped afterwards. Everything
-   that does *not* need the command set is already written and tested
-   (`wavelength.py`). **Do not guess the commands** — on this board a wrong
-   command returns zero bytes exactly like a right one.
-2. **The Phase 2 planning session**, with Kevin, before anything is physically
-   connected. This is a hard gate.
+### Judgement calls not to relitigate
+
+- **No attenuator.** Withdrawn three times over.
+- **Decimation 8**, and **no device-tree memory move**. The trigger-recovery
+  objection evaporated when the wavelength axis moved to the laser.
+- **AM with carrier**, not a pure product — puts the modulation at f1 rather than
+  2f1, hardware-verified by H2.2.
+- **H2.5 failed and was downgraded** by Kevin; the deliverable is amplitude only.
+- **No averaging** (Q13) and **CSV output** (Q15), both Kevin's decisions.
+
+### Two habits this session learned the hard way
+
+- **When a claim is corrected, sweep the whole repo for it.** The "wavelength
+  against time" claim was fixed three times in three different files, because it
+  was patched where noticed rather than searched for.
+- **A manual describing something differently from how a person described it is
+  not the same as the person being wrong** — they may be describing different
+  layers of one thing. Kevin's Q20 answer was recorded as wrong in four
+  documents, and was not.
+
+### Still wanted from Kevin
+
+- An **optical damage threshold** for the PDA05CF2 — the manual gives saturation
+  (~0.96 mW) but no damage figure
+- Whether there is a **second ZHL-1-2W+**; the design needs two
+- **Q17**, the Phase 2 success criteria, and the **unattended-operation
+  boundary** — both deferred at his request
+- **Do not restart the board's SCPI server.** That is Kevin's, by request, and
+  the deny list enforces it
 
 ---
 

@@ -394,6 +394,40 @@ class SantecTSL:
         """`:WAVelength:SWEep[:STATe]?` -- the current sweep status."""
         return self.query_int(":WAV:SWE?")
 
+    def command_set(self) -> str:
+        """
+        `:SYSTem:COMMunicate:CODe?` -- "SCPI" or "Legacy".
+
+        **Worth knowing before trusting any scalar wavelength.** The two sets
+        return DIFFERENT UNITS from the same query: SCPI answers in metres,
+        Legacy in nanometres. A driver that ignores this is right in one mode and
+        wrong by a factor of 10^9 in the other, with nothing to show it.
+
+        The binary log is safe either way -- `read_wavelengths()` infers its
+        format from the byte count -- but scalars are not.
+        """
+        raw = self.query(":SYST:COMM:CODE?").strip()
+        # Legacy answers "0"/"1", SCPI "+0"/"+1"; either way 1 is SCPI on the
+        # 770/775. A model that spells it out is accepted as-is.
+        if raw.lstrip("+-").isdigit():
+            return "SCPI" if int(raw) == 1 else "Legacy"
+        return raw
+
     def wavelength_m(self) -> float:
-        """Present output wavelength. Units depend on the command set."""
+        """
+        Present output wavelength, **in metres**.
+
+        Requires the SCPI command set, which is what this project uses -- see
+        `command_set()` for why mixing them is dangerous. Raises rather than
+        silently returning nanometres if the laser is in Legacy.
+        """
+        cs = self.command_set()
+        if cs != "SCPI":
+            raise RuntimeError(
+                f"the laser is in the {cs} command set, which answers "
+                f":WAVelength? in NANOMETRES rather than metres. Returning that "
+                f"as metres would be wrong by 10^9. Switch the laser to SCPI "
+                f"(Other tab -> Communication), or read the raw value with "
+                f"query_float(':WAV?') and convert deliberately."
+            )
         return self.query_float(":WAV?")

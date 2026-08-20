@@ -8,7 +8,9 @@ but is not watching continuously.
 
 1. This file.
 2. `docs/01-overview.md` — what is being built and why.
-3. `SESSION_LOG.md` — what previous sessions did and what state things are in.
+3. **`SESSION_LOG.md` — its "HANDOFF / STATUS" block at the very top.**
+   That is the current state, the one live blocker, what is ready to run, and
+   the judgement calls not to relitigate. Read it before touching anything.
 4. Whatever doc covers the area you are about to touch.
 
 **At the end of every session, append to `SESSION_LOG.md`.** Multiple sessions
@@ -84,7 +86,7 @@ This distinction matters more than usual here.
 
 | Area | Status |
 |---|---|
-| `src/rp_lockin/dsp.py` | **Trusted.** 147 offline tests. Do not change without re-running them. |
+| `src/rp_lockin/dsp.py` | **Trusted.** 153 offline tests. Do not change without re-running them. |
 | `planning.py`, `emulator.py` | **Trusted.** Same suite. |
 | `waveforms.py` — `make_am_table`, `plan_two_tone_grid` | **Trusted and hardware-verified.** Use these to drive the board. |
 | `waveforms.py` — `make_am_waveform`, `plan_two_tone` | **Sound arithmetic, WRONG hardware model.** Kept because their tests are worth having. Driving the board with them produces no output at all. |
@@ -279,7 +281,7 @@ move it into the relevant doc and note it in the session log.
 python -m venv .venv
 .venv/Scripts/python -m pip install -e ".[dev]"     # Windows
 .venv/bin/python -m pip install -e ".[dev]"         # Linux
-pytest -q                                            # expect 147 passed
+pytest -q                                            # expect 153 passed
 ```
 
 Most machines here run Windows; keep the suite passing on it. One test uses
