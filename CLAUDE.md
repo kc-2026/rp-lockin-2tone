@@ -64,9 +64,13 @@ Loopback phase only, for now. Within that:
 
 - **Never exceed the Red Pitaya's own specifications.** Output range is
   software-selectable; do not command amplitudes outside it.
-- **The DUT, the amplifier chain, the AOMs and the photodetector are NOT
-  connected** during loopback work. If you believe a test needs them, stop and
-  write the request into `SESSION_LOG.md` — do not improvise a way around it.
+- **As of 2026-08-14 the laser, its trigger BNC and the laser light ARE
+  connected**, but the DUT, amplifiers, AOMs and photodetector are **not**. If
+  you believe a test needs those, stop and write the request into
+  `SESSION_LOG.md` — do not improvise a way around it.
+- **Reads are always safe; writes to the laser are not.** `*IDN?` and the
+  `:READout:*` queries cannot disturb anything. Do not start a sweep or change a
+  laser setting without asking — the light goes somewhere.
 - **Leave outputs off when you finish.** `tests/hardware/conftest.py` does this
   automatically; preserve that behaviour.
 - Going beyond loopback requires a dedicated planning session with the human.
@@ -101,9 +105,10 @@ This distinction matters more than usual here.
 produces a connection error rather than corrupted physics. **Keep it that way.**
 Do not move signal processing into the transport layer.
 
-Your first hardware task is H1 in `docs/07-phase1-loopback.md`: walk `hardware.py`
-method by method and confirm each SCPI command against the board's actual OS
-version. Every method carries a `VERIFY:` note naming what to check.
+**Phase 1 is complete, so H1 is history** — every method in `hardware.py` has run
+against the board. The live task is in the HANDOFF block at the top of
+`SESSION_LOG.md`; at the time of writing it is the Santec laser not answering
+over USB, and the Tier 1 work that needs no hardware at all.
 
 ### Testing discipline
 
@@ -190,7 +195,7 @@ pytest -q
 
 ## Current state — updated 2026-08-14
 
-**Phase 0 and Phase 1 are both COMPLETE.** 147 offline tests pass. Every
+**Phase 0 and Phase 1 are both COMPLETE.** 153 offline tests pass. Every
 loopback test in `07-phase1-loopback.md` has been run against the board, except two
 that were deliberately skipped and are recorded as such (H6.1, H5.2/H5.3).
 

@@ -35,16 +35,46 @@ session's **output** goes in `09-phase2-plan.md`, which does not exist yet.
 - **The trigger worry got better.** The real trigger is 3.3 V, 25 µs wide, at
   most 20 kHz — 780 samples per pulse at decimation 8. Every anxiety about
   missed edges came from a synthetic 20 ns pattern that looks nothing like it.
-- **The attenuator moved 20 dB → 10 dB → 6 dB** as measurements replaced assumptions.
-  Kevin measured 800 mVpp at 80 MHz on a **1 MΩ** scope, and the amplifier's
-  50 Ω halves that — so the amplifier sees −4 dBm and runs **5 dB BELOW**
-  compression. Earlier notes here said it was saturated; it is not. The same
-  reading also gives **14 dB of board rolloff at 80 MHz**, which answers U1.
-  **An RF voltage without its impedance is not a measurement** — that is what
-  cost three revisions.
+- **No attenuator, and the drive level must not be changed.** Three separate
+  recommendations (20, 10 and 6 dB) were all withdrawn: the drive is depth-1 AM,
+  so the AOM is switched fully on and off rather than held at a bias point, and
+  Kevin's CW tuning is within 0.6% of maximising the signal at f1. Reasoning in
+  `04-hardware-reference.md`, recorded because the mistake is easy to repeat.
+  The measurement behind it also gives **14 dB of board rolloff at 80 MHz**,
+  which answers U1, and the amplifier has **14 dB of margin** to its damage
+  rating as wired.
 - **A new assumption surfaced (Q26).** Neither manual says the laser logs one
   wavelength per trigger pulse, and the index-based mapping depends on it. One
   command and one capture settles it at P1.
+
+---
+
+## 0. THE LIVE BLOCKER — the laser does not answer
+
+**P1 ran on 2026-08-14 and got nothing back.** Serial is present as **COM29**
+(USB, via the FTDI VCP driver), the trigger BNC is fitted and the laser light is
+available — but the laser replies to nothing.
+
+**Eliminated, do not retry:** cable, driver, COM port, baud rate (6), terminator
+(CR/LF/CRLF), flow control (both), and the driver interface — the device
+enumerates cleanly over **both VCP and D2XX** (`desc='TSL-775'
+serial='2601S967' id=0x2428:0116 flags=0`) and is silent on both. The host side
+is done; `scripts/laser_comms_diag.py` reruns it all and explains each outcome.
+
+**What is left, in order:**
+
+1. **Line settings other than 8N1** — data bits, parity and stop bits were never
+   swept. 7E1 and 8E1. **The biggest untried gap, and cheap.**
+2. **Power-cycle the laser**, to clear a stuck REMOTE state (manual p54).
+3. **Santec's own software**, if supplied. Connects → the laser is listening and
+   our settings are wrong. Does not → the fault is not ours. **Highest
+   information per minute of anything here.**
+4. **LAN**, which sidesteps all of it. `SantecTSL.over_lan()` is written.
+
+**Command set: use SCPI** (Kevin's front panel offers Legacy or SCPI, and no
+delimiter option — which killed the leading hypothesis). Not cosmetic: the two
+answer the same query in different units, so `wavelength_m()` now checks and
+raises rather than returning nanometres as metres.
 
 ---
 
@@ -55,9 +85,9 @@ session's **output** goes in `09-phase2-plan.md`, which does not exist yet.
 Both manuals read; the command set, data formats, interfaces and delimiter are
 in `04-hardware-reference.md`. **The driver is unblocked.**
 
-Still needed, but only on the bench rather than from you: **which interface the
-laser is actually cabled on** (GPIB, USB or LAN are all supported) and its port
-settings. That is a look at the back panel, not a research question.
+**Cabled on USB, enumerating as COM29** (Kevin, 2026-08-14), with the FTDI VCP
+driver bound. The command set is set to **SCPI**. **It still does not answer** —
+see section 0.
 
 ### ~~The photodetector~~ — ANSWERED 2026-08-14
 
@@ -87,8 +117,8 @@ recommending 20, 10 and 6 dB were withdrawn — see `04-hardware-reference.md`.
 The amplifier has 14 dB of margin to its damage rating as wired.
 
 **One thing still to confirm: is there a second ZHL-1-2W+?** The design drives
-two AOMs, one per arm, so it needs two amplifiers and two attenuators. One
-datasheet proves the model, not the count.
+two AOMs, one per arm, so it needs two amplifiers. One datasheet proves the
+model, not the count. (No attenuators are needed — see above.)
 
 ---
 
@@ -99,8 +129,8 @@ These need an answer but not a measurement. They can be settled in the session.
 | # | Decision | Why it matters now |
 |---|---|---|
 | Q17 | **Phase 2 success criteria** | Deliberately deferred until Phase 1 results were in. They are in |
-| Q13 | Is averaging across repeated sweeps wanted? | Changes buffer management, and whether phase must stay coherent between sweeps |
-| Q15 | Output file format for the traces | Currently `.npz`. Cheap to change now, annoying later |
+| ~~Q13~~ | ~~Averaging across sweeps?~~ **DECIDED: no.** Detuning 1 is swept across ~11–13 discrete settings of detuning 2, so each sweep is its own measurement and phase need not stay coherent between them |
+| ~~Q15~~ | ~~Output format?~~ **DECIDED: CSV** for the transfer function, with the raw capture kept as `.npz` alongside. Implemented in `output.py` |
 | Q14 | Is a GUI wanted, and what would it show? | Phase 3, but the answer shapes what the driver exposes |
 | — | **What may I command unattended, and what needs you present?** | Loopback has been safe to run alone. With a laser and amplifiers connected that is a different question, and I would rather have the boundary explicit than assume it |
 
@@ -108,7 +138,7 @@ These need an answer but not a measurement. They can be settled in the session.
 
 ## 3. What I need physically
 
-- **A serial cable / adapter** for the laser, matching whatever Q22 says.
+- ~~A serial cable for the laser~~ — **done: USB, as COM29.** But see section 0; it is connected and the laser still does not answer.
 - **An order of connection that fails safe** — my draft is below, for you to
   correct.
 - **Optional but valuable: a calibrated reference** — either a known source into
@@ -232,7 +262,7 @@ Everything electrical, into a load or a scope, before anything optical exists.
 
 | Step | What it establishes |
 |---|---|
-| P3.1 | Red Pitaya output level at the amplifier input, with attenuators if needed — confirm it is inside the amplifier's safe input |
+| P3.1 | Red Pitaya output level at the amplifier input — confirm it is inside the amplifier's safe input. Expect ~−4 dBm against a +10 dBm rating |
 | P3.2 | Amplifier output level — confirm it is inside the AOMs' rating **before** they are connected |
 | P3.3 | Absolute 80 MHz drive amplitude at what will be the AOM input (**U1**) |
 | P3.4 | Spectrum of each amplifier output on its own — catches gross nonlinearity early |
@@ -243,17 +273,17 @@ Everything electrical, into a load or a scope, before anything optical exists.
 **This is the first step that can damage something, and the first that needs you
 present.**
 
-**Fit the attenuators before the amplifiers are powered at all.** Without them the
-board at full scale sits exactly on the amplifier's +10 dBm damage rating; with
-them the board cannot reach it whatever it is commanded to do.
+**Do not add attenuators and do not retune the drive.** The amplifier sees about
+−4 dBm against a +10 dBm rating — 14 dB of margin — and the board's 14 dB rolloff
+at 80 MHz means it cannot get closer. See `04-hardware-reference.md`.
 
 **Connect the AOM before applying RF.** The amplifier datasheet warns that an open
 load can damage it, and derates the maximum input by 20 dB with no load.
 
-**P3.1 has a specific job beyond checking a level:** measure what the board
-actually delivers at 80 MHz. Its own 60 MHz rolloff means the real output is
-below the +10 dBm the budget assumes, so the effective attenuation is higher than
-nominal — which matters if the signal later turns out too small.
+**P3.1 confirms on a 50 Ω load what was measured on a 1 MΩ scope.** The board
+showed 800 mVpp open-circuit at 80 MHz; into the amplifier's 50 Ω that halves,
+giving −4 dBm. Worth confirming directly, since the whole drive-level argument
+rests on it and an RF voltage without its impedance is not a measurement.
 **Pass:** levels confirmed inside every rating, with margin, and no gross
 nonlinearity.
 **Closes:** U1, part of U2.

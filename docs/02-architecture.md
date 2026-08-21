@@ -6,10 +6,14 @@
   waveforms.py  ── drive construction, frequency planning
   planning.py   ── capture sizing: memory, decimation, settling, pre-roll, tail
   emulator.py   ── synthetic DUT output + ground truth (loopback testing)
-  dsp.py        ── demodulation                          [TRUSTED, 102 tests]
+  dsp.py        ── demodulation                          [TRUSTED, 153 tests]
   wavelength.py ── trace → wavelength, clock check, alignment guards
                                                          [TRUSTED offline,
                                                           never seen a laser]
+  santec.py     ── Santec TSL-770/775 transport, USB or LAN
+                                                         [NEVER RUN AGAINST
+                                                          A LASER]
+  output.py     ── CSV deliverable + raw .npz
   hardware.py   ── SCPI transport            [VERIFIED against the board,
                                               Phase 1 complete 2026-08-14]
 ```
@@ -28,7 +32,7 @@ Santec transport is not written, and must not be written from memory — see
 ## Signal chain
 
 ```
-IN1 samples ─► mix with e^(-j2π·1MHz·t) ─► multistage decimating FIR ─► X, Y
+IN1 samples ─► mix with e^(-j2π·991.821kHz·t) ─► decimating FIR chain ─► X, Y
                                                                         │
 IN2 samples ─► threshold + interpolate ─► trigger edge times ───────────┤
                                                                         ▼

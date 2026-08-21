@@ -7,7 +7,8 @@ deliver amplitude against laser wavelength across a ~1 second sweep.
 ## Status, in one line
 
 **Phase 0 and Phase 1 are complete. Phase 2 has not started and is gated on a
-planning session.** 102 offline tests pass. Nothing beyond loopback cables is
+planning session. The live blocker is that the Santec laser does not answer over
+USB — see `08-phase2-hardware.md` section 0, and Q27.** 153 offline tests pass. Nothing beyond loopback cables is
 connected.
 
 ## What each document is for

@@ -152,7 +152,7 @@ planning, DUT emulator, test suite. No hardware. *Complete.*
 receive path, trigger digitisation, and long captures, using only cables from
 the board to itself. Detailed in `07-phase1-loopback.md`.
 ***COMPLETE — 2026-08-14.*** Every loopback test passed, except H6.1 and
-H5.2/H5.3 which were deliberately skipped and recorded as such. 102 offline
+H5.2/H5.3 which were deliberately skipped and recorded as such. 153 offline
 tests pass. A plain-language status of every step is at the top of
 `SESSION_LOG.md`.
 

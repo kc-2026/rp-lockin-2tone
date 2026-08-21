@@ -23,7 +23,7 @@ offline code with no hardware dependency, and it has never seen a laser.
 ## The test suite
 
 ```bash
-pytest                      # 147 tests, no hardware. Must always pass.
+pytest                      # 153 tests, no hardware. Must always pass.
 pytest -m "not slow"        # quick loop while iterating
 ```
 

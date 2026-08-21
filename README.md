@@ -14,12 +14,20 @@ No FPGA development. Everything runs on a control PC over the network.
 
 ## Status
 
-Phase 0 (offline) complete — 62 tests pass, no hardware touched.
-Phase 1 (loopback) not started.
+**Phase 0 (offline) and Phase 1 (loopback) are both COMPLETE** — 153 offline
+tests pass, and every loopback test has run against the board.
 
-The signal processing is validated. **The SCPI hardware layer has never been
-run against a board** and should be treated as a draft until test plan H1 is
-done.
+**Phase 2 (hardware in the loop) has not started** and is gated on a planning
+session. Its three original blockers are all answered; see
+`docs/08-phase2-hardware.md`.
+
+**The live problem is that the Santec laser does not reply over USB.** The host
+side has been eliminated — see the HANDOFF block at the top of `SESSION_LOG.md`,
+which is the fastest way to learn the current state.
+
+Headline measured numbers: noise floor **σ = 3.57 µV** per trace point on the
+board, so a signal needs **≥36 µV**; with the real photodetector expect nearer
+**11 µV** and **~120 µV**. Full set in `docs/05-results.md`.
 
 ## Install
 
