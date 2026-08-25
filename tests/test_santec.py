@@ -324,3 +324,92 @@ def test_scalar_wavelength_works_in_scpi(laser):
     laser.replies[":SYST:COMM:CODE?"] = "+1"
     laser.replies[":WAV?"] = "+1.55000000E-006"
     assert connect(laser).wavelength_m() == pytest.approx(1550e-9)
+
+
+# ------------------------------------------- setting the stepping laser
+
+class SequencedLaser(FakeLaser):
+    """FakeLaser, but a command may answer differently each time it is asked.
+
+    `set_wavelength_m` polls the same query repeatedly and decides on the basis
+    of how the answers CHANGE, so a fixed reply table cannot exercise it.
+    """
+
+    def __init__(self, sequences=None, replies=None):
+        super().__init__(replies)
+        self.sequences = {k: list(v) for k, v in (sequences or {}).items()}
+
+    def send(self, data: bytes) -> None:
+        cmd = data[:-1].decode("ascii")
+        if cmd in self.sequences:
+            self.sent.append(cmd)
+            seq = self.sequences[cmd]
+            value = seq.pop(0) if len(seq) > 1 else seq[0]
+            self._out += str(value).encode() + b"\r"
+            return
+        super().send(data)
+
+
+def _scpi(**kw):
+    """A laser in the SCPI command set, which set_wavelength_m insists on."""
+    kw.setdefault("replies", {})
+    kw["replies"].setdefault(":SYST:COMM:CODE?", "+1")
+    return SequencedLaser(**kw)
+
+
+def test_setting_a_wavelength_in_nanometres_is_refused():
+    """1550 instead of 1.55e-6 would command 1550 METRES.
+
+    The read direction already guards this (wavelength_m raises in Legacy); the
+    write direction is worse, because it reaches the hardware before anything
+    can notice, so it is refused on the value alone before a byte is sent.
+    """
+    fake = _scpi()
+    rp = connect(fake)
+    with pytest.raises(ValueError, match="METRES"):
+        rp.set_wavelength_m(1550.0)
+    assert fake.sent == [], "nothing may be sent to the laser on a bad value"
+
+
+def test_setting_a_wavelength_is_refused_in_the_legacy_command_set():
+    fake = SequencedLaser(replies={":SYST:COMM:CODE?": "+0"})
+    rp = connect(fake)
+    with pytest.raises(RuntimeError, match="Legacy"):
+        rp.set_wavelength_m(1.55e-6)
+    assert not any(c.startswith(":WAV ") for c in fake.sent)
+
+
+def test_setting_a_wavelength_waits_for_the_laser_to_settle():
+    """Two on-target reads are required, not one."""
+    target = 1.55e-6
+    fake = _scpi(sequences={":WAV?": [1.40e-6, 1.52e-6, target, target]})
+    rp = connect(fake)
+    got = rp.set_wavelength_m(target, poll=0.001, timeout=5.0)
+    assert got == target
+    assert f":WAV {target:.12E}" in fake.sent
+
+
+def test_a_laser_slewing_through_the_target_is_not_mistaken_for_settled():
+    """The reading taken mid-slew is a wavelength it was PASSING.
+
+    One on-target sample followed by a different one means it had not arrived.
+    Accepting the first would tag the whole 5000-point trace with a wavelength
+    the second laser was never parked at -- and nothing downstream could tell.
+    """
+    target = 1.55e-6
+    fake = _scpi(sequences={":WAV?": [target, 1.58e-6, 1.60e-6]})
+    rp = connect(fake)
+    with pytest.raises(RuntimeError, match="did not reach"):
+        rp.set_wavelength_m(target, poll=0.001, timeout=0.05)
+
+
+def test_a_laser_that_never_moves_raises_and_names_the_likely_cause():
+    """The SET form of :WAVelength is inferred, not quoted from a manual.
+
+    An unsupported command returns zero bytes on this laser, so 'wrong command
+    string' and 'laser never moved' look identical. The error has to say so.
+    """
+    fake = _scpi(sequences={":WAV?": [1.40e-6]})
+    rp = connect(fake)
+    with pytest.raises(RuntimeError, match="not what this driver assumes"):
+        rp.set_wavelength_m(1.55e-6, poll=0.001, timeout=0.05)

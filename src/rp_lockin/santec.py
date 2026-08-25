@@ -7,6 +7,14 @@ project a misspelled SCPI command returns nothing and looks exactly like a
 correct one, and the wavelength axis is the one subsystem whose silent failure
 is invisible in the output.
 
+**One exception, added 2026-08-25: `set_wavelength_m()`.** The manuals' command
+tables carry the QUERY `:WAVelength?` but not its set form, so that one string
+is inferred rather than quoted. It is safe to infer only because the method
+verifies itself -- it polls the read-back until the laser is on target and has
+stopped moving, so a wrong command string raises on timeout instead of passing
+silently. Do not copy that pattern to a command whose effect cannot be read
+back; there the silence would win.
+
 **NOT YET RUN AGAINST A LASER.** That is P1 in `08-phase2-hardware.md`.
 
 Two transports, because the laser offers GPIB, USB and LAN and which one is
@@ -45,6 +53,7 @@ there is exactly one logged wavelength per trigger pulse. See Q26, and
 from __future__ import annotations
 
 import socket
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -412,6 +421,69 @@ class SantecTSL:
         if raw.lstrip("+-").isdigit():
             return "SCPI" if int(raw) == 1 else "Legacy"
         return raw
+
+    def set_wavelength_m(self, wavelength: float, tolerance: float = 1e-12,
+                         timeout: float = 30.0, poll: float = 0.2) -> float:
+        """
+        Drive the laser to `wavelength` METRES and wait until it gets there.
+        Returns the wavelength actually reached.
+
+        This is the stepping laser's path, not the sweeping one: the 11-step
+        arm never sweeps in real time, so there is no trigger train and no log
+        to index -- it is set, allowed to settle, and read.
+
+        **Settling is decided by measurement, not by a timer.** No busy flag is
+        documented for the 770/775, so this polls the read-back until it both
+        matches the target and has stopped changing. That also makes the whole
+        method self-verifying, which matters more here than usual: the SET form
+        of `:WAVelength` is NOT in the command tables taken from the manuals
+        (only the query is), and on this project an unsupported command returns
+        zero bytes exactly like a supported one. If the command string is wrong
+        the read-back simply never converges and this raises -- the one failure
+        mode that is not silent.
+
+        Units are metres, and are checked, because the write direction is where
+        the SCPI/Legacy unit split is dangerous rather than merely wrong: 1550
+        passed instead of 1.55e-6 would command 1550 METRES.
+        """
+        if not 1.0e-6 <= wavelength <= 2.0e-6:
+            raise ValueError(
+                f"wavelength must be in METRES, got {wavelength!r}. A C-band "
+                f"value is ~1.55e-6, not 1550. Refusing rather than commanding "
+                f"the laser with a number that is 10^9 out."
+            )
+        cs = self.command_set()
+        if cs != "SCPI":
+            raise RuntimeError(
+                f"the laser is in the {cs} command set, which takes "
+                f":WAVelength in NANOMETRES rather than metres. Switch it to "
+                f"SCPI (Other tab -> Communication) before setting a "
+                f"wavelength from this driver."
+            )
+
+        self.write(f":WAV {wavelength:.12E}")
+
+        deadline = time.monotonic() + timeout
+        previous = None
+        while time.monotonic() < deadline:
+            time.sleep(poll)
+            actual = self.query_float(":WAV?")
+            # Both conditions, deliberately: on target AND no longer moving.
+            # A laser slewing THROUGH the target would satisfy the first alone
+            # for one poll, and the reading taken then would be a wavelength it
+            # was passing rather than one it settled at.
+            if abs(actual - wavelength) <= tolerance and actual == previous:
+                return actual
+            previous = actual
+
+        raise RuntimeError(
+            f"laser did not reach {wavelength:.9e} m within {timeout} s; last "
+            f"read-back {previous!r}. Either it is still slewing (raise "
+            f"timeout), the target is outside its range, or the SET form of "
+            f":WAVelength is not what this driver assumes -- an unsupported "
+            f"command returns zero bytes here, so a wrong string looks exactly "
+            f"like a laser that never moved."
+        )
 
     def wavelength_m(self) -> float:
         """
