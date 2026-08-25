@@ -83,20 +83,20 @@ def test_every_tab_builds(app):
 
 def test_simulate_then_demodulate_produces_a_trace(app, gui_module):
     """The whole no-hardware path, which is what makes this GUI testable."""
-    app.sim_ms.set("60")
+    app.sim_ms.set("120")
     app.decim.set("16")
     app.simulate()
     settle(app)
     assert 1 in app.st.raw and 2 in app.st.raw
-    assert app.st.raw[1].size == pytest.approx(0.060 * 250e6 / 16, rel=1e-6)
+    assert app.st.raw[1].size == pytest.approx(0.120 * 250e6 / 16, rel=1e-6)
 
     app.demod()
     settle(app)
     res = app.st.result
     assert res is not None
-    # 60 ms at 5000 Sa/s is 300 points before the filter's settling and group
+    # 120 ms at 5000 Sa/s is 600 points before the filter's settling and group
     # delay are trimmed; it must come out shorter, and not by everything.
-    assert 0 < res.t.size < 300
+    assert 0 < res.t.size < 600
     # The f_ref box is human-editable text, so it cannot be bit-exact against
     # the plan. It must still be the PLAN's frequency and not the round number:
     # 1 mHz of tolerance passes the displayed value and fails 1e6 by 8 kHz.
@@ -110,18 +110,24 @@ def test_the_lockin_frequency_is_not_the_round_number(gui_module):
     assert gui_module.PLAN.difference == pytest.approx(991821, abs=1.0)
 
 
-def test_find_edges_recovers_the_simulated_trigger_train(app):
-    app.sim_ms.set("60")
+def test_find_edges_counts_pulses_not_transitions(app):
+    """One rising edge per logged point, not two.
+
+    The simulated trigger is now a 25 us PULSE per point, like the real one.
+    Counting both polarities would report twice as many "edges" and half the
+    step -- the trap that `polarity` exists to avoid, and one that a square-wave
+    simulation could never have shown.
+    """
+    app.sim_ms.set("120")
     app.decim.set("16")
+    app.sim_points.set("200")
     app.simulate()
     settle(app)
     app.find_edges()
     settle(app)
     text = app.logbox.get("1.0", "end")
-    assert "edges; first at" in text
-    # The simulated train steps every 200 us; anything else means the edge
-    # finder or the generator disagree about what a trigger looks like.
-    assert "mean step 200." in text
+    assert "200 rising edges (= pulses)" in text
+    assert app.st.wavelengths.size == 200
 
 
 def test_a_laser_write_is_refused_while_the_gate_is_unticked(app):
@@ -183,7 +189,7 @@ def test_outputs_off_is_safe_with_no_board_connected(app):
 # ------------------------------------------------ the X/Y/R/theta readout
 
 def _demodulated(app):
-    app.sim_ms.set("60")
+    app.sim_ms.set("120")
     app.decim.set("16")
     app.simulate()
     settle(app)
@@ -200,19 +206,39 @@ def test_readout_shows_trace_means_until_the_plot_is_hovered(app):
 
 
 def test_hovering_switches_the_readout_to_a_single_point(app):
+    """The cursor index addresses the PLOT, not the trace.
+
+    Once a wavelength axis exists the plot shows only the MAPPED points -- the
+    pre-roll and tail are not on it -- so plot index i is trace index
+    _plot_index[i]. Without that translation the readout would describe a point
+    a whole pre-roll away from the one under the pointer, which is a wrong
+    answer that looks entirely reasonable.
+    """
     res = _demodulated(app)
-    i = res.t.size // 3
-    app._cursor_readout(i)
-    assert f"point {i} of {res.t.size}" in app.readout_mode.get()
-    # theta is the one shown as a plain signed number rather than engineering
-    # notation, because degrees are already human-sized.
-    assert app.readouts["theta"].get() == f"{res.theta_deg[i]:+.2f}"
+    i_plot = app._plot_index.size // 3
+    i_trace = int(app._plot_index[i_plot])
+    assert i_trace != i_plot, "premise: the plot is a subset once mapped"
+
+    app._cursor_readout(i_plot)
+    assert f"point {i_trace} of {res.t.size}" in app.readout_mode.get()
+    # theta is shown as a plain signed number rather than engineering notation,
+    # because degrees are already human-sized.
+    assert app.readouts["theta"].get() == f"{res.theta_deg[i_trace]:+.2f}"
+
+
+def test_a_mapped_point_readout_names_its_wavelength(app):
+    res = _demodulated(app)
+    i_plot = app._plot_index.size // 2
+    i_trace = int(app._plot_index[i_plot])
+    app._cursor_readout(i_plot)
+    wl_nm = app.st.reduction.trace.wavelength[i_trace] * 1e9
+    assert f"{wl_nm:.4f} nm" in app.readout_mode.get()
 
 
 def test_leaving_the_plot_returns_the_readout_to_the_means(app):
     _demodulated(app)
     app._cursor_readout(5)
-    assert "point 5" in app.readout_mode.get()
+    assert f"point {int(app._plot_index[5])} of" in app.readout_mode.get()
     app._cursor_readout(None)
     assert "mean across all" in app.readout_mode.get()
 
@@ -232,15 +258,16 @@ def test_mean_R_is_averaged_not_recomputed_from_mean_X_and_Y(app, gui_module):
 def test_point_R_is_consistent_with_that_point_X_and_Y(app, gui_module):
     """At a single point the two agree, and must -- R is hypot(X, Y) there."""
     res = _demodulated(app)
-    i = res.t.size // 2
-    app._cursor_readout(i)
+    i_plot = app._plot_index.size // 2
+    i = int(app._plot_index[i_plot])
+    app._cursor_readout(i_plot)
     assert app.readouts["R"].get() == gui_module._eng(
         float(np.hypot(res.X[i], res.Y[i])))
 
 
 def test_zoom_window_slices_the_record_without_touching_the_stats(app):
     """Whole-record min/max/rms must not change as the zoom slider moves."""
-    app.sim_ms.set("60")
+    app.sim_ms.set("120")
     app.decim.set("16")
     app.simulate()
     settle(app)
@@ -269,7 +296,7 @@ def test_spectrum_finds_the_simulated_tone_at_the_plan_frequency(app,
     the sample rate or the plan disagree -- which is exactly what someone would
     open this view to find out.
     """
-    app.sim_ms.set("60")
+    app.sim_ms.set("120")
     app.decim.set("16")
     app.sim_noise.set("0.00001")
     app.simulate()
@@ -294,7 +321,7 @@ def test_spectrum_amplitude_scaling_is_calibrated_in_volts(app):
     meaningless, so the reported peak is checked against the amplitude the
     emulator was asked for (0.2 V, before any clipping rescale).
     """
-    app.sim_ms.set("60")
+    app.sim_ms.set("120")
     app.decim.set("16")
     app.sim_noise.set("0.0")
     app.simulate()
@@ -310,7 +337,7 @@ def test_spectrum_amplitude_scaling_is_calibrated_in_volts(app):
 
 
 def test_switching_back_to_time_clears_the_spectrum_readout(app):
-    app.sim_ms.set("60")
+    app.sim_ms.set("120")
     app.decim.set("16")
     app.simulate()
     settle(app)

@@ -2894,3 +2894,31 @@ scheme: nothing counts pulses, so one-log-point-per-pulse stops mattering.
 
 **Next:** wire the GUI's Demodulate tab to `reduce_sweep` so a laser log can be
 loaded and the axis becomes wavelength; then the 11 x 5000 stepping loop.
+
+**GUI wired to the pipeline (same session).** The Demodulate tab now runs
+`reduce_sweep` whenever a laser log is loaded, and the x axis becomes
+wavelength. Verified headlessly end to end: resonance planted at 1549.0000 nm,
+recovered at 1548.9841 nm, inside a fifth of the 0.05 nm logged step, with the
+CSV carrying real wavelengths and full provenance.
+
+Three things this forced, all of them corrections rather than additions:
+
+1. **Simulate now builds a REALISTIC record** -- pre-roll, sweep, tail, a 25 us
+   trigger PULSE per logged point, and a matching wavelength log. It used to
+   make a square wave with no pre-roll, which cannot exercise the pipeline and
+   actively hid the two-edges-per-pulse trap. It now refuses a duration too
+   short to hold pre-roll + tail rather than producing a sweep with neither.
+2. **The GUI's find-edges asks for rising edges** and reports PULSES. It was
+   counting both polarities, which on a real trigger doubles the count and
+   halves the step.
+3. **The cursor readout needed an index translation.** With a wavelength axis
+   the plot shows only the MAPPED points, so a plot index is not a trace index
+   -- without `_plot_index` the X/Y/R/theta boxes would describe a point a
+   whole pre-roll away from the pointer. Pinned by a test that asserts the two
+   indices actually differ.
+
+The Laser tab's "read wavelength log" button used to draw the log over the
+trace plot, which looked like a result and silently replaced the measurement.
+It now loads the log into the pipeline instead.
+
+195 offline tests pass.

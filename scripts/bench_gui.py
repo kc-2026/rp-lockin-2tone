@@ -60,8 +60,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from rp_lockin import (  # noqa: E402
     demodulate,
     find_trigger_edges,
-    make_trigger_sequence,
+    make_trigger_pulses,
     plan_two_tone_grid,
+    recommended_preroll,
+    recommended_tail,
+    reduce_sweep,
     synthesise_dut_output,
     write_raw_npz,
     write_trace_csv,
@@ -288,6 +291,8 @@ class State:
     raw: dict = field(default_factory=dict)   # channel -> samples
     fs: float = 0.0
     result: object = None                     # LockinResult
+    wavelengths: object = None                # the laser's log, metres, or None
+    reduction: object = None                  # SweepReduction, when mapped
     outputs_on: set = field(default_factory=set)
 
 
@@ -644,13 +649,16 @@ class BenchGui:
                              padding=8)
         sim.pack(fill="x", pady=12)
         ttk.Label(sim, wraplength=860, foreground="#606060",
-                  text="Builds a synthetic detector record: a tone at the "
-                       "lock-in frequency with a Lorentzian envelope, plus a "
-                       "trigger train on CH2. Exercises capture handling, "
-                       "demodulation, the plot and the CSV with nothing "
-                       "connected. The envelope is a stand-in, not DUT "
-                       "physics.").grid(row=0, column=0, columnspan=6,
-                                        sticky="w", pady=(0, 6))
+                  text="Builds a whole synthetic sweep: a tone at the lock-in "
+                       "frequency with a Lorentzian resonance, a 25 us trigger "
+                       "PULSE per logged point on CH2, and a matching laser "
+                       "log -- so the full path to a wavelength axis runs with "
+                       "nothing connected. The record is laid out as a real "
+                       "one must be: pre-roll, sweep, tail. The envelope is a "
+                       "stand-in, not DUT physics -- this tests the software, "
+                       "not the measurement.").grid(row=0, column=0,
+                                                    columnspan=7, sticky="w",
+                                                    pady=(0, 6))
         self.sim_ms = tk.StringVar(value="200")
         self.sim_noise = tk.StringVar(value="0.000011")
         ttk.Label(sim, text="Duration (ms)").grid(row=1, column=0, sticky="w")
@@ -660,8 +668,13 @@ class BenchGui:
                                                   padx=(14, 0))
         ttk.Entry(sim, textvariable=self.sim_noise, width=10).grid(
             row=1, column=3, padx=6)
+        ttk.Label(sim, text="Log points").grid(row=1, column=4, sticky="w",
+                                               padx=(14, 0))
+        self.sim_points = tk.StringVar(value="200")
+        ttk.Entry(sim, textvariable=self.sim_points, width=8).grid(
+            row=1, column=5, padx=6)
         ttk.Button(sim, text="Simulate", command=self.simulate).grid(
-            row=1, column=4, padx=18)
+            row=1, column=6, padx=18)
 
         self.acq_info = tk.StringVar(value="no record")
         ttk.Label(f, textvariable=self.acq_info,
@@ -752,22 +765,57 @@ class BenchGui:
             return messagebox.showerror("Simulate", "Check the numeric fields.")
         fs = BASE_SAMPLE_RATE / int(self.decim.get())
 
+        # The record is laid out the way a real capture must be: pre-roll long
+        # enough for the filter to settle, then the sweep, then a tail. A
+        # pre-roll shorter than the settling (22.6 ms) leaves NO pre-sweep
+        # points at all, which looks exactly like a mapping bug.
+        preroll = recommended_preroll(float(self.out_rate.get() or 5000))
+        tail = recommended_tail(float(self.out_rate.get() or 5000))
+        sweep = dur - preroll - tail
+        if sweep <= 5e-3:
+            return messagebox.showerror(
+                "Simulate",
+                f"{dur * 1e3:.0f} ms is too short. The record has to hold "
+                f"{preroll * 1e3:.1f} ms of pre-roll and {tail * 1e3:.1f} ms "
+                f"of tail around the sweep, so try at least "
+                f"{(preroll + tail + 20e-3) * 1e3:.0f} ms.")
+        n_log = max(2, int(self.sim_points.get() or 200))
+        step = sweep / (n_log - 1)
+        peak_frac = 0.4
+
         def go():
+            peak_t = preroll + peak_frac * sweep
+
+            def envelope(t):
+                return 1.0 / (1.0 + ((t - peak_t) / (0.08 * sweep)) ** 2)
+
             sig, _truth = synthesise_dut_output(
-                PLAN.difference, dur, fs=fs, noise_rms=noise, amplitude=0.2,
-                seed=1)
-            # Trigger every 200 us -- the 5000-point spacing a real 1 s sweep
-            # produces. The first edge is deliberately NOT at t=0, so anything
-            # assuming the record starts at the trigger shows up here.
-            edges = list(np.arange(0.1 * dur, dur, 200e-6))
-            return sig, make_trigger_sequence(dur, edges, fs=fs), fs
+                PLAN.difference, dur, fs=fs, envelope_fn=envelope,
+                noise_rms=noise, amplitude=0.2, seed=1)
+            # A PULSE train, 25 us wide, one pulse per logged point -- the
+            # shape the Santec actually emits (TSL-775 p46). The square wave
+            # this used to make has a 50% duty cycle, which no laser produces
+            # and which hides the fact that each pulse gives TWO edges.
+            trig = make_trigger_pulses(dur, preroll, step, width=25e-6, fs=fs,
+                                       n_pulses=n_log)
+            wl = np.linspace(1545e-9, 1555e-9, n_log)
+            return sig, trig, fs, wl
 
         def done(v):
-            sig, trig, fs_used = v
+            sig, trig, fs_used, wl = v
+            self.st.wavelengths = wl
+            self.st.reduction = None
             self._store_raw({1: sig, 2: trig}, fs_used)
+            self._refresh_log_status()
             self.log(f"simulated {sig.size} samples at "
-                     f"{fs_used / 1e6:.3f} MS/s, noise {noise * 1e6:.1f} uV "
-                     f"rms, lock-in {PLAN.difference / 1e3:.3f} kHz")
+                     f"{fs_used / 1e6:.3f} MS/s: {preroll * 1e3:.1f} ms "
+                     f"pre-roll, {sweep * 1e3:.1f} ms sweep, "
+                     f"{tail * 1e3:.1f} ms tail; {n_log} trigger pulses "
+                     f"{step * 1e6:.2f} us apart; noise "
+                     f"{noise * 1e6:.1f} uV rms")
+            self.log(f"synthetic laser log loaded: {n_log} points, "
+                     f"1545.0000 to 1555.0000 nm. Resonance planted at "
+                     f"{np.interp(peak_frac * sweep, np.arange(n_log) * step, wl) * 1e9:.4f} nm")
 
         self.submit("simulate", go, done)
 
@@ -871,11 +919,14 @@ class BenchGui:
             if len(edges) == 1:
                 return self.log(f"1 edge at {edges[0] * 1e3:.4f} ms")
             step = np.diff(edges)
-            self.log(f"{len(edges)} edges; first at {edges[0] * 1e3:.4f} ms; "
-                     f"mean step {np.mean(step) * 1e6:.3f} us "
+            self.log(f"{len(edges)} rising edges (= pulses); first at "
+                     f"{edges[0] * 1e3:.4f} ms; mean step "
+                     f"{np.mean(step) * 1e6:.3f} us "
                      f"(sd {np.std(step) * 1e9:.1f} ns)")
 
-        self.submit("find edges", lambda: find_trigger_edges(trig, fs), done)
+        self.submit("find edges",
+                    lambda: find_trigger_edges(trig, fs, polarity="rising"),
+                    done)
 
     # -- tab: demodulate
 
@@ -906,6 +957,26 @@ class BenchGui:
                        "is 991.821 kHz, not 1 MHz -- never hardcode the round "
                        "number.").grid(row=1, column=0, columnspan=6,
                                        sticky="w", pady=(6, 0))
+
+        wlbox = ttk.LabelFrame(f, text="Wavelength axis", padding=8)
+        wlbox.pack(fill="x", pady=(8, 0))
+        ttk.Label(wlbox, wraplength=860, foreground="#606060",
+                  text="With a laser log loaded, Demodulate runs the full "
+                       "pipeline and the x axis becomes WAVELENGTH. Without "
+                       "one it stops at time, and the CSV's wavelength column "
+                       "is written empty rather than filled with something "
+                       "plausible.").grid(row=0, column=0, columnspan=4,
+                                          sticky="w", pady=(0, 6))
+        ttk.Button(wlbox, text="Load log from laser",
+                   command=self.load_log_from_laser).grid(row=1, column=0)
+        ttk.Button(wlbox, text="Load log from file",
+                   command=self.load_log_from_file).grid(row=1, column=1,
+                                                         padx=6)
+        ttk.Button(wlbox, text="Clear log",
+                   command=self.clear_log_data).grid(row=1, column=2, padx=6)
+        self.log_status = tk.StringVar(value="no laser log loaded")
+        ttk.Label(wlbox, textvariable=self.log_status).grid(
+            row=1, column=3, padx=14, sticky="w")
 
         sel = ttk.Frame(f)
         sel.pack(fill="x", pady=8)
@@ -962,20 +1033,114 @@ class BenchGui:
             return messagebox.showerror("Demodulate", "Check the fields.")
         sig, fs = self.st.raw[1], self.st.fs
 
-        def done(res):
+        wl = self.st.wavelengths
+        trig = self.st.raw.get(2)
+
+        def go():
+            # With a laser log AND a trigger record, run the whole pipeline --
+            # the same reduce_sweep the deliverable uses, not a GUI-local
+            # reimplementation of it. Without either, stop at demodulation.
+            if wl is not None and trig is not None:
+                return reduce_sweep(sig, trig, fs, wl, f_ref=f_ref,
+                                    output_rate=rate)
+            return demodulate(sig, fs, f_ref, output_rate=rate)
+
+        def done(out):
+            reduction = out if hasattr(out, "trace") else None
+            res = reduction.result if reduction else out
+            self.st.reduction = reduction
             self.st.result = res
             spacing = (res.t[1] - res.t[0]) * 1e6 if res.t.size > 1 else 0.0
-            self.demod_info.set(
-                f"{res.t.size} points   spacing {spacing:.3f} us   "
-                f"bandwidth {res.bandwidth:.1f} Hz   "
-                f"{res.settle} settling samples trimmed   "
-                f"t = {res.t[0] * 1e3:.3f} to {res.t[-1] * 1e3:.3f} ms")
+            info = (f"{res.t.size} points   spacing {spacing:.3f} us   "
+                    f"bandwidth {res.bandwidth:.1f} Hz   "
+                    f"{res.settle} settling samples trimmed   "
+                    f"t = {res.t[0] * 1e3:.3f} to {res.t[-1] * 1e3:.3f} ms")
+            if reduction:
+                info += f"   |  {int(reduction.trace.valid.sum())} mapped"
+            self.demod_info.set(info)
             self.log(f"demodulated at {res.f_ref:.3f} Hz -> {res.t.size} "
                      f"points at {res.fs_out:.1f} Sa/s")
+            if reduction:
+                # The full diagnosis goes in the log rather than the tab: it is
+                # what tells you whether to believe the axis, and it is the
+                # thing worth having in a saved log after the fact.
+                for line in reduction.describe().splitlines():
+                    self.log("  " + line)
+                if not reduction.alignment.ok:
+                    messagebox.showwarning(
+                        "Alignment suspect",
+                        "The trigger count and the laser log do not agree:\n\n"
+                        + reduction.alignment.diagnosis +
+                        "\n\nThe trace is still shown, but every wavelength "
+                        "on it may be shifted. See the Log tab.")
             self._redraw_trace()
 
-        self.submit("demodulate",
-                    lambda: demodulate(sig, fs, f_ref, output_rate=rate), done)
+        self.submit("demodulate", go, done)
+
+    # -- the laser log
+
+    def _refresh_log_status(self):
+        wl = self.st.wavelengths
+        if wl is None:
+            self.log_status.set("no laser log loaded -- x axis stays as time")
+        else:
+            self.log_status.set(
+                f"{wl.size} points, {wl.min() * 1e9:.4f} to "
+                f"{wl.max() * 1e9:.4f} nm")
+
+    def _accept_log(self, wl, source: str):
+        wl = np.asarray(wl, dtype=float).ravel()
+        if wl.size < 2:
+            return messagebox.showerror(
+                "Laser log", f"{source} gave {wl.size} point(s); at least 2 "
+                             f"are needed to interpolate.")
+        # Metres, not nanometres. A log in nm would map every point 10^9 out,
+        # and 1550 is a perfectly plausible-looking number to see in a file.
+        if not (1e-7 < np.nanmedian(wl) < 1e-5):
+            return messagebox.showerror(
+                "Laser log",
+                f"{source} has a median of {np.nanmedian(wl):.6g}, which is "
+                f"not metres. A C-band log should read ~1.55e-6. If the file "
+                f"is in nanometres, convert it before loading -- guessing "
+                f"would be wrong by 10^9 without anything looking odd.")
+        self.st.wavelengths = wl
+        self.st.reduction = None
+        self._refresh_log_status()
+        self.log(f"laser log from {source}: {wl.size} points, "
+                 f"{wl.min() * 1e9:.4f} to {wl.max() * 1e9:.4f} nm")
+
+    def load_log_from_laser(self):
+        laser = self._need_laser()
+        if not laser:
+            return
+        self.log("laser <- :READout:DATa?")
+        self.submit("read wavelength log", laser.read_wavelengths,
+                    lambda wl: self._accept_log(wl, "the laser"))
+
+    def load_log_from_file(self):
+        path = filedialog.askopenfilename(
+            filetypes=[("numpy", "*.npy *.npz"), ("text/CSV", "*.csv *.txt"),
+                       ("all files", "*.*")])
+        if not path:
+            return
+        try:
+            if path.endswith(".npz"):
+                with np.load(path) as z:
+                    key = next(iter(z.files))
+                    wl = z[key]
+            elif path.endswith(".npy"):
+                wl = np.load(path)
+            else:
+                wl = np.loadtxt(path, delimiter=",", comments="#").ravel()
+        except Exception as exc:
+            return messagebox.showerror("Laser log", f"could not read: {exc}")
+        self._accept_log(wl, os.path.basename(path))
+
+    def clear_log_data(self):
+        self.st.wavelengths = None
+        self.st.reduction = None
+        self._refresh_log_status()
+        self.log("laser log cleared; the x axis returns to time")
 
     def _trace_values(self):
         res = self.st.result
@@ -994,14 +1159,34 @@ class BenchGui:
         if self.st.result is None:
             return
         y, label = self._trace_values()
-        self.trace_plot.show(self.st.result.t, y, "time (s)", label)
+        red = self.st.reduction
+        if red is None:
+            self._plot_index = np.arange(y.size)
+            self.trace_plot.show(self.st.result.t, y, "time (s)", label)
+        else:
+            # Only the mapped points. The unmapped ones are pre-roll and tail,
+            # and plotting them against a NaN wavelength would either drop them
+            # silently or, worse, bunch them at one end of the axis.
+            m = red.trace.valid
+            self._plot_index = np.flatnonzero(m)
+            self.trace_plot.show(red.trace.wavelength[m] * 1e9, y[m],
+                                 "wavelength (nm)", label)
         self._cursor_readout(None)
 
     def _cursor_readout(self, index):
-        """Fill X/Y/R/theta -- at `index` while hovering, else trace means."""
+        """Fill X/Y/R/theta -- at `index` while hovering, else trace means.
+
+        `index` addresses the PLOT, which shows only the mapped points once a
+        wavelength axis exists. Translating through _plot_index is what keeps
+        the readout describing the point under the pointer rather than a
+        different one some pre-roll's worth away.
+        """
         res = self.st.result
         if res is None:
             return
+        idx_map = getattr(self, "_plot_index", None)
+        if index is not None and idx_map is not None and 0 <= index < idx_map.size:
+            index = int(idx_map[index])
         if index is None or not 0 <= index < res.t.size:
             # R is averaged, not recomputed from mean X and mean Y: with the
             # response phase moving across a sweep those two differ, and
@@ -1018,8 +1203,11 @@ class BenchGui:
             i = int(index)
             vals = {"X": float(res.X[i]), "Y": float(res.Y[i]),
                     "R": float(res.R[i]), "theta": float(res.theta_deg[i])}
-            self.readout_mode.set(
-                f"point {i} of {res.t.size}, t = {res.t[i] * 1e3:.4f} ms")
+            where = f"point {i} of {res.t.size}, t = {res.t[i] * 1e3:.4f} ms"
+            red = self.st.reduction
+            if red is not None and np.isfinite(red.trace.wavelength[i]):
+                where += f", {red.trace.wavelength[i] * 1e9:.4f} nm"
+            self.readout_mode.set(where)
         for key, var in self.readouts.items():
             v = vals[key]
             var.set(f"{v:+.2f}" if key == "theta" else _eng(v))
@@ -1033,13 +1221,25 @@ class BenchGui:
         if not path:
             return
         res = self.st.result
+        red = self.st.reduction
         amp = res.amplitude()
 
         def go():
-            # There is no laser log behind this trace, so the wavelength column
-            # is written EMPTY rather than filled with something plausible.
-            # A time-indexed trace wearing a wavelength column would be the
-            # exact silent failure the whole wavelength design guards against.
+            if red is not None:
+                # The real deliverable: every row carries the wavelength the
+                # laser reported, and the header carries enough provenance to
+                # reconstruct how the axis was built -- where the step came
+                # from above all, since that is the one number nothing in the
+                # data would reveal as wrong.
+                meta = {"source": "bench_gui"}
+                meta.update(red.metadata())
+                return write_trace_csv(path, red.trace.wavelength,
+                                       red.trace.amplitude, metadata=meta,
+                                       extra_columns={"time_s": res.t})
+            # No laser log behind this trace, so the wavelength column is
+            # written EMPTY rather than filled with something plausible. A
+            # time-indexed trace wearing a wavelength column is exactly the
+            # silent failure the whole wavelength design guards against.
             return write_trace_csv(
                 path, np.full(res.t.size, np.nan), amp,
                 metadata={"source": "bench_gui",
@@ -1218,19 +1418,14 @@ class BenchGui:
         self.submit(f"laser {cmd}", go, lambda v: self.log(f"laser -> {v!r}"))
 
     def laser_read_log(self):
-        laser = self._need_laser()
-        if not laser:
-            return
+        """Read the log and hand it to the pipeline, not to the plot.
 
-        def done(wl):
-            self.log(f"wavelength log: {wl.size} points, "
-                     f"{wl.min() * 1e9:.4f} to {wl.max() * 1e9:.4f} nm")
-            self.trace_plot.show(np.arange(wl.size), wl * 1e9,
-                                 "log index", "wavelength (nm)")
-            self.nb.select(3)
-
-        self.log("laser <- :READout:DATa?")
-        self.submit("read wavelength log", laser.read_wavelengths, done)
+        An earlier version drew the log over the trace plot, which was worse
+        than useless: it looked like a result, and it silently replaced the
+        measurement someone had just taken.
+        """
+        self.load_log_from_laser()
+        self.nb.select(3)
 
     # -- tab: log
 
