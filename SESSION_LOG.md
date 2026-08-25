@@ -2767,3 +2767,77 @@ ever does, the fix is cheap and known — move the difference frequency, which
 `plan_two_tone_grid` can re-snap — but only if someone is watching for it.
 **Anyone choosing a new difference frequency must avoid 504.868 kHz and its
 multiples, with a margin of several kHz.**
+
+---
+
+## 2026-08-25 — Claude (Claude Code) — transfer speed, the experiment's real shape, and a bench GUI
+
+**Goal:** Status report, then whatever Kevin pointed at. Ended up on three
+things: the deep-capture read, a correction to what the experiment actually is,
+and a human-usable GUI.
+
+**Did:**
+
+- **Sped up the deep-capture read** and, more usefully, instrumented it.
+  Board helper now slices a `memoryview` rather than the mmap (`mem[a:b]`
+  materialises a copy, so the old path memcpy'd all 125 MB on the ARM before
+  sending a byte); `CHUNK` 1 MB -> 8 MB, which was only 1 MB because of that
+  copy; `TCP_NODELAY` both ends; client uses `recv_into` over a preallocated
+  buffer instead of accumulate-then-join, which held the reply twice at its
+  peak. Helper logs bytes and elapsed per GET.
+- **Added `tests/test_fast_read.py`** — there were NO tests of `fast_read`, on
+  the transport every sample of every sweep arrives through. Pins the short-reply
+  refusal and the little-endian convention against a real loopback socket.
+- **Added `set_wavelength_m()`** to `santec.py`, then **parked it** at Kevin's
+  request. Written because the stepping laser could not be commanded at all.
+- **Built `scripts/bench_gui.py`** (Q14) with `tests/test_bench_gui.py`.
+
+**Learned (the expensive part):**
+
+1. **The recorded cause of the slow transfer does not survive reading the
+   code, and I repeated it before checking.** H6.2 attributed 6.7-11.2 s for
+   125 MB to "~125 round trips at ~50 ms each". There are no such round trips:
+   the client issues at most FOUR GETs per capture (one per channel, two if the
+   ring wraps) and the helper streams the whole reply over one connection. The
+   125 are `sendall()` calls on a continuous unidirectional stream, which is not
+   a pattern Nagle plus delayed-ACK stalls. **The real cause is still unknown**,
+   which is why the per-GET timing went in. Do not quote the round-trip
+   explanation; it is wrong.
+2. **The experiment is TWO lasers, and no document said so.** Kevin, 2026-08-25:
+   a fine sweeper (5000 points over ~1 s, trigger BNC, wavelength axis from its
+   log) and a stepper (11 discrete wavelengths, no trigger, no log — set, allowed
+   to settle, and read). The deliverable is an 11 x 5000 map. Everything already
+   built holds; the 11 sweeps are 11 runs of the same capture.
+3. **Q26 is dead under that structure.** It mattered only because the time step
+   came from the trigger interval. With the step coming from the sweep duration
+   and the stepper read as a scalar, nothing depends on one-log-point-per-pulse.
+   **Q24 still matters** — periodic in time vs in wavelength.
+4. **f1/f2 vs freq1/freq2 is a live naming collision.** The docs use f1/f2 for
+   the AOM *modulation* frequencies (MHz); Kevin uses freq1/freq2 for the
+   *lasers* (THz). Same names, different things by nine orders of magnitude.
+   Worth separating before it produces a plausible-looking bug.
+5. **Decimation 16 is close to free once the real detector is in.** The measured
+   penalty is 1.8 dB on the BOARD's noise (3.75 -> 4.58 uV), but at the expected
+   ~11 uV detector floor the totals are 11.6 vs 11.9 uV — **about 0.2 dB** for
+   half the data. Rests on the 11 uV estimate, which P4.4 measures. Kevin asked
+   for it; not applied as a default anywhere.
+
+**Broke / still broken:**
+
+- **None of the transfer work is verified against the board.** The helper on the
+  board is still the old one — `/dev/shm` is RAM, so it needs re-copying.
+- The laser is still silent. Untouched this session.
+- `describe_capture_plan()` still recommends decimation 2 plus the device-tree
+  memory move, which contradicts the settled decision (decimation 8, no move).
+  Spotted, flagged to Kevin, **not yet fixed.**
+
+**Next:**
+
+1. Re-deploy `rp_fastread.py` and take one capture — the per-GET line will say
+   whether the time is board-side or client-side. That is the whole point of it.
+2. **The end-to-end pipeline**, still the top Tier 1 item and still not started.
+   Now better specified: one 5000-point trace per sweep, tagged with the
+   stepper's wavelength, eleven times.
+3. Fix the stale `describe_capture_plan()` recommendation.
+4. Decide the 11 x 5000 output layout (eleven CSVs plus an index, or one file
+   with a lambda-2 column).
