@@ -109,13 +109,17 @@ class Plot(tk.Canvas):
 
     PAD_L, PAD_R, PAD_T, PAD_B = 66, 16, 14, 36
 
-    def __init__(self, master, **kw):
+    def __init__(self, master, on_cursor=None, **kw):
         super().__init__(master, background="#ffffff", highlightthickness=1,
                          highlightbackground="#c0c0c0", **kw)
         self.x = np.array([])
         self.y = np.array([])
         self.xlabel = ""
         self.ylabel = ""
+        # Called with the sample index under the pointer, or None on leaving.
+        # Lets the Demodulate tab show X/Y/R/theta at the cursor the way a
+        # lock-in's front panel does, without this widget knowing about them.
+        self.on_cursor = on_cursor
         self._limits = (0.0, 1.0, 0.0, 1.0)
         self._readout = ""
         self.bind("<Configure>", lambda _e: self._draw())
@@ -223,12 +227,16 @@ class Plot(tk.Canvas):
         xmin, xmax, _ymin, _ymax = self._limits
         xv = xmin + (event.x - x0) / max(1, x1 - x0) * (xmax - xmin)
         i = int(np.clip(np.searchsorted(self.x, xv), 0, self.y.size - 1))
+        if self.on_cursor:
+            self.on_cursor(i)
         readout = f"x={_eng(self.x[i])}   y={_eng(self.y[i])}"
         if readout != self._readout:
             self._readout = readout
             self._draw()
 
     def _clear_readout(self):
+        if self.on_cursor:
+            self.on_cursor(None)
         if self._readout:
             self._readout = ""
             self._draw()
@@ -659,16 +667,39 @@ class BenchGui:
         ttk.Label(f, textvariable=self.acq_info,
                   font=("TkFixedFont", 9)).pack(anchor="w", pady=(6, 4))
 
+        ttk.Label(f, wraplength=980, foreground="#606060",
+                  text="This plot is the RAW ADC waveform -- volts against "
+                       "time, straight off the input. At full span it looks "
+                       "like a solid band, and that is correct rather than "
+                       "broken: the detector signal is a ~991 kHz tone, so a "
+                       "60 ms record holds ~60,000 cycles squeezed into ~900 "
+                       "pixels. Zoom to 10 us to see actual cycles. The "
+                       "SWEEP-shaped trace you are looking for is on the "
+                       "Demodulate tab -- this one is its input."
+                  ).pack(anchor="w", pady=(0, 4))
+
         which = ttk.Frame(f)
         which.pack(fill="x")
         self.raw_channel = tk.StringVar(value="1")
-        ttk.Label(which, text="Show channel").pack(side="left")
+        ttk.Label(which, text="Channel").pack(side="left")
         for ch in ("1", "2"):
             ttk.Radiobutton(which, text=f"CH{ch}", value=ch,
                             variable=self.raw_channel,
-                            command=self._redraw_raw).pack(side="left", padx=6)
+                            command=self._redraw_raw).pack(side="left", padx=4)
+        ttk.Label(which, text="Zoom").pack(side="left", padx=(16, 4))
+        self.raw_span = tk.StringVar(value="full")
+        ttk.Combobox(which, textvariable=self.raw_span, width=8,
+                     state="readonly",
+                     values=("full", "10 ms", "1 ms", "100 us", "10 us",
+                             "2 us")).pack(side="left")
+        ttk.Label(which, text="Position").pack(side="left", padx=(16, 4))
+        self.raw_pos = tk.DoubleVar(value=0.0)
+        ttk.Scale(which, from_=0.0, to=100.0, variable=self.raw_pos,
+                  orient="horizontal", length=200,
+                  command=lambda _v: self._redraw_raw()).pack(side="left")
         ttk.Button(which, text="Find trigger edges on CH2",
-                   command=self.find_edges).pack(side="left", padx=20)
+                   command=self.find_edges).pack(side="left", padx=16)
+        self.raw_span.trace_add("write", lambda *_a: self._redraw_raw())
 
         self.raw_plot = Plot(f, height=250)
         self.raw_plot.pack(fill="both", expand=True, pady=(6, 0))
@@ -736,6 +767,9 @@ class BenchGui:
         self.st.fs = fs
         self._redraw_raw()
 
+    _SPANS = {"full": None, "10 ms": 10e-3, "1 ms": 1e-3, "100 us": 100e-6,
+              "10 us": 10e-6, "2 us": 2e-6}
+
     def _redraw_raw(self):
         if not self.st.raw:
             return
@@ -744,11 +778,28 @@ class BenchGui:
         if y is None:
             return
         fs = self.st.fs
-        self.acq_info.set(
-            f"CH{ch}  {y.size} samples @ {fs / 1e6:.4f} MS/s "
-            f"({y.size / fs * 1e3:.2f} ms)   min {y.min():.5g}   "
-            f"max {y.max():.5g}   rms {np.sqrt(np.mean(y ** 2)):.5g}")
-        self.raw_plot.show(np.arange(y.size) / fs, y, "time (s)", f"CH{ch}")
+
+        # Stats always describe the WHOLE record, not the zoomed window --
+        # a min/max that changed as you dragged the slider would be an easy
+        # thing to misread as the signal changing.
+        whole = (f"CH{ch}  {y.size} samples @ {fs / 1e6:.4f} MS/s "
+                 f"({y.size / fs * 1e3:.2f} ms total)   "
+                 f"min {y.min():.5g}   max {y.max():.5g}   "
+                 f"rms {np.sqrt(np.mean(y ** 2)):.5g}")
+
+        span = self._SPANS.get(self.raw_span.get())
+        if span is None:
+            lo, hi = 0, y.size
+        else:
+            n_win = max(2, int(round(span * fs)))
+            n_win = min(n_win, y.size)
+            lo = int((y.size - n_win) * self.raw_pos.get() / 100.0)
+            hi = lo + n_win
+            whole += f"   |  showing {(hi - lo) / fs * 1e6:.1f} us from " \
+                     f"{lo / fs * 1e3:.3f} ms"
+        self.acq_info.set(whole)
+        t = np.arange(lo, hi) / fs
+        self.raw_plot.show(t, y[lo:hi], "time (s)", f"CH{ch} raw (V)")
 
     def find_edges(self):
         if 2 not in self.st.raw:
@@ -812,10 +863,35 @@ class BenchGui:
         ttk.Button(sel, text="Save raw .npz", command=self.save_npz).pack(
             side="right", padx=6)
 
+        # The four-parameter readout, in the spirit of a lock-in front panel.
+        # Unlike an instrument, this trace is a WHOLE SWEEP rather than a live
+        # value, so each box shows the mean across the trace by default and
+        # switches to the value under the pointer while hovering the plot.
+        # Which of the two you are looking at is labelled, because a mean and
+        # a point value are very different numbers and look identical.
+        read = ttk.LabelFrame(f, text="X / Y / R / theta", padding=8)
+        read.pack(fill="x")
+        self.readout_mode = tk.StringVar(value="mean across the trace")
+        self.readouts = {}
+        for col, (key, unit) in enumerate((("X", "V"), ("Y", "V"),
+                                           ("R", "V"), ("theta", "deg"))):
+            cell = ttk.Frame(read)
+            cell.grid(row=0, column=col, padx=(0 if col == 0 else 26, 0),
+                      sticky="w")
+            ttk.Label(cell, text=f"{key} ({unit})",
+                      foreground="#606060").pack(anchor="w")
+            var = tk.StringVar(value="--")
+            self.readouts[key] = var
+            ttk.Label(cell, textvariable=var,
+                      font=("TkFixedFont", 15)).pack(anchor="w")
+        ttk.Label(read, textvariable=self.readout_mode,
+                  foreground="#606060").grid(row=1, column=0, columnspan=4,
+                                             sticky="w", pady=(6, 0))
+
         self.demod_info = tk.StringVar(value="not demodulated")
         ttk.Label(f, textvariable=self.demod_info,
-                  font=("TkFixedFont", 9)).pack(anchor="w")
-        self.trace_plot = Plot(f, height=300)
+                  font=("TkFixedFont", 9)).pack(anchor="w", pady=(8, 0))
+        self.trace_plot = Plot(f, height=280, on_cursor=self._cursor_readout)
         self.trace_plot.pack(fill="both", expand=True, pady=(4, 0))
 
     def demod(self):
@@ -862,6 +938,34 @@ class BenchGui:
             return
         y, label = self._trace_values()
         self.trace_plot.show(self.st.result.t, y, "time (s)", label)
+        self._cursor_readout(None)
+
+    def _cursor_readout(self, index):
+        """Fill X/Y/R/theta -- at `index` while hovering, else trace means."""
+        res = self.st.result
+        if res is None:
+            return
+        if index is None or not 0 <= index < res.t.size:
+            # R is averaged, not recomputed from mean X and mean Y: with the
+            # response phase moving across a sweep those two differ, and
+            # hypot(mean X, mean Y) would read low without looking wrong.
+            vals = {"X": float(np.mean(res.X)), "Y": float(np.mean(res.Y)),
+                    "R": float(np.mean(res.R)),
+                    "theta": float(np.degrees(np.mean(res.theta)))}
+            self.readout_mode.set(
+                f"mean across all {res.t.size} points -- hover the plot for a "
+                f"single point. Note mean R is biased high in noise "
+                f"(1.25 sigma with no signal at all); the amplitude trace is "
+                f"the unbiased one.")
+        else:
+            i = int(index)
+            vals = {"X": float(res.X[i]), "Y": float(res.Y[i]),
+                    "R": float(res.R[i]), "theta": float(res.theta_deg[i])}
+            self.readout_mode.set(
+                f"point {i} of {res.t.size}, t = {res.t[i] * 1e3:.4f} ms")
+        for key, var in self.readouts.items():
+            v = vals[key]
+            var.set(f"{v:+.2f}" if key == "theta" else _eng(v))
 
     def save_csv(self):
         if self.st.result is None:

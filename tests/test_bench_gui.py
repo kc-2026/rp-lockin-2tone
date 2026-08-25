@@ -178,3 +178,81 @@ def test_outputs_off_is_safe_with_no_board_connected(app):
     app.outputs_off()
     settle(app)
     assert app.st.outputs_on == set()
+
+
+# ------------------------------------------------ the X/Y/R/theta readout
+
+def _demodulated(app):
+    app.sim_ms.set("60")
+    app.decim.set("16")
+    app.simulate()
+    settle(app)
+    app.demod()
+    settle(app)
+    return app.st.result
+
+
+def test_readout_shows_trace_means_until_the_plot_is_hovered(app):
+    res = _demodulated(app)
+    assert all(v.get() != "--" for v in app.readouts.values())
+    assert "mean across all" in app.readout_mode.get()
+    assert str(res.t.size) in app.readout_mode.get()
+
+
+def test_hovering_switches_the_readout_to_a_single_point(app):
+    res = _demodulated(app)
+    i = res.t.size // 3
+    app._cursor_readout(i)
+    assert f"point {i} of {res.t.size}" in app.readout_mode.get()
+    # theta is the one shown as a plain signed number rather than engineering
+    # notation, because degrees are already human-sized.
+    assert app.readouts["theta"].get() == f"{res.theta_deg[i]:+.2f}"
+
+
+def test_leaving_the_plot_returns_the_readout_to_the_means(app):
+    _demodulated(app)
+    app._cursor_readout(5)
+    assert "point 5" in app.readout_mode.get()
+    app._cursor_readout(None)
+    assert "mean across all" in app.readout_mode.get()
+
+
+def test_mean_R_is_averaged_not_recomputed_from_mean_X_and_Y(app, gui_module):
+    """hypot(mean X, mean Y) is NOT mean R once the response phase moves.
+
+    With a rotating phase the quadratures partly cancel in the mean while R
+    does not, so recomputing R from the averaged quadratures reads low -- a
+    plausible small number, which is this project's characteristic failure.
+    """
+    res = _demodulated(app)
+    app._cursor_readout(None)
+    assert app.readouts["R"].get() == gui_module._eng(float(np.mean(res.R)))
+
+
+def test_point_R_is_consistent_with_that_point_X_and_Y(app, gui_module):
+    """At a single point the two agree, and must -- R is hypot(X, Y) there."""
+    res = _demodulated(app)
+    i = res.t.size // 2
+    app._cursor_readout(i)
+    assert app.readouts["R"].get() == gui_module._eng(
+        float(np.hypot(res.X[i], res.Y[i])))
+
+
+def test_zoom_window_slices_the_record_without_touching_the_stats(app):
+    """Whole-record min/max/rms must not change as the zoom slider moves."""
+    app.sim_ms.set("60")
+    app.decim.set("16")
+    app.simulate()
+    settle(app)
+    app.raw_span.set("full")
+    app._redraw_raw()
+    full_points = app.raw_plot.y.size
+    stats_full = app.acq_info.get().split("|")[0].strip()
+
+    app.raw_span.set("10 us")
+    app._redraw_raw()
+    assert app.raw_plot.y.size < full_points
+    # 10 us at 250/16 MS/s is ~156 samples.
+    assert app.raw_plot.y.size == pytest.approx(10e-6 * 250e6 / 16, rel=0.02)
+    assert app.acq_info.get().split("|")[0].strip() == stats_full
+    assert "showing" in app.acq_info.get()
