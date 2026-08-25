@@ -184,19 +184,101 @@ def make_trigger_sequence(duration: float, edges: list[float],
     return np.clip(out, -1.0, 1.0)
 
 
+def make_trigger_pulses(duration: float, first: float, period: float,
+                        width: float = 25e-6,
+                        fs: float = BASE_SAMPLE_RATE,
+                        n_pulses: int | None = None,
+                        high: float = 0.8, low: float = -0.8,
+                        rise_time: float = 20e-9) -> np.ndarray:
+    """
+    A Santec-shaped trigger train: a PULSE per step, not a square wave.
+
+    The real trigger is 3.3 V, **25 us wide**, at most 20 kHz, so pulses are at
+    least 50 us apart (TSL-775 p46, section 6.5). That shape matters to anything
+    downstream: each pulse gives a rising edge AND a falling edge 25 us later,
+    so an edge finder asked for both polarities sees alternating 25 us and
+    (period - 25 us) gaps. `make_trigger_sequence` alternates state at every
+    time it is given, which makes a SQUARE WAVE -- a trigger with a 50% duty
+    cycle that no laser produces, and one that hides this whole problem.
+
+    Emits pulses at first, first + period, first + 2*period, ...
+
+    **Pass `n_pulses` when modelling a real sweep.** Without it the train runs
+    to the end of the record, which no laser does -- it triggers while it is
+    sweeping and then stops. A train that keeps going past the sweep makes the
+    trigger span longer than the wavelength log covers, and anything deriving a
+    step from that span comes out proportionally too large. That is not a
+    hypothetical: it is what these pulses got wrong on first use.
+    """
+    if period <= 0:
+        raise ValueError(f"period must be positive, got {period}")
+    if not 0 < width < period:
+        raise ValueError(
+            f"width {width} must be positive and shorter than the period "
+            f"{period}; a pulse wider than its spacing is a square wave"
+        )
+    transitions = []
+    t = float(first)
+    emitted = 0
+    while t + width <= duration:
+        if n_pulses is not None and emitted >= n_pulses:
+            break
+        transitions.extend([t, t + width])
+        t += period
+        emitted += 1
+    if n_pulses is not None and emitted < n_pulses:
+        raise ValueError(
+            f"only {emitted} of {n_pulses} pulses fit in a {duration} s record "
+            f"starting at {first} s with period {period} s. Lengthen the "
+            f"record rather than silently returning a short train."
+        )
+    if not transitions:
+        raise ValueError(
+            f"no complete pulse fits: first={first}, width={width}, "
+            f"duration={duration}"
+        )
+    return make_trigger_sequence(duration, transitions, fs=fs, high=high,
+                                 low=low, rise_time=rise_time)
+
+
 def find_trigger_edges(samples: np.ndarray, fs: float,
                        threshold: float = 0.0,
-                       min_separation: float = 1e-6) -> np.ndarray:
+                       min_separation: float = 1e-6,
+                       polarity: str = "both") -> np.ndarray:
     """
     Recover edge times from a digitised trigger channel, with sub-sample
     resolution by linear interpolation across the threshold crossing.
 
-    Returns times in seconds from the start of the record. Both polarities are
-    reported; the calibration cares about intervals, not direction.
+    Returns times in seconds from the start of the record.
+
+    `polarity` selects which transitions count: "both" (the default, and what
+    this function has always done), "rising", or "falling".
+
+    **"both" is the wrong choice for a real laser trigger, and wrong in a quiet
+    way.** The Santec emits a 25 us PULSE every step (TSL-775 p46), so each
+    logged point produces TWO transitions -- up, then down 25 us later. Asking
+    for both and averaging the intervals gives a step halfway between 25 us and
+    the real spacing: a number that looks perfectly plausible and is roughly
+    half of the truth, which would compress the whole wavelength axis.
+    Anything deriving a STEP or counting PULSES wants "rising".
+
+    "both" remains the default because interval-symmetric callers exist and
+    were written against it, and because a square-wave trigger (which is what
+    the emulator produced before pulse trains were modelled) is unaffected.
     """
+    if polarity not in ("both", "rising", "falling"):
+        raise ValueError(
+            f"polarity must be 'both', 'rising' or 'falling', got {polarity!r}"
+        )
     x = np.asarray(samples, dtype=float)
     above = x > threshold
-    idx = np.flatnonzero(np.diff(above.astype(np.int8)) != 0)
+    step = np.diff(above.astype(np.int8))
+    if polarity == "rising":
+        idx = np.flatnonzero(step > 0)
+    elif polarity == "falling":
+        idx = np.flatnonzero(step < 0)
+    else:
+        idx = np.flatnonzero(step != 0)
     if idx.size == 0:
         return np.zeros(0)
 

@@ -19,6 +19,9 @@ santec      Santec TSL-770/775 transport. Written from the manuals; has
 output      Writing the deliverable: CSV trace, npz raw capture.
 wavelength  Trace -> wavelength, the laser/board clock check, and the
             off-by-one-trigger guard. Offline-tested; has never seen a laser.
+pipeline    THE DELIVERABLE PATH: one captured sweep in, amplitude against
+            wavelength out. Joins demodulate, the trigger edges, the laser log
+            and the mapping. Checked against the emulator's known truth.
 hardware    SCPI transport. VERIFIED against the board, Phase 1 complete
             2026-08-14. See docs/07-phase1-loopback.md.
 
@@ -50,9 +53,11 @@ from .emulator import (
     SyntheticResponse,
     find_trigger_edges,
     lorentzian,
+    make_trigger_pulses,
     make_trigger_sequence,
     synthesise_dut_output,
 )
+from .pipeline import SweepReduction, measure_sweep, reduce_sweep
 from .planning import (
     CaptureOption,
     describe_capture_plan,
@@ -67,6 +72,7 @@ from .wavelength import (
     TrainAnalysis,
     analyse_trigger_train,
     check_alignment,
+    logged_point_times,
     map_to_wavelength,
 )
 from .waveforms import (
@@ -96,6 +102,7 @@ __all__ = [
     "GridTwoTonePlan",
     "LockinResult",
     "SantecTSL",
+    "SweepReduction",
     "SweepTrace",
     "TRIGGER_OUTPUT_MODES",
     "SyntheticResponse",
@@ -114,12 +121,16 @@ __all__ = [
     "make_am_table",
     "make_am_waveform",
     "make_trigger_sequence",
+    "logged_point_times",
+    "make_trigger_pulses",
     "map_to_wavelength",
+    "measure_sweep",
     "min_record_seconds",
     "plan_capture",
     "plan_two_tone",
     "plan_two_tone_grid",
     "snap_to_asg_grid",
+    "reduce_sweep",
     "recommended_preroll",
     "recommended_tail",
     "settling_points",

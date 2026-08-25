@@ -2841,3 +2841,56 @@ and a human-usable GUI.
 3. Fix the stale `describe_capture_plan()` recommendation.
 4. Decide the 11 x 5000 output layout (eleven CSVs plus an index, or one file
    with a lambda-2 column).
+
+---
+
+## 2026-08-25 (later) — Claude (Claude Code) — the end-to-end pipeline exists
+
+**Goal:** Join demodulate -> trigger edges -> laser log -> wavelength -> CSV.
+That path was the deliverable and nothing had ever run it.
+
+**Did:** Added `src/rp_lockin/pipeline.py` (`reduce_sweep`, `measure_sweep`,
+`SweepReduction`) and `tests/test_pipeline.py`, checked against emulator truth.
+A synthetic sweep with the resonance planted at a known wavelength comes back
+with the peak at **exactly** that wavelength, through the real code.
+
+**Learned — four things the joining exposed that no component test could:**
+
+1. **`find_trigger_edges` returns BOTH polarities, and the real trigger is a
+   PULSE.** 25 us wide every step (TSL-775 p46), so each logged point makes two
+   transitions. Averaging both gives a step near half the truth — a clean-looking
+   trace with the wavelength axis compressed 2x. Added `polarity=` (default
+   "both", unchanged) and the pipeline asks for "rising". **This would have
+   been a live bug on the first real sweep.**
+2. **The emulator only made SQUARE WAVES.** `make_trigger_sequence` alternates
+   state at every time given, i.e. 50% duty cycle, which no laser emits — and
+   which hides trap 1 completely. Added `make_trigger_pulses`, with `n_pulses`,
+   because a train running to the end of the record (rather than stopping when
+   the sweep does) stretches the measured span and inflates the step. Both of
+   those were mistakes I made in the first draft of the test.
+3. **The recommended TAIL makes the trace legitimately overrun the laser's
+   table**, and `map_to_wavelength` refuses an overrun by default. Those points
+   are correctly NaN. `reduce_sweep` now defaults `overrun_tol` to
+   `recommended_tail()`, which is the honest bound: a real misalignment is off
+   by a large fraction of a sweep, far more than a tail, so it is still caught.
+4. **Pre-roll shorter than the settling produces no pre-sweep points at all.**
+   Settling trims 113 output points = 22.6 ms; an 8 ms pre-roll leaves nothing,
+   and `n_before == 0` looks exactly like a mapping bug. Use
+   `recommended_preroll()` (45.2 ms). Written into the test that found it.
+
+**The step comes from the trigger SPAN / (N - 1)**, per Kevin 2026-08-25, with
+the span measured rather than assumed. Dividing by N instead is a 1-in-N error
+that equals one whole step of drift by the far end. **Q26 is dead** under this
+scheme: nothing counts pulses, so one-log-point-per-pulse stops mattering.
+
+**Broke / still broken:**
+
+- `measure_sweep` is written but **has never touched hardware** — no board.
+- The GUI does not use the pipeline yet; its CSV still writes an empty
+  wavelength column.
+- Still outstanding from earlier today: the board runs the OLD `rp_fastread.py`,
+  and `describe_capture_plan()` still recommends decimation 2 plus the
+  device-tree move, contradicting the settled decision.
+
+**Next:** wire the GUI's Demodulate tab to `reduce_sweep` so a laser log can be
+loaded and the axis becomes wavelength; then the 11 x 5000 stepping loop.
