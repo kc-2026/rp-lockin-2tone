@@ -51,14 +51,19 @@ import mmap
 import os
 import socket
 import sys
+import time
 
 DEFAULT_BASE = 0x1000000
 DEFAULT_SIZE = 0x8000000
 DEFAULT_PORT = 9999
 
-# Bytes per socket write. Bounds peak memory on the board, which has only
-# ~375 MB free -- a single large slice is what killed an earlier version.
-CHUNK = 1 << 20
+# Bytes per socket write. The 1 MB value this replaces was set because
+# `mem[off:off+n]` MATERIALISES A COPY, and a 50 MB slice killed the helper on a
+# board with ~375 MB free. The send below now slices a memoryview instead, which
+# copies nothing, so the chunk size no longer bounds peak memory -- it only sets
+# how often the loop goes round. 8 MB keeps the loop cheap while still capping
+# how much one `sendall` can block for.
+CHUNK = 8 << 20
 
 
 def serve(base: int, size: int, port: int) -> None:
@@ -78,6 +83,10 @@ def serve(base: int, size: int, port: int) -> None:
               file=sys.stderr)
         raise SystemExit(2)
 
+    # One view over the whole region, made once. Slicing this is free; slicing
+    # `mem` is not.
+    view = memoryview(mem)
+
     srv = socket.socket()
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("0.0.0.0", port))
@@ -89,6 +98,11 @@ def serve(base: int, size: int, port: int) -> None:
         while True:
             conn, addr = srv.accept()
             try:
+                # Nagle holds a partial trailing segment waiting for an ACK the
+                # receiver is itself delaying. That is harmless on a continuous
+                # stream and costly on anything resembling ping-pong, and it
+                # costs nothing to switch off for a bulk sender like this one.
+                conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 req = b""
                 while not req.endswith(b"\n") and len(req) < 128:
                     chunk = conn.recv(128)
@@ -113,15 +127,25 @@ def serve(base: int, size: int, port: int) -> None:
                         print(f"  refused out-of-range {off}+{length} "
                               f"(size {size})", flush=True)
                     else:
-                        # Send in 1 MB pieces. `mem[off:off+length]` in one go
-                        # materialises the whole slice as a bytes object first,
-                        # and a 50 MB request killed the helper outright on a
-                        # board with ~375 MB free. Chunking caps the copy.
+                        # Slice the MEMORYVIEW, not the mmap. `mem[a:b]` builds
+                        # a real bytes object -- 125 MB of memcpy on a slow ARM
+                        # for a full two-channel sweep, and a 50 MB slice once
+                        # killed the helper outright. `view[a:b]` copies nothing
+                        # and sendall accepts the buffer directly.
                         end = off + length
+                        t0 = time.monotonic()
                         while off < end:
                             n = min(CHUNK, end - off)
-                            conn.sendall(mem[off:off + n])
+                            conn.sendall(view[off:off + n])
                             off += n
+                        dt = time.monotonic() - t0
+                        # Logged because the board side and the client side were
+                        # indistinguishable in the one measurement we have: 125 MB
+                        # took 6.7-11.2 s against 87 MB/s on a smaller read, and
+                        # nothing recorded WHERE it went. This line splits it.
+                        rate = f", {length / dt / 1e6:.1f} MB/s" if dt > 0 else ""
+                        print(f"  GET {length} bytes in {dt:.3f} s{rate}",
+                              flush=True)
                 else:
                     print(f"  bad request {req!r}", flush=True)
             finally:
@@ -130,6 +154,10 @@ def serve(base: int, size: int, port: int) -> None:
         print("\ninterrupted", flush=True)
     finally:
         srv.close()
+        # The view must go before the mmap: mmap.close() raises BufferError
+        # while an exported buffer is still alive, which would turn a clean
+        # shutdown into a traceback.
+        view.release()
         mem.close()
         os.close(fd)
         print("rp_fastread: stopped", flush=True)

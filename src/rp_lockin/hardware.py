@@ -304,16 +304,25 @@ class RedPitaya:
                 f"no fast-read helper on {self.host}:{port} ({e}). Start it "
                 f"with: python3 /dev/shm/rp_fastread.py"
             ) from e
+        buf = bytearray(n_bytes)
         with s:
             s.settimeout(timeout)
+            # Bulk receiver: the request is one line and the reply is tens
+            # of megabytes, so there is no ping-pong for Nagle to help
+            # with. Off on both ends or it is off on neither.
+            s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             s.sendall(f"GET {offset} {n_bytes}\n".encode("ascii"))
-            parts, have = [], 0
+            # recv_into a preallocated buffer rather than accumulating a
+            # list and joining it. The join held the whole reply TWICE at
+            # its peak -- 62 MB of fragments plus the 62 MB result -- on
+            # top of the float64 array below. Same bytes, one copy fewer.
+            view = memoryview(buf)
+            have = 0
             while have < n_bytes:
-                chunk = s.recv(1 << 20)
-                if not chunk:
+                got = s.recv_into(view[have:], n_bytes - have)
+                if not got:
                     break
-                parts.append(chunk)
-                have += len(chunk)
+                have += got
         if have != n_bytes:
             raise ConnectionError(
                 f"fast read returned {have} of {n_bytes} bytes. The helper "
@@ -332,7 +341,12 @@ class RedPitaya:
         # acquire() on the same silent channel, a ratio of 1.002, where a byte
         # swap would be off by ~100x. Re-check it the same way if this changes;
         # a byte-swapped noise record still looks exactly like noise.
-        return np.frombuffer(b"".join(parts), dtype="<i2").astype(np.float64)
+        # astype(float64) quadruples this: 31 M samples is 62 MB of int16
+        # becoming 250 MB of float64, with both live at once. It stays
+        # float64 because the DSP chain expects it, but if a record ever
+        # gets much bigger this conversion is the thing to attack next,
+        # not the transfer.
+        return np.frombuffer(buf, dtype="<i2").astype(np.float64)
 
     def fast_read_available(self, port: int = 9999,
                             timeout: float = 3.0) -> bool:
