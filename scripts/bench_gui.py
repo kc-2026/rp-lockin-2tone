@@ -665,17 +665,20 @@ class BenchGui:
 
         self.acq_info = tk.StringVar(value="no record")
         ttk.Label(f, textvariable=self.acq_info,
-                  font=("TkFixedFont", 9)).pack(anchor="w", pady=(6, 4))
+                  font=("TkFixedFont", 9)).pack(anchor="w", pady=(6, 0))
+        self.spec_info = tk.StringVar(value="")
+        ttk.Label(f, textvariable=self.spec_info, foreground="#1a5fb4",
+                  font=("TkFixedFont", 9)).pack(anchor="w", pady=(0, 4))
 
         ttk.Label(f, wraplength=980, foreground="#606060",
-                  text="This plot is the RAW ADC waveform -- volts against "
-                       "time, straight off the input. At full span it looks "
-                       "like a solid band, and that is correct rather than "
-                       "broken: the detector signal is a ~991 kHz tone, so a "
-                       "60 ms record holds ~60,000 cycles squeezed into ~900 "
-                       "pixels. Zoom to 10 us to see actual cycles. The "
-                       "SWEEP-shaped trace you are looking for is on the "
-                       "Demodulate tab -- this one is its input."
+                  text="This is the RAW ADC record -- the lock-in's INPUT, not "
+                       "its result. In 'time' it is volts against time; at "
+                       "full span a ~991 kHz tone in a 60 ms record is ~60,000 "
+                       "cycles in ~900 pixels, so it draws as a solid band. "
+                       "Zoom to 10 us for actual cycles. In 'spectrum' it is "
+                       "an FFT -- use that to check the tone is where you "
+                       "think it is BEFORE demodulating. The sweep-shaped "
+                       "trace lives on the Demodulate tab."
                   ).pack(anchor="w", pady=(0, 4))
 
         which = ttk.Frame(f)
@@ -686,6 +689,12 @@ class BenchGui:
             ttk.Radiobutton(which, text=f"CH{ch}", value=ch,
                             variable=self.raw_channel,
                             command=self._redraw_raw).pack(side="left", padx=4)
+        ttk.Label(which, text="View").pack(side="left", padx=(16, 4))
+        self.raw_domain = tk.StringVar(value="time")
+        for name in ("time", "spectrum"):
+            ttk.Radiobutton(which, text=name, value=name,
+                            variable=self.raw_domain,
+                            command=self._redraw_raw).pack(side="left", padx=2)
         ttk.Label(which, text="Zoom").pack(side="left", padx=(16, 4))
         self.raw_span = tk.StringVar(value="full")
         ttk.Combobox(which, textvariable=self.raw_span, width=8,
@@ -787,6 +796,10 @@ class BenchGui:
                  f"min {y.min():.5g}   max {y.max():.5g}   "
                  f"rms {np.sqrt(np.mean(y ** 2)):.5g}")
 
+        if self.raw_domain.get() == "spectrum":
+            return self._draw_spectrum(y, fs, ch, whole)
+        self.spec_info.set("")
+
         span = self._SPANS.get(self.raw_span.get())
         if span is None:
             lo, hi = 0, y.size
@@ -800,6 +813,50 @@ class BenchGui:
         self.acq_info.set(whole)
         t = np.arange(lo, hi) / fs
         self.raw_plot.show(t, y[lo:hi], "time (s)", f"CH{ch} raw (V)")
+
+    # A fixed block rather than the zoom window: the frequency resolution of a
+    # spectrum is set by how many samples go into it, so letting the time-domain
+    # zoom drive it would silently change the resolution as you scrubbed. 2^20
+    # samples at 31.25 MS/s is 33 ms and ~30 Hz per bin, which resolves the
+    # 991.821 kHz line and its neighbours with room to spare.
+    _FFT_SAMPLES = 1 << 20
+
+    def _draw_spectrum(self, y, fs, ch, whole):
+        n = min(self._FFT_SAMPLES, y.size)
+        if n < 1024:
+            self.acq_info.set(whole + "   |  too few samples for a spectrum")
+            return self.raw_plot.clear()
+        lo = int((y.size - n) * self.raw_pos.get() / 100.0)
+        block = y[lo:lo + n]
+
+        # Hann window, and the amplitude scaling that goes with it: a sinusoid
+        # of amplitude A reads A, not A/2 and not A*n. Getting this wrong gives
+        # a spectrum whose shape is right and whose numbers are meaningless,
+        # which is the kind of plausible wrong answer this project collects.
+        w = np.hanning(n)
+        amp = 2.0 * np.abs(np.fft.rfft(block * w)) / np.sum(w)
+        freq = np.fft.rfftfreq(n, 1.0 / fs)
+        with np.errstate(divide="ignore"):
+            db = 20.0 * np.log10(np.maximum(amp, 1e-12))
+
+        # Ignore DC and the window's skirt around it when hunting the peak,
+        # or a few millivolts of offset wins every time.
+        first = max(1, int(round(50e3 * n / fs)))
+        k = first + int(np.argmax(amp[first:]))
+        peak_f, peak_a = float(freq[k]), float(amp[k])
+
+        target = PLAN.difference
+        kt = int(round(target * n / fs))
+        at_plan = float(amp[kt]) if 0 <= kt < amp.size else float("nan")
+
+        self.acq_info.set(
+            f"{whole}   |  spectrum of {n} samples ({n / fs * 1e3:.1f} ms, "
+            f"{fs / n:.1f} Hz/bin)")
+        self.spec_info.set(
+            f"peak {peak_f / 1e3:.3f} kHz at {_eng(peak_a)}V   |   "
+            f"at the plan's {target / 1e3:.3f} kHz: {_eng(at_plan)}V   |   "
+            f"peak is {(peak_f - target):+.1f} Hz from the plan")
+        self.raw_plot.show(freq, db, "frequency (Hz)", f"CH{ch} (dBV)")
 
     def find_edges(self):
         if 2 not in self.st.raw:

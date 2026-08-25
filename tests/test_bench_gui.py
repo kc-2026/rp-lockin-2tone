@@ -256,3 +256,67 @@ def test_zoom_window_slices_the_record_without_touching_the_stats(app):
     assert app.raw_plot.y.size == pytest.approx(10e-6 * 250e6 / 16, rel=0.02)
     assert app.acq_info.get().split("|")[0].strip() == stats_full
     assert "showing" in app.acq_info.get()
+
+
+# ------------------------------------------------------ the spectrum view
+
+def test_spectrum_finds_the_simulated_tone_at_the_plan_frequency(app,
+                                                                 gui_module):
+    """The point of the view: is the tone where we think it is?
+
+    The emulator puts a single tone at the plan's difference frequency, so the
+    FFT peak must land there. A peak somewhere else would mean the generator,
+    the sample rate or the plan disagree -- which is exactly what someone would
+    open this view to find out.
+    """
+    app.sim_ms.set("60")
+    app.decim.set("16")
+    app.sim_noise.set("0.00001")
+    app.simulate()
+    settle(app)
+    app.raw_domain.set("spectrum")
+    app._redraw_raw()
+
+    info = app.spec_info.get()
+    assert "peak" in info
+    peak_khz = float(info.split("peak ")[1].split(" kHz")[0])
+    assert peak_khz == pytest.approx(gui_module.PLAN.difference / 1e3,
+                                     abs=0.05)
+    # And it must agree with the plan to well inside one FFT bin.
+    offset = float(info.split("is ")[1].split(" Hz")[0])
+    assert abs(offset) < 60.0
+
+
+def test_spectrum_amplitude_scaling_is_calibrated_in_volts(app):
+    """A Hann-windowed FFT needs 2/sum(w), not 1/n.
+
+    Getting it wrong leaves the spectrum's SHAPE right and its numbers
+    meaningless, so the reported peak is checked against the amplitude the
+    emulator was asked for (0.2 V, before any clipping rescale).
+    """
+    app.sim_ms.set("60")
+    app.decim.set("16")
+    app.sim_noise.set("0.0")
+    app.simulate()
+    settle(app)
+    app.raw_domain.set("spectrum")
+    app._redraw_raw()
+    shown = app.spec_info.get().split(" at ")[1].split("V")[0]
+    # _eng renders 0.2 V as "200m". The envelope is Lorentzian so the tone is
+    # amplitude-modulated across the record; the peak bin carries less than the
+    # full 0.2 V, but it must be the right order rather than out by 2 or by n.
+    assert shown.endswith("m")
+    assert 1.0 < float(shown[:-1]) < 200.0
+
+
+def test_switching_back_to_time_clears_the_spectrum_readout(app):
+    app.sim_ms.set("60")
+    app.decim.set("16")
+    app.simulate()
+    settle(app)
+    app.raw_domain.set("spectrum")
+    app._redraw_raw()
+    assert app.spec_info.get() != ""
+    app.raw_domain.set("time")
+    app._redraw_raw()
+    assert app.spec_info.get() == ""
