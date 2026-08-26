@@ -350,11 +350,26 @@ The emulated-DUT test at full sweep length needs a waveform longer than the
       **Transfer is far slower than the single-channel figure suggests:**
       6.7–11.2 s for 125 MB including arming and the 1 s capture, so
       11–19 MB/s against the 87 MB/s measured on a 64 MB single-channel
-      read. The 1 MB chunking added to `rp_fastread.py` after it was
-      killed by a 50 MB request means ~125 round trips, and at ~50 ms each
-      that is most of the difference. A robustness-for-speed trade that
-      was worth making; larger chunks would recover most of it if a sweep
-      ever needs to be faster.
+      read.
+
+      **The explanation originally recorded here was WRONG and is
+      withdrawn (2026-08-25).** It read: "the 1 MB chunking means ~125
+      round trips, and at ~50 ms each that is most of the difference."
+      There are no such round trips. The client issues at most FOUR GETs
+      per capture -- one per channel, two if the ring wraps -- and the
+      helper streams the whole reply over one connection. Those 125 are
+      `sendall()` calls on a continuous unidirectional stream, which is
+      not a pattern Nagle plus delayed-ACK stalls.
+
+      **The cause is still unknown.** What was done instead of guessing
+      again: the helper now slices a `memoryview` rather than the mmap
+      (the old path memcpy'd all 125 MB on the ARM before sending a
+      byte), chunks are 8 MB, `TCP_NODELAY` is set on both ends, the
+      client uses `recv_into` over a preallocated buffer, and **the
+      helper logs bytes and elapsed per GET** -- which is what will
+      actually settle it. **The board has not yet run the new helper**,
+      so this remains open. The measured times stand; only the story
+      about them was wrong.
 - [x] **H6.3 PASSES 2026-08-14 — exactly 5000 points**, spanning +0.1 ms to
       999.9 ms about the trigger, at **exactly 200.000 µs spacing with zero
       measurable jitter**, first point 100 µs after the trigger.

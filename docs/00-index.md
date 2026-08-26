@@ -4,12 +4,19 @@ A two-tone lock-in measurement on a Red Pitaya SIGNALlab 250-12: two AOM drives
 mix in a DUT, a photodetector returns the intermodulation response, and we
 deliver amplitude against laser wavelength across a ~1 second sweep.
 
+**TWO lasers, established 2026-08-25.** A fine sweeper (5000 points, ~1 s,
+carries the trigger) and a stepper (11 discrete wavelengths, one per sweep). The
+deliverable is an **11 × 5000 map**. Anything written before that date describing
+a single laser is stale — say so if you find some.
+
 ## Status, in one line
 
-**Phase 0 and Phase 1 are complete. Phase 2 has not started and is gated on a
-planning session. The live blocker is that the Santec laser does not answer over
-USB — see `08-phase2-hardware.md` section 0, and Q27.** 153 offline tests pass. Nothing beyond loopback cables is
-connected.
+**Phase 0 and Phase 1 are complete, and the end-to-end pipeline now exists and is
+checked against known truth. Phase 2 has not started and is gated on a planning
+session.** 233 offline tests pass. **Two blockers, neither of them software: the
+Ethernet link to the board has been dead since 2026-08-25, and the laser has
+never answered.** Both are covered in the HANDOFF block at the top of
+`SESSION_LOG.md`, which is the fastest way to learn the current state.
 
 ## What each document is for
 
@@ -25,6 +32,7 @@ connected.
 | **08-phase2-hardware.md** | What Phase 2 needs, the U1–U12 risks, and proposed steps P1–P6 | Planning the move to real hardware |
 | **09-phase2-plan.md** | *Does not exist yet* — the agreed plan, once the session has happened | — |
 | **10-open-questions.md** | What is undecided, what was decided, and who decided it | Something looks unresolved |
+| **11-pipeline.md** | The deliverable path end to end, and where its time axis comes from | Before touching `pipeline.py`, or before trusting a wavelength |
 
 Also at the repository root:
 
@@ -38,6 +46,9 @@ Also at the repository root:
 
 | I want to know… | Go to |
 |---|---|
+| How a capture becomes a wavelength trace | `11-pipeline.md`, then `src/rp_lockin/pipeline.py` |
+| How to drive any of this by hand | `scripts/bench_gui.py` — it has a Simulate path needing no hardware |
+| What to run on the bench, in what order | `08-phase2-hardware.md` section 5, then `scripts/p2_trigger_check.py` onward |
 | How small a signal we can measure | `05-results.md` — σ = 3.57 µV, so ≥36 µV for SNR 10 |
 | Why the lock-in frequency is 991.821 kHz and not 1 MHz | `03-frequency-plan.md` |
 | Why the board returns nothing when I set a frequency | `04-hardware-reference.md` — the generator does not work how it looks |

@@ -341,6 +341,25 @@ exactly what the reset lands on.** It would silently ruin an HV or AC-coupled
 deep capture — the capture would succeed and be wrong by 20×. `ACQ:AXI:DEC` is
 set explicitly after the reset, so the decimation survives.
 
+**Fixed by `_reapply_front_end()`, which remembers and restores. And on
+2026-08-26 that memory was made PER CHANNEL**, which it had not been:
+
+```python
+rp.setup_acquisition(decimation=8, coupling="AC", gain="LV")   # both channels
+rp.setup_channel(2, gain="HV")                                 # then IN2 alone
+```
+
+**The old single-pair version made P2 impossible to run as specified.** The real
+experiment needs IN1 on LV for the detector and IN2 on HV for the laser's 3.3 V
+trigger, and forcing both to one setting put IN2 back on LV after every reset — 
+where a 3.3 V trigger clips into a flat line. That does not present as a range
+error. It presents as **"the laser is not triggering"**, and would have sent
+somebody to check the BNC.
+
+`setup_acquisition` still sets both channels, which is what it always meant;
+call `setup_channel` afterwards where they must differ, and note the order
+matters. `rp.coupling` and `rp.gain` still read channel 1 for older callers.
+
 ### The fast-read path's little-endian decode is proven
 
 `fast_read()` decodes little-endian while `query_binary_int16()` decodes
@@ -466,12 +485,26 @@ trigger really is stepping in time (**Q24**) and that there is one log point per
 pulse (**Q26**). If either is false the times are wrong and nothing in the data
 would say so.
 
-**That there is exactly one log point per trigger pulse is an ASSUMPTION.**
-Neither manual states it. It is the natural reading — logging and trigger output
-are discussed together on TSL-775 p47 — but it is not written down, and the whole
-index-based mapping rests on it. **Test it at P1**: run a sweep, compare
-`:READout:POINts?` against the pulses in the record. That is Q26, and it is one
-command plus one capture.
+**That there is exactly one log point per trigger pulse WAS an assumption, and
+the design no longer depends on it (2026-08-25).** Neither manual states it, and
+it used to be load-bearing. `pipeline.reduce_sweep` now derives the time step
+from the trigger train's **span** over (N − 1) logged points rather than from the
+interval between pulses, so nothing counts pulses and a laser logging at some
+other divisor gives the same answer. **Q26 is dead**; see `11-pipeline.md`.
+
+Comparing `:READout:POINts?` against the recorded pulse count is still worth
+doing at P2 as a sanity check — `check_alignment` performs exactly that — but
+nothing rests on the outcome.
+
+**Q24 is still live and still matters.** The step arithmetic assumes the trigger
+is periodic in TIME. In wavelength-periodic mode the logged points are unevenly
+spaced in time and the whole scheme is wrong.
+
+**And one trap the manual's own spec creates.** The trigger is a **25 µs
+pulse**, so every logged point produces a rising edge AND a falling edge.
+`find_trigger_edges` defaults to reporting both; anything deriving a step or
+counting pulses must pass `polarity="rising"`, or it reads a step near half the
+truth and compresses the wavelength axis 2× while still drawing a clean trace.
 
 Both `:READout:DATa?` responses are IEEE 488.2 definite-length blocks — the same
 `#4nnnn` header the Red Pitaya uses — followed by:

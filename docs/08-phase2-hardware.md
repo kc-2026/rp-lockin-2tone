@@ -49,32 +49,99 @@ session's **output** goes in `09-phase2-plan.md`, which does not exist yet.
 
 ---
 
-## 0. THE LIVE BLOCKER — the laser does not answer
+## 0. THE LIVE BLOCKERS — updated 2026-08-26
 
-**P1 ran on 2026-08-14 and got nothing back.** Serial is present as **COM29**
-(USB, via the FTDI VCP driver), the trigger BNC is fitted and the laser light is
-available — but the laser replies to nothing.
+**There are two, and neither is software.** The end-to-end pipeline is written
+and verified against known truth; what is missing is the ability to reach any
+hardware at all.
 
-**Eliminated, do not retry:** cable, driver, COM port, baud rate (6), terminator
-(CR/LF/CRLF), flow control (both), and the driver interface — the device
-enumerates cleanly over **both VCP and D2XX** (`desc='TSL-775'
-serial='2601S967' id=0x2428:0116 flags=0`) and is silent on both. The host side
-is done; `scripts/laser_comms_diag.py` reruns it all and explains each outcome.
+### 0a. The Ethernet link to the board is dead
 
-**What is left, in order:**
+Not intermittent — dead since **2026-08-25 at 14:20**, and it has not linked at
+any speed since, including with a new cable. From the control PC's own event log:
+
+| | |
+|---|---|
+| through 14 Aug | linked repeatedly at **1 Gbps** |
+| 25 Aug 14:12 | 1 Gbps, then **100 Mbps** twice — pairs dropping out |
+| since 14:20 | **nothing** |
+| 25 Aug | **107 NIC resets** in one day, against a background of 1–6 |
+
+**The board is exonerated.** Kevin confirmed its LEDs are on and blinking, so it
+boots and runs — which also clears the SD-card and device-tree worries that a
+non-booting board would have raised. Do not chase them.
+
+**The leading suspect is the control PC's port**, which also returns "a device
+attached to the system is not functioning" from
+`Get-NetAdapterPowerManagement`. The decisive test is a cross-check of each end
+against a third device — a router or a switch.
+
+**Recommendation:** put the board on a switch rather than a direct cable. It is
+a more forgiving link partner, and it ends the link-local address churn recorded
+in section "Network" of `04-hardware-reference.md`.
+
+### 0b. The laser has never answered — and there is a new lead
+
+**P1 ran on 2026-08-14 and got nothing back.** The conclusion recorded then was
+that the host side was "eliminated" because the device enumerated cleanly over
+both VCP and D2XX. **On 2026-08-26 that turned out not to hold for the VCP
+half.** On the control PC:
+
+```
+FriendlyName           : USB Serial Port
+InstanceId             : FTDIBUS\VID_2428+PID_0116+2601S967A\0000
+ConfigManagerErrorCode : CM_PROB_FAILED_INSTALL
+Present                : True
+```
+
+`VID_2428 PID_0116` serial `2601S967` is the TSL-775 exactly. **Its virtual COM
+port driver failed to install**, and no COM ports were present on the machine at
+all. Whether this dates from August or arose since is unknown.
+
+**This is the most concrete lead the blocker has ever had, and the cheapest test
+of it is a clean driver install on different hardware.**
+
+**Still eliminated, do not retry:** cable, baud rate (6 tried), terminator
+(CR/LF/CRLF), flow control (both states), and the D2XX interface.
+`scripts/laser_comms_diag.py` reruns it all and explains each outcome. Note it
+needs the `laser-d2xx` extra, which was undeclared until 2026-08-26.
+
+**Still untried and cheap, in order:**
 
 1. **Line settings other than 8N1** — data bits, parity and stop bits were never
-   swept. 7E1 and 8E1. **The biggest untried gap, and cheap.**
-2. **Power-cycle the laser**, to clear a stuck REMOTE state (manual p54).
-3. **Santec's own software**, if supplied. Connects → the laser is listening and
-   our settings are wrong. Does not → the fault is not ours. **Highest
-   information per minute of anything here.**
-4. **LAN**, which sidesteps all of it. `SantecTSL.over_lan()` is written.
+   swept. 7E1 and 8E1. **The biggest untried gap.**
+2. **A clean driver install**, given 0b above.
+3. **Power-cycle the laser**, to clear a stuck REMOTE state (manual p54).
+4. **Santec's own software**, if supplied. Connects → the laser is listening and
+   our settings are wrong. Does not → the fault is not ours.
+5. **LAN**, which sidesteps all of it. `SantecTSL.over_lan()` is written.
 
-**Command set: use SCPI** (Kevin's front panel offers Legacy or SCPI, and no
-delimiter option — which killed the leading hypothesis). Not cosmetic: the two
-answer the same query in different units, so `wavelength_m()` now checks and
-raises rather than returning nanometres as metres.
+**Command set: use SCPI.** Not cosmetic: the two answer the same query in
+different units, so `wavelength_m()` checks and raises rather than returning
+nanometres as metres.
+
+---
+
+## 0c. THE EXPERIMENT IS TWO LASERS — established 2026-08-25
+
+Everything in this document written before that date assumes one. It is
+corrected here; treat any older passage elsewhere with suspicion.
+
+- **A fine sweeper** — ~1 s, 5000 points, carries the trigger BNC into IN2, and
+  supplies the wavelength axis from its own log. This is what P1 and P2 mean by
+  "the laser".
+- **A stepper** — 11 discrete wavelengths, one per sweep. No trigger, no log; it
+  is set, allowed to settle, and read.
+
+The deliverable is an **11 × 5000 map**. `SweepSeries` / `write_series` handle
+the set, and `scripts/p6_robustness.py --step 2` walks it.
+
+**Serial control of the stepper is PARKED** at Kevin's request.
+`set_wavelength_m()` is written and tested; nothing calls it. Until it is picked
+up, the stepping laser is positioned by hand between sweeps.
+
+**Naming collision:** this project's **f1/f2** are the AOM modulation
+frequencies (MHz); Kevin's **freq1/freq2** are the lasers (THz).
 
 ---
 
@@ -250,13 +317,27 @@ and P1 done so there is a table to compare against.
 clock ratio is stable.
 **Closes:** U7, U11, U12. Confirms or overturns the decimation choice.
 
-**Note:** the code for P2.3 and P2.4 is already written and tested —
-`wavelength.check_alignment` and `analyse_trigger_train`. This step is where they
-first meet a real instrument.
+**There is now a script for this: `scripts/p2_trigger_check.py`.** It drives no
+outputs, reads the laser only, sets IN2 to HV and IN1 to LV, and prints a block
+to paste into `SESSION_LOG.md`. It never commands a sweep — start one from the
+front panel when it asks.
+
+**The code for P2.3 and P2.4 was already written and tested**
+(`check_alignment`, `analyse_trigger_train`); this step is where they first meet
+a real instrument. Note that **P2.3's answer no longer gates anything** — Q26
+died when the time step moved to the trigger span — but the comparison is still
+the cheapest sanity check available.
+
+**One thing this step will confirm that only became visible on 2026-08-25:** the
+trigger is a 25 µs PULSE, so each logged point makes two edges. The script asks
+for rising edges only and reports PULSES. If a future reader sees twice the
+expected count, that is the cause.
 
 ---
 
 ### P3 — Drive chain, AOMs disconnected *(no optics)*
+
+**Script: `scripts/p3_drive_chain.py`.** Runs ONE sub-step at a time via `--step`, so nothing is energised as a side effect. Refuses without `--i-am-present` AND a typed confirmation, and disarms on every exit path.
 
 Everything electrical, into a load or a scope, before anything optical exists.
 
@@ -292,6 +373,8 @@ nonlinearity.
 
 ### P4 — Optics connected, laser at low power
 
+**Script: `scripts/p4_detector.py`.** Steps 1, 3 and 4 drive no outputs. Step 2 does, and is gated. It states what P4.4 *should* read, so a wrong answer is recognisable rather than merely a number.
+
 | Step | What it establishes |
 |---|---|
 | P4.1 | Photodetector output level and DC offset, laser on, no RF — sets the input range and coupling (**Q11, U5**) |
@@ -326,6 +409,8 @@ find out by how much.
 
 ### P5 — Full system, first real measurement
 
+**Script: `scripts/p5_first_measurement.py`.** **Enforces P5.1 before P5.2**, and refuses P5.2 outright if the control was not clean — the verdict is written to `data/p5_control.json` rather than left to memory.
+
 | Step | What it establishes |
 |---|---|
 | P5.1 | **The U2 control measurement: drive ONE tone only and look at the difference frequency. Nothing should be there.** If something is, it is the amplifiers or crosstalk, not the DUT |
@@ -346,6 +431,8 @@ first and finding a signal proves nothing.
 ---
 
 ### P6 — Robustness and delivery
+
+**Script: `scripts/p6_robustness.py`.** Step 2 walks the full 11-step series and writes the deliverable set. Step 4 drives nothing.
 
 | Step | What it establishes |
 |---|---|

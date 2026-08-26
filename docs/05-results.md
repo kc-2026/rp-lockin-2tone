@@ -6,6 +6,15 @@ Anything here was measured against the board, not calculated or assumed.
 **How the instrument behaves** is in `04-hardware-reference.md`. **How each
 number was obtained**, step by step, is in `07-phase1-loopback.md`.
 
+**One recorded explanation here has been withdrawn.** H6.2 attributed the
+125 MB read's 6.7–11.2 s to "~125 round trips at ~50 ms each". Reading the code
+on 2026-08-25 showed there are no such round trips — the client issues at most
+FOUR GETs per capture and the board helper streams the whole reply over one
+connection. **The cause of the shortfall against the 87 MB/s single-read figure
+is unknown.** Per-GET timing was added to the helper to settle it; the board has
+not yet run the new helper, so the question is still open. The measured times
+above stand; only the explanation was wrong.
+
 ---
 
 ## The headline numbers
@@ -22,6 +31,8 @@ number was obtained**, step by step, is in `07-phase1-loopback.md`.
 | Trigger edge recovery | 0 of 732 intervals wrong | H4.1 |
 | IN1/IN2 alignment | 0.0005 samples | H4.3 |
 | `Trig:Pos` offset from the true crossing | +1.14 samples (9.1 ns), fixed | H4.4 |
+| Deep-capture read, 125 MB two-channel | **6.7–11.2 s** (11–19 MB/s) over the FAST socket | H6.2 |
+| Same bytes over SCPI, for comparison | 5.7 MB/s — a path nothing takes for bulk reads | H1 |
 | Sweep-to-sweep amplitude repeatability | **0.0029% rms** over 20 sweeps | H7.1 |
 | Sweep-to-sweep trigger repeatability | 6 ns rms | H7.1 |
 | Trace point count and spacing | exactly 5000 at exactly 200.000 µs | H6.3 |

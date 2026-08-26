@@ -17,18 +17,25 @@ Template:
 
 ---
 
-## HANDOFF / STATUS — updated 2026-08-14, read this first
+## HANDOFF / STATUS — updated 2026-08-26, read this first
 
-**Phase 0 and Phase 1 are COMPLETE.** 153 offline tests pass. Phase 2 has not
-started; all three of its original blockers are answered. **The live problem is
-that the Santec laser does not reply over USB.** Everything else is either done
-or waiting on that.
+**Phase 0 and Phase 1 are COMPLETE. The end-to-end pipeline now exists and is
+checked against known truth.** 233 offline tests pass. Phase 2 has not started
+and is still gated on a planning session with Kevin.
+
+**Two blockers, and neither is software:**
+
+1. **The Ethernet link to the board is dead.** Not flaky — dead since
+   2026-08-25. The board is healthy.
+2. **The Santec laser has never answered a byte** — but there is now a concrete
+   lead that was never checked. See below.
 
 ### Where to look
 
 | Want | Go to |
 |---|---|
 | What each doc is for | `docs/00-index.md` |
+| The deliverable path, in code | `src/rp_lockin/pipeline.py` |
 | Any measured number | `docs/05-results.md` |
 | What the board does, and the traps it sets | `docs/04-hardware-reference.md` |
 | Phase 1, step by step | `docs/07-phase1-loopback.md` |
@@ -36,121 +43,191 @@ or waiting on that.
 | Anything undecided | `docs/10-open-questions.md` |
 | Agent ground rules and traps | `CLAUDE.md` |
 
-### THE ONE LIVE BLOCKER: the laser is silent
+---
 
-Kevin has serial (**COM29**), the laser trigger output on a BNC, and the laser
-light. P1 ran and got **nothing back at all**.
+### THE EXPERIMENT IS TWO LASERS. This was only established on 2026-08-25.
 
-**Eliminated — do not retry these:** cable, driver, COM port, baud rate (6
-tried), terminator (CR/LF/CRLF), flow control (both states), and the driver
-interface — the device enumerates cleanly over **both** VCP and D2XX
-(`desc='TSL-775' serial='2601S967' id=0x2428:0116 flags=0`) and is silent on
-both. The host side is done. `scripts/laser_comms_diag.py` reruns all of it and
-explains what each outcome means.
+Every document written before that date describes a single sweeping laser. That
+was wrong, and it is corrected everywhere now, but assume any older prose you
+find elsewhere still carries it.
 
-**The EOI hypothesis is DEAD.** The manual (p55) presents the delimiter as a
-four-valued setting including EOI, which would have explained everything — but
-Kevin reports **no delimiter option on the front panel**. So the USB delimiter is
-CR as sections 7.2.2 and 7.3.2 state, and CR was tried.
+- A **fine sweeper**: ~1 s, 5000 points, carries the trigger BNC into IN2, and
+  supplies the wavelength axis from its own log.
+- A **stepper**: 11 discrete wavelengths, one per sweep. No trigger, no log —
+  set it, let it settle, read `:WAVelength?`.
 
-**What is left to try, in order:**
+The deliverable is an **11 × 5000 map** of intermodulation response against both
+wavelengths. `SweepSeries` / `write_series` in `pipeline.py` handle the set.
 
-1. **Line settings other than 8N1.** The sweep covered baud, terminator and flow
-   control but **not data bits, parity or stop bits**. 7E1 and 8E1 are worth a
-   look. **This is the biggest untried gap and it is cheap.**
-2. **Power-cycle the laser.** A REMOTE state exists (p54) in which all front-panel
-   keys but LOCAL are disabled. Free to rule out.
-3. **Santec's own software, if supplied.** If it connects, the laser is listening
-   and our settings are wrong; if it does not, the fault is not ours. **Highest
-   information per minute of anything on this list.**
-4. **LAN.** Sidesteps all of it. `SantecTSL.over_lan()` is written, and the LAN
-   section documents its own delimiter. Needs an IP set on the laser
-   (Other → Communication → LAN).
+**Naming collision, and it will bite someone.** The docs' **f1/f2** are the AOM
+*modulation* frequencies (5.004883 and 5.996704 MHz). Kevin's **freq1/freq2**
+are the *lasers*. Nine orders of magnitude apart, same names.
 
-### Command set: use SCPI, and it is not cosmetic
+**Serial control of the stepping laser is PARKED** at Kevin's request
+(2026-08-25). `SantecTSL.set_wavelength_m()` is written and tested but nothing
+calls it.
 
-Kevin's front panel offers **Legacy** or **SCPI**. **Choose SCPI.**
+---
 
-The two answer the *same query in different units*: SCPI gives `:WAVelength?` in
-**metres** and the log as 8-byte doubles in metres; Legacy gives **nanometres**
-and the log as 4-byte integers in 0.1 pm. `read_wavelengths()` infers the log
-format from the byte count and is safe either way, but **scalars are not**.
-`wavelength_m()` now calls `command_set()` and **raises rather than returning
-nanometres as metres** — an error of 10⁹ that nothing in the number would reveal.
+### BLOCKER 1: the Ethernet link is dead, and the board is not at fault
 
-### Ready to run the moment serial works
+Established 2026-08-26 from the control PC's own event log:
 
-```bash
-python scripts/p1_laser_check.py --serial COM29     # read-only, probes baud
-python scripts/laser_comms_diag.py --serial COM29   # read-only, why is it silent
+- Through 14 Aug the link established repeatedly at **1 Gbps**.
+- On 25 Aug at 14:12 it linked at 1 Gbps, then immediately at **100 Mbps**
+  twice — falling back means pairs were dropping out, since gigabit needs four
+  and 100 Mbps needs two.
+- **After 14:20 on 25 Aug it has never linked again, at any speed**, including
+  after a new cable was fitted.
+- Separately, the NIC logged **107 resets in one day** (25 Aug) against a
+  background of 1–6, in a loop every 4–10 seconds.
+
+**The board is healthy** — Kevin confirmed its LEDs are on and blinking, so it
+boots and runs. That also **clears the SD-card and device-tree worries**: a
+board that boots has neither problem. Do not chase them.
+
+**The leading suspect is the control PC's Ethernet port.**
+`Get-NetAdapterPowerManagement` on it returns *"a device attached to the system
+is not functioning"*. The decisive test is a cross-check against a third device
+(a router or switch): whichever end will not link to known-good hardware is the
+failed one.
+
+**Recommendation, and it also fixes a standing annoyance:** put the board on a
+switch or router rather than a direct cable. Direct link-local was always the
+weaker arrangement, and the address changed on every reconnect
+(`04-hardware-reference.md:56`).
+
+### BLOCKER 2: the laser — and a lead nobody had checked
+
+The old handoff said the host side was "eliminated" because the device
+enumerated cleanly over both VCP and D2XX. **On 2026-08-26 that turned out not
+to be true of the VCP half.** On the control PC:
+
+```
+FriendlyName           : USB Serial Port
+InstanceId             : FTDIBUS\VID_2428+PID_0116+2601S967A\0000
+ConfigManagerErrorCode : CM_PROB_FAILED_INSTALL
+Present                : True
 ```
 
-P1 settles **Q24** (the two manuals define `:TRIGger:OUTPut:SETTing` with
-**opposite** encodings — set it and read it back, never hardcode a literal),
-**half of Q26**, and whether `santec.py` works at all. **It has never had a
-reply.**
+`VID_2428 PID_0116` serial `2601S967` is the TSL-775 exactly. **Its virtual COM
+port driver failed to install**, and no COM ports were present on the machine at
+all. Whether that dates from August or happened since is unknown.
 
-### Then P2, which needs only the BNC already fitted
+**This is the most concrete lead the laser blocker has ever had, and the cheapest
+test of it is a clean driver install on different hardware.**
 
-Confirm the trigger fires the capture, then compare the pulse count in a Red
-Pitaya capture against `:READout:POINts?`. That **completes Q26** and settles
-U7, U11 and U12. Two things: **IN2 must be on HV (±20 V)** because the trigger is
-3.3 V, and gain/coupling are **per channel**, so IN1 stays on LV.
+Still eliminated, do not retry: cable, baud rate (6 tried), terminator
+(CR/LF/CRLF), flow control, and the D2XX path. Still untried and cheap: **line
+settings other than 8N1** (7E1, 8E1), a power cycle to clear a stuck REMOTE
+state, **Santec's own software**, and LAN.
 
-### Tier 1 — needs no hardware, and is NOT done
+**Command set: SCPI.** Not cosmetic — SCPI answers `:WAVelength?` in metres and
+Legacy in nanometres, so `wavelength_m()` checks and raises rather than being
+wrong by 10⁹.
 
-The best use of time while the laser is uncooperative:
+---
 
-1. **The end-to-end pipeline.** `demodulate` → `find_trigger_edges` →
-   `logged_point_times` → `map_to_wavelength` → `write_trace_csv` all exist and
-   are tested individually, but **nothing joins them**. That path is the
-   deliverable.
-2. **A synthetic full sweep in the emulator** — two AOM curves, DUT
-   nonlinearity, detector noise at ~11 µV, a trigger train, a matching laser
-   log — so the pipeline can be checked against known truth. This is the Phase 0
-   method that caught three real bugs, applied to code that has never run end to
-   end.
-3. **Bench scripts for P3–P6**, in the style of `p1_laser_check.py`.
-4. **A code-review pass.** Nothing written on 2026-08-14 has had a second look.
+### What was built on 2026-08-25/26
 
-### Five traps that have already cost time
+**`src/rp_lockin/pipeline.py` — THE DELIVERABLE PATH.** `reduce_sweep()` joins
+demodulate → trigger edges → laser log → wavelength → CSV. Verified against
+emulator truth: a resonance planted at a known wavelength comes back at that
+wavelength. `measure_sweep()` is the hardware wrapper and **has never run against
+a board**. `SweepSeries` / `write_series` handle the 11-step set as one CSV per
+sweep plus an index.
 
-1. **A misspelled SCPI setting command returns zero bytes, exactly like a correct
-   one.** Verify by set-then-read-back, never by absence of an error. The single
-   most expensive lesson here.
-2. **`ACQ:RST` silently reverts coupling to DC and gain to LV**, and both
-   deep-capture paths issue it. `setup_acquisition` now remembers and restores;
-   do not undo that.
-3. **The capture needs a TAIL as well as pre-roll.** `LockinResult.t` compensates
-   group delay, so a record stopping at trigger + 1 s yields 4943 points, not
-   5000 — no error, the trace just ends early. Use `planning.recommended_tail()`.
-4. **`mean(R)` reads 1.25σ with no signal at all.** Use
-   `LockinResult.amplitude()`. **Do not use `debiased_amplitude()`** — measured,
-   it is worse than raw R between 2σ and 6σ, which is exactly our range.
-5. **Do not "fix" the RF drive level.** Kevin's CW tuning is correct, because the
-   drive is depth-1 AM and the AOM is switched fully on and off rather than held
-   at a bias point. Three attenuator recommendations were made and all three
-   withdrawn.
+**The time step comes from the trigger train's SPAN over (N−1) logged points**,
+measured from the record rather than assumed from the configured sweep time.
+Kevin's scheme, with the span measured. **Watch the (N−1)** — dividing by N is a
+1-in-N error that equals exactly one step of drift by the far end.
+
+**`scripts/bench_gui.py`** — Tkinter bench GUI (Q14 answered). Board, outputs,
+capture, demodulation, trace view, CSV, laser. Has a **Simulate** path that runs
+the whole chain to a wavelength axis with nothing connected. Outputs off on
+close; laser writes behind a gate that starts off.
+
+**`scripts/p2_trigger_check.py` … `p6_robustness.py`** plus `scripts/_bench.py`.
+Nothing drives an output without `--i-am-present` AND a typed confirmation.
+**P5.2 refuses to run before P5.1, and refuses if P5.1 was not clean** — an
+amplifier product sits at exactly the frequency P5.2 looks at.
+
+### Five things found by joining it all up, all silent-failure kind
+
+1. **`find_trigger_edges` returns BOTH polarities, and a real trigger is a 25 µs
+   PULSE.** Every logged point makes two edges, so a step derived from "both" is
+   near half the truth and compresses the wavelength axis 2×, cleanly. Pass
+   `polarity="rising"`. **This would have been live on the first real sweep.**
+2. **The emulator only made SQUARE WAVES**, which hid trap 1 completely. Fixed:
+   `make_trigger_pulses`, with `n_pulses` — a train running past the end of the
+   sweep inflates the measured step.
+3. **`check_alignment`'s span test is VACUOUS under the pipeline's default
+   step** and reads as though it is not. The step comes from the span, so the
+   two are the same number: a capture missing its first two pulses still reports
+   0.00% span error. Only the COUNT check catches it. `describe()` now says so.
+4. **`santec.py` could not resynchronise.** A read timing out mid-reply left the
+   remainder buffered, so every later query returned the tail of the previous
+   one. `hardware.py` records this exact failure against the board. Added
+   `resync()`.
+5. **The front end was not per channel**, so IN2 could not be on HV while IN1
+   was on LV — which made **P2 impossible to run as specified**. A 3.3 V trigger
+   on the ±1 V range is a flat clipped line that reads as "the laser is not
+   triggering". Fixed: `setup_channel()`.
+
+### Corrections to things previously recorded as fact
+
+- **Q26 IS DEAD.** It asked whether the laser logs one point per trigger pulse.
+  It mattered only while the step came from the trigger INTERVAL; the span/(N−1)
+  scheme never counts pulses. **Q24 still matters** — the trigger must be
+  periodic in TIME, not wavelength.
+- **The recorded cause of the slow deep-capture transfer is WRONG.** H6.2
+  attributed 6.7–11.2 s for 125 MB to "~125 round trips at ~50 ms". There are no
+  such round trips: the client issues at most FOUR GETs per capture and the
+  helper streams the reply over one connection. **The real cause is still
+  unknown.** Per-GET timing was added to the helper to settle it.
+- **`describe_capture_plan()` recommended decimation 2 plus the rejected
+  device-tree move** for eleven days, because `recommend()` bounded by
+  `MAX_DMA_MB` (the hypothetical enlarged region) instead of the 128 MiB that
+  exists. Fixed; `DMA_REGION_MB` added. It also quoted the SCPI transfer rate for
+  a path that does not use SCPI — `FAST_READ_MB_PER_S` now does.
+
+---
+
+### Ready to run the moment the link is back
+
+```bash
+scp scripts/rp_fastread.py root@rp-fffe42.local:/dev/shm/     # board runs the OLD one
+python scripts/p2_trigger_check.py --serial COM29             # no RF, no optics
+python scripts/bench_gui.py                                   # needs nothing
+```
+
+**The board still runs the OLD helper.** None of the 2026-08-25 transfer work —
+zero-copy sends, TCP_NODELAY, per-GET timing — takes effect until it is
+re-copied. The first capture afterwards prints the line that settles where the
+7–11 s actually goes.
 
 ### Judgement calls not to relitigate
 
 - **No attenuator.** Withdrawn three times over.
-- **Decimation 8**, and **no device-tree memory move**. The trigger-recovery
-  objection evaporated when the wavelength axis moved to the laser.
-- **AM with carrier**, not a pure product — puts the modulation at f1 rather than
-  2f1, hardware-verified by H2.2.
+- **Decimation 8**, and **no device-tree memory move**.
+- **AM with carrier**, not a pure product — hardware-verified by H2.2.
 - **H2.5 failed and was downgraded** by Kevin; the deliverable is amplitude only.
 - **No averaging** (Q13) and **CSV output** (Q15), both Kevin's decisions.
+- **Do not "fix" the RF drive level.** Kevin's CW tuning is correct because the
+  drive is depth-1 AM and the AOM is switched fully on and off.
 
-### Two habits this session learned the hard way
+### Habits this project learned the hard way
 
 - **When a claim is corrected, sweep the whole repo for it.** The "wavelength
-  against time" claim was fixed three times in three different files, because it
-  was patched where noticed rather than searched for.
+  against time" claim was fixed three times in three files because it was
+  patched where noticed rather than searched for. The two-laser correction on
+  2026-08-25 was swept properly; check that it stayed swept.
 - **A manual describing something differently from how a person described it is
-  not the same as the person being wrong** — they may be describing different
-  layers of one thing. Kevin's Q20 answer was recorded as wrong in four
-  documents, and was not.
+  not the same as the person being wrong.** Kevin's Q20 answer was recorded as
+  wrong in four documents, and was not.
+- **Verify before theorising about hardware.** Two diagnoses this project
+  recorded as fact did not survive being checked against the code and the event
+  log.
 
 ### Still wanted from Kevin
 
@@ -161,7 +238,6 @@ The best use of time while the laser is uncooperative:
   boundary** — both deferred at his request
 - **Do not restart the board's SCPI server.** That is Kevin's, by request, and
   the deny list enforces it
-
 ---
 
 ## 2026-08-07 — Claude (Cowork, scoping session) — project bootstrap
@@ -3036,3 +3112,60 @@ an amplifier powered. `tests/test_bench_scripts.py` now imports every script for
 exactly that reason, alongside pinning the consent gates and P5's ordering.
 
 233 offline tests pass. **None of these have been run against hardware.**
+
+---
+
+## 2026-08-26 — Claude (Claude Code) — documentation sweep for handoff
+
+**Goal:** Kevin is handing the project on. Make every document true.
+
+**Did:** Rewrote the HANDOFF block at the top of this file from scratch, and
+swept all thirteen other documents. The changes worth knowing about:
+
+- **`docs/11-pipeline.md` is new** — the deliverable path, where its time step
+  comes from, and the five defects joining it up exposed. `00-index.md` and
+  `README.md` reference it.
+- **The two-laser correction was propagated everywhere.** Before today,
+  `README.md`, `01-overview.md`, `00-index.md` and `08-phase2-hardware.md` all
+  described a single sweeping laser. The f1/f2 vs freq1/freq2 naming collision
+  is now called out in four places, because it will otherwise produce a bug that
+  looks entirely reasonable.
+- **`README.md`'s "Key numbers" table carried the PRE-GRID frequencies** — 80
+  MHz, 5/6 MHz, lock-in 1 MHz, a 250-sample buffer. Every one of those is wrong
+  and has been since 2026-08-12, in the most-read file in the repository, next
+  to a warning about never hardcoding the round number. Corrected, with the
+  reason attached.
+- **The wrong transfer explanation was withdrawn at its source** in
+  `07-phase1-loopback.md`, not only in the summary. The measured times stand;
+  the story about them did not survive being checked.
+- **ADR-0002 still said the planner recommends decimation 2.** Corrected with
+  the memory reasoning and a pointer to why the planner drifted.
+- **Q26 marked dead in all five places it appeared.** Q27 re-opened with the
+  driver evidence. **Q28 raised** for the Ethernet failure, and both are now in
+  the blocking table at the top of `10-open-questions.md`, which previously
+  listed neither actual blocker.
+- `CLAUDE.md` gained four new entries under "Things that will bite you" and a
+  section on the P-series safety contract.
+
+**Learned:** two documents were corrupted mid-edit by writing `\0000` inside a
+Python string — it is an octal escape, and it wrote a NUL byte that turned both
+files binary. Caught because `grep` reported "Binary file matches". **Build
+backslashes with `chr(92)` when scripting edits**, and scan for NUL before
+committing; there is now a check that does both.
+
+**Broke / still broken:** nothing in code. 233 tests pass. The two blockers are
+unchanged and both are hardware: the Ethernet link and the laser.
+
+**Next, for whoever picks this up:**
+
+1. **Push.** The repository was 17 commits ahead of GitHub at the start of this
+   session and everything from 2026-08-25/26 is local-only.
+2. Fix the Ethernet link — cross-test each end against a switch (Q28).
+3. Re-deploy `rp_fastread.py`; the board still runs the old one.
+4. Run P2. It needs only the BNC already fitted.
+5. The laser's VCP driver (Q27) — a clean install on other hardware is the
+   cheapest test the blocker has ever had.
+
+A provisioning runbook for a fresh control PC was published as an artifact this
+session; if that link is lost, its content is reproducible from this log plus
+`pyproject.toml`.

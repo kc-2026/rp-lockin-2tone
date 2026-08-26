@@ -81,6 +81,9 @@ Loopback phase only, for now. Within that:
 
 - **Never exceed the Red Pitaya's own specifications.** Output range is
   software-selectable; do not command amplitudes outside it.
+- **As of 2026-08-26 you cannot reach the board at all** — the Ethernet link has
+  been dead since 25 August and the board is not at fault. Anything needing
+  hardware is blocked until that is fixed; see Q28 and the HANDOFF block.
 - **As of 2026-08-14 the laser, its trigger BNC and the laser light ARE
   connected**, but the DUT, amplifiers, AOMs and photodetector are **not**. If
   you believe a test needs those, stop and write the request into
@@ -128,6 +131,20 @@ Do not move signal processing into the transport layer.
 against the board. The live task is in the HANDOFF block at the top of
 `SESSION_LOG.md`; at the time of writing it is the Santec laser not answering
 over USB, and the Tier 1 work that needs no hardware at all.
+
+### Driving hardware from a script
+
+The P-series scripts (`scripts/p2_trigger_check.py` … `p6_robustness.py`) share
+`scripts/_bench.py`, and its contract is not decoration:
+
+- **Outputs are disarmed on EVERY exit path**, including exceptions and Ctrl-C.
+- **Nothing drives an output without `--i-am-present` AND a typed confirmation.**
+  A flag alone is too easy to leave in a shell history; EOF is not consent.
+- **P5.2 refuses to run before P5.1**, and refuses if P5.1 was not clean. An
+  amplifier-generated product sits at exactly the frequency P5.2 looks at, so a
+  signal found there proves nothing until the one-tone control is clean.
+
+**Match that contract in anything new.** `scripts/bench_gui.py` follows it too.
 
 ### Testing discipline
 
@@ -177,6 +194,21 @@ wrong answers rather than crashes:
 6. **Streaming block boundaries are periodic.** An artefact there lands at the
    same place in every sweep and looks like DUT structure. `test_chunked_equals_
    single_shot` pins this to exact equality; keep it exact, not approximate.
+7. **`find_trigger_edges` reports BOTH polarities by default, and a real trigger
+   is a 25 µs PULSE.** Every logged point makes two edges, so a step averaged
+   over both is near HALF the truth — compressing the whole wavelength axis 2×
+   while still drawing a clean trace. Pass `polarity="rising"` for anything
+   deriving a step or counting pulses.
+8. **`check_alignment`'s span test is vacuous when the table was built from the
+   edges**, which is `reduce_sweep`'s default. It compares a number against
+   itself and reports 0.00% on a genuinely broken alignment. Only the COUNT
+   check does work there. Do not read "spans match" as corroboration.
+9. **Coupling and gain are PER CHANNEL** (`setup_channel`). IN1 wants LV for the
+   detector, IN2 wants HV for the 3.3 V trigger. On LV that trigger clips to a
+   flat line, which reads as "the laser is not triggering".
+10. **A serial read that times out desynchronises `santec.py` permanently** —
+    every later query returns the tail of the previous reply, plausibly and
+    without raising. Call `resync()`; it is read-only and safe any time.
 
 ### Conventions
 
@@ -212,7 +244,10 @@ python -c "from rp_lockin import describe_capture_plan; print(describe_capture_p
 pytest -q
 ```
 
-## Current state — updated 2026-08-14
+## Current state — updated 2026-08-26
+
+**This section is a summary. The authoritative current state is the HANDOFF
+block at the top of `SESSION_LOG.md`, which is rewritten every session.**
 
 **Phase 0 and Phase 1 are both COMPLETE.** The offline suite passes; its size
 grows, so check `SESSION_LOG.md` rather than trusting a number quoted here. Every
@@ -251,21 +286,31 @@ the agent's** (asked 2026-08-14).
 | H7.3 mid-capture disconnect | **done — all three stages fail cleanly and leave the board healthy** |
 | H7.4 outputs off after a crash | **failed, then fixed — `close()` now disarms both outputs** |
 
-**The largest open work is not on this list: the Santec transport.** The lasers are
-a **TSL-770 and a TSL-775** (Kevin, 2026-08-14) and are not connected during
-loopback.
+**Two blockers, both hardware access, neither software.**
 
-`wavelength.py` implements everything that does **not** depend on the command
-set — the mapping, the clock measurement, and the alignment guards — with 20
-tests. **The serial transport is deliberately absent, and must stay absent until
-someone has the manual.** On this project a misspelled SCPI command returns zero
-bytes exactly like a correct one (see `04-hardware-reference.md`), so a guessed
-Santec command set would fail *silently* and the wavelength axis is the one place
-where a silent failure is invisible in the output. Do not write it from memory.
+**1. The Ethernet link to the board has been dead since 2026-08-25.** Not
+flaky — it has not linked at any speed since, including with a new cable. The
+board is healthy (its LEDs confirm it boots), which also clears the SD-card and
+device-tree worries. The control PC's port is the leading suspect. See Q28.
 
-What is still needed: the TSL-770/775 command set, the port settings, and whether
-the wavelength table streams live during the sweep or is dumped afterwards — that
-last one decides whether the driver runs alongside the capture or after it.
+**2. The laser has never answered a byte**, and on 2026-08-26 its virtual COM
+port driver was found reporting `CM_PROB_FAILED_INSTALL` on the control PC —
+the most concrete lead this blocker has had. See Q27.
+
+The lasers are a **TSL-770 and a TSL-775** (Kevin, 2026-08-14).
+
+`santec.py` **is** now written, entirely from the manuals — bare-CR delimiter,
+little-endian payloads, every setter reading back. **It has still never spoken
+to a laser.** One command string in it is inferred rather than quoted
+(`set_wavelength_m`, whose SET form is not in the manuals' tables); that is safe
+only because it verifies itself by read-back, and the module says so. **Do not
+extend that pattern to a command whose effect cannot be read back** — on this
+project a misspelled command returns zero bytes exactly like a correct one, and
+the wavelength axis is the one place a silent failure is invisible in the output.
+
+`wavelength.py` still holds **no serial commands at all**, and `pipeline.py`
+keeps the same split. What remains unknown about the laser: the port settings,
+and whether the table streams during the sweep or is dumped afterwards (P1.4).
 
 That change also **defused the decimation/memory question.** It was live only
 because the wavelength axis depended on recovering trigger intervals exactly; it
