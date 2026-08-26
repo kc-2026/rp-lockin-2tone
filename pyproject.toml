@@ -15,6 +15,11 @@ plot = ["matplotlib>=3.6"]
 # Only the Santec laser needs this, and only over USB/serial. Kept out of
 # the core dependencies so the package imports and the suite runs without it.
 laser = ["pyserial>=3.5"]
+# scripts/laser_comms_diag.py probes the D2XX driver path as well as the VCP
+# one, and imports ftd2xx to do it. It was installed by hand on the 2026-08-14
+# machine and never declared, so a fresh machine hits an ImportError in the
+# middle of diagnosing the laser -- which is the worst possible moment.
+laser-d2xx = ["pyserial>=3.5", "ftd2xx>=1.3"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
