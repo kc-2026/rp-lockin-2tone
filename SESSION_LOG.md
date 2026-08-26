@@ -2053,10 +2053,16 @@ It gates the decimation, which gates the memory question. **Answerable from a
 datasheet. Ask Kevin for the make and model before doing anything
 memory-related.**
 
-### Repo structure hazard
+### Repo structure hazard — RESOLVED 2026-08-26
 
-The project lives at `.../rp-lockin-2tone/rp-lockin-2tone` — one level below the
-directory of the same name. The **outer directory is an empty git repo with zero
+> **This was fixed. The project now lives at a single level:
+> `Downloads/rp-lockin-2tone/`, one folder, one git repo. The nested layout and
+> the accidental outer repo are gone.** The paragraph below is kept because the
+> hazard it describes did real damage — it is why a push on 2026-08-26 landed
+> only `.claude` on GitHub, having been run from the outer directory.
+
+The project used to live at `.../rp-lockin-2tone/rp-lockin-2tone` — one level
+below the directory of the same name. The **outer directory is an empty git repo with zero
 commits** that has snagged the real repo as an unregistered gitlink (mode
 160000, pinned at `801c4a8`). It is almost certainly accidental. Nothing was
 committed there; doing so would cement a nested-repo structure nobody chose.
@@ -3175,3 +3181,43 @@ unchanged and both are hardware: the Ethernet link and the laser.
 A provisioning runbook for a fresh control PC was published as an artifact this
 session; if that link is lost, its content is reproducible from this log plus
 `pyproject.toml`.
+
+---
+
+## 2026-08-26 (later) — Claude (Claude Code) — flattened the nested folder
+
+**Goal:** Remove the `rp-lockin-2tone/rp-lockin-2tone` nesting, which had just
+caused a real failure.
+
+**What the nesting actually was.** Someone ran `git init` + `git add .` in the
+OUTER folder while the real project already sat inside it with its own `.git`.
+Git recorded the inner project as a **submodule pointer** (`mode 160000`), not
+as files. A later commit removed the pointer. So the outer repo's entire
+history was: add `.claude/settings.local.json` and a stray gitlink, then delete
+the gitlink. No value.
+
+**It cost something before it was fixed.** Both repos had been pointed at the
+same remote, and a push run from the outer directory put only `.claude` on
+GitHub — which looked exactly like the real push having failed.
+
+**Did:**
+- Verified the real repo's 72 commits were pushed and `origin/main` matched
+  (`17b3439`) **before** touching anything. The flatten was not attempted while
+  the work existed only on this disk.
+- Moved the outer `.git` aside to the scratchpad rather than deleting it.
+- Moved all 14 inner entries up one level; removed the empty inner folder.
+- **Reinstalled the editable package.** This is the part that would have bitten
+  a future session: `__editable__.rp_lockin_2tone-0.1.0.pth` still contained the
+  OLD absolute path, so `import rp_lockin` failed after the move. The venv
+  itself survived — Windows resolves `sys.prefix` from the executable's location
+  — but the editable install did not.
+- Added `.claude/settings.local.json` to `.gitignore`. A user-level ignore at
+  `~/.config/git/ignore` had been hiding it; that will not exist on a fresh
+  machine, so the rule is now in the repo.
+
+**Learned:** moving a Python project on Windows breaks the editable install and
+nothing else. `pyvenv.cfg`'s `command =` line still records the old path and is
+harmless — it is a record of creation, not a runtime lookup.
+
+**Next:** unchanged — the two hardware blockers. The layout is no longer one of
+them.

@@ -5,6 +5,11 @@ __pycache__/
 build/
 dist/
 .venv/
+# Machine-local Claude Code permissions -- it holds absolute paths for
+# THIS machine and a deny list tuned to this bench. A user-level git
+# ignore covered it before the folder was flattened; ignoring it here
+# means a fresh clone on another machine does not see it as noise.
+.claude/settings.local.json
 venv/
 data/*.npz
 data/*.h5
