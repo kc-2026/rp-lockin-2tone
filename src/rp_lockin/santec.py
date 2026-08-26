@@ -79,6 +79,7 @@ class TcpTransport:
 
     def __init__(self, host: str, port: int = 5000, timeout: float = 10.0):
         self.description = f"{host}:{port}"
+        self._timeout = timeout
         self._sock = socket.create_connection((host, port), timeout=timeout)
         self._sock.settimeout(timeout)
 
@@ -87,6 +88,18 @@ class TcpTransport:
 
     def recv(self, n: int) -> bytes:
         return self._sock.recv(n)
+
+    def drain(self) -> None:
+        """Throw away anything already in flight. Used by SantecTSL.resync."""
+        self._sock.setblocking(False)
+        try:
+            while self._sock.recv(65536):
+                pass
+        except (BlockingIOError, OSError):
+            pass
+        finally:
+            self._sock.setblocking(True)
+            self._sock.settimeout(self._timeout)
 
     def close(self) -> None:
         try:
@@ -130,6 +143,15 @@ class SerialTransport:
         want = self._ser.in_waiting or 1
         return self._ser.read(max(1, min(n, want)))
 
+    def drain(self) -> None:
+        """Throw away anything already in the port's buffers."""
+        # reset_input_buffer is the pyserial name; guarded because the test
+        # seam passes a stub that need not implement it.
+        for name in ("reset_input_buffer", "reset_output_buffer"):
+            fn = getattr(self._ser, name, None)
+            if fn is not None:
+                fn()
+
     def close(self) -> None:
         try:
             self._ser.close()
@@ -143,7 +165,18 @@ class TriggerConfig:
 
     mode: int  # 0 none, 1 stop, 2 start, 3 step
     setting: int  # 0/1 -- periodic in wavelength or time, SEE THE WARNING
-    step_m: float  # trigger step, metres (or seconds if periodic in time)
+
+    # RAW `:TRIGger:OUTPut:STEP?`, and the name flatters it. Its unit is not
+    # knowable from this value alone:
+    #   * SCPI command set -> metres;  Legacy -> nanometres (the 10^9 trap that
+    #     `wavelength_m()` guards and this deliberately does not, because it
+    #     would cost an extra query on every read of a diagnostic);
+    #   * and if SETTing selects periodic-in-TIME it is seconds, not a length
+    #     at all -- while the two manuals disagree about which value that is.
+    # Nothing in this project COMPUTES with it; it is reported so a human can
+    # compare it against the sweep. Anything that starts computing with it must
+    # resolve the units first via `command_set()`. Reviewed 2026-08-25.
+    step_m: float
     active_low: bool
 
     @property
@@ -251,6 +284,37 @@ class SantecTSL:
             self._buf += chunk
         line, self._buf = self._buf.split(b"\r", 1)
         return line.decode("ascii", errors="replace").strip()
+
+    def resync(self) -> str:
+        """Discard anything buffered and prove the link is back in step.
+
+        **Why this exists.** `self._buf` persists between queries, so a read
+        that times out part-way through a reply leaves the remainder sitting
+        there, and every subsequent query returns the TAIL OF THE PREVIOUS ONE.
+        Values keep arriving and keep looking plausible; nothing raises. That is
+        not hypothetical -- `hardware.py` records exactly this failure against
+        the Red Pitaya on 2026-08-12, where `ACQ:AXI:SIZE?` appeared to return
+        the region base, and the fix there was the same: a known query used as a
+        sync token.
+
+        Reads only, so it is always safe to call. Returns the identification
+        string, which is the proof.
+
+        **Limit worth knowing:** our buffer is not the only place bytes hide.
+        Whatever the serial driver or the socket has already received sits
+        below us, which is why this calls the transport's `drain()` as well.
+        Both shipped transports implement it; a transport that does not cannot
+        be fully resynchronised, and this returns the stale reply instead.
+        """
+        self._buf = b""
+        # Drain whatever the transport is still holding. Serial keeps its own
+        # buffer below ours, and clearing only ours would leave the stale bytes
+        # to arrive on the next read.
+        drain = getattr(self._t, "drain", None)
+        if drain is not None:
+            drain()
+        self.write("*IDN?")
+        return self._read_line()
 
     def query(self, cmd: str) -> str:
         self.write(cmd)

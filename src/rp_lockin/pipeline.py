@@ -116,6 +116,14 @@ class SweepReduction:
             f"{self.edges.size} edge(s): too few to characterise the train",
             self.alignment.describe(),
         ]
+        if self.step_source.startswith("measured"):
+            # Said out loud because the line above prints two spans that agree
+            # exactly, which reads like corroboration and is not: the step came
+            # FROM that span, so the two are the same number. Only the pulse
+            # count is doing any work here.
+            lines.append(
+                "  (span agreement above is automatic -- the step was derived "
+                "from that span. Only the edge/row COUNT tests the alignment.)")
         if t.n_outside:
             lines.append(
                 f"{t.n_outside} point(s) without a wavelength: "

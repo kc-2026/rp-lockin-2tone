@@ -413,3 +413,71 @@ def test_a_laser_that_never_moves_raises_and_names_the_likely_cause():
     rp = connect(fake)
     with pytest.raises(RuntimeError, match="not what this driver assumes"):
         rp.set_wavelength_m(1.55e-6, poll=0.001, timeout=0.05)
+
+
+# ------------------------------------------------------------ resynchronising
+
+def test_a_stale_buffer_makes_every_later_query_return_the_wrong_reply(laser):
+    """The failure resync() exists for, demonstrated before it is fixed.
+
+    A reply left unread stays in the buffer, so the NEXT query returns it
+    instead of its own answer. Nothing raises and every value looks plausible.
+    hardware.py records the identical failure against the Red Pitaya.
+    """
+    rp = connect(laser)
+    # Two replies arrive but only one is consumed -- what a timed-out read
+    # part-way through a transfer leaves behind.
+    laser.replies[":WAV?"] = "1.5500000E-06"
+    laser._out += b"STALE\r"
+    assert rp.query(":WAV?") == "STALE", "premise: the stale reply comes first"
+
+
+def test_resync_clears_the_buffer_and_proves_the_link(laser):
+    """A real transport can throw away bytes it has already received.
+
+    The fake is given the same ability here, because without it the test says
+    nothing about resync and everything about the fake: stale bytes sitting
+    BELOW our buffer -- in the serial driver or the socket -- are exactly what
+    a bare `self._buf = b""` cannot reach. That is why resync calls drain().
+    """
+    laser.drain = lambda: setattr(laser, "_out", b"")
+    rp = connect(laser)
+    laser.replies["*IDN?"] = "SANTEC,TSL-775,2601S967,1.0"
+    laser._out += b"LEFTOVER\r"
+    assert rp.resync() == "SANTEC,TSL-775,2601S967,1.0"
+    # And the next query gets its own answer rather than the leftover.
+    laser.replies[":WAV?"] = "1.5500000E-06"
+    assert rp.query(":WAV?") == "1.5500000E-06"
+
+
+def test_resync_cannot_help_a_transport_that_cannot_drain(laser):
+    """Honest about the limit: our buffer is not the only place bytes hide.
+
+    A transport with no drain() leaves whatever it has already buffered, and
+    resync returns that instead of the identification string. Both real
+    transports implement drain(); this pins what happens when one does not, so
+    the guarantee is not overstated.
+    """
+    rp = connect(laser)
+    laser.replies["*IDN?"] = "SANTEC,TSL-775,2601S967,1.0"
+    laser._out += b"LEFTOVER\r"
+    assert rp.resync() == "LEFTOVER"
+
+
+def test_resync_sends_only_a_read(laser):
+    """It must be safe to call at any time: the light goes somewhere."""
+    rp = connect(laser)
+    laser.replies["*IDN?"] = "SANTEC,TSL-775,2601S967,1.0"
+    rp.resync()
+    assert laser.sent == ["*IDN?"]
+    assert all(c.endswith("?") for c in laser.sent)
+
+
+def test_resync_drains_the_transport_below_us_too(laser):
+    """Clearing only our buffer leaves stale bytes to arrive on the next read."""
+    drained = []
+    laser.drain = lambda: drained.append(True)
+    rp = connect(laser)
+    laser.replies["*IDN?"] = "SANTEC,TSL-775,2601S967,1.0"
+    rp.resync()
+    assert drained == [True]

@@ -335,3 +335,30 @@ def test_the_series_summary_flags_a_suspect_alignment(tmp_path):
     text = series.describe()
     assert "ALIGNMENT SUSPECT" in text
     assert "1 sweep(s) with a suspect alignment: [1]" in text
+
+
+def test_the_span_check_is_vacuous_when_the_step_came_from_the_span():
+    """A guard that reads stronger than it is, pinned so nobody trusts it.
+
+    reduce_sweep derives the step as (edge span)/(N-1), which makes the table's
+    span identically equal to the edges' span. check_alignment then compares a
+    number against itself and reports 0.00% however wrong the alignment is --
+    including a capture that missed the first two pulses, where the wavelengths
+    really are all shifted. The COUNT check is what catches that, and the
+    summary has to say so rather than showing two matching spans.
+    """
+    detector, trigger, wl, _e, _s = build()
+    edges = find_trigger_edges(trigger, FS, polarity="rising")
+    late = trigger.copy()
+    late[:int((edges[1] + 1e-4) * FS)] = trigger.min()
+
+    red = reduce_sweep(detector, late, FS, wl, f_ref=PLAN.difference)
+    a = red.alignment
+    assert not a.ok
+    # The span error is zero even though the alignment is genuinely broken.
+    assert (a.edge_span - a.table_span) / a.table_span == pytest.approx(0.0,
+                                                                       abs=1e-12)
+    # So the count is what actually found it.
+    assert a.n_table - a.n_edges == 2
+    assert "fewer pulse(s)" in a.diagnosis
+    assert "span agreement above is automatic" in red.describe()

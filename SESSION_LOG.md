@@ -2958,3 +2958,45 @@ take one capture to settle where the transfer time goes; run P2 (trigger into
 IN2) once the board is reachable. **Still needing nothing:** bench scripts for
 P3-P6, and a code-review pass over everything written on 2026-08-14, which has
 still never had a second look.
+
+**Code-review pass over the 2026-08-14 code (same session).** `santec.py`,
+`wavelength.py`, `output.py`. Three findings, all of the project's
+characteristic kind — plausible wrong answers rather than crashes.
+
+1. **`check_alignment`'s span test is VACUOUS under the pipeline's default
+   step, and it reads as though it is not.** Its docstring says both a count
+   and a span are checked "because either alone is weak". But
+   `reduce_sweep` derives the step as (edge span)/(N−1), which makes
+   `table_span` identically equal to `edge_span`. **Verified**: a capture that
+   misses the first two pulses — where every wavelength really is shifted —
+   still reports a span error of exactly 0.00%, and only the COUNT check finds
+   it. Not removed, because the span test does real work when the table comes
+   from a configured sweep time or an explicit step. Documented at both ends,
+   and `SweepReduction.describe()` now says so at the point of use, because the
+   summary otherwise prints two identical spans that look like corroboration.
+   Pinned by `test_the_span_check_is_vacuous_when_the_step_came_from_the_span`.
+2. **`santec.py` had no way to resynchronise.** `self._buf` persists between
+   queries, so a read that times out part-way through a reply leaves the
+   remainder behind and every subsequent query returns the TAIL OF THE PREVIOUS
+   ONE — plausible values, nothing raised. `hardware.py` records exactly this
+   failure against the board on 2026-08-12 and fixed it with `*IDN?` as a sync
+   token; the laser client had no equivalent. Added `resync()`, reads only, plus
+   `drain()` on both transports — because our buffer is not the only place bytes
+   hide, and clearing only ours leaves the serial driver's to arrive next.
+   Writing the test exposed that limit, so it is pinned too rather than
+   overstated.
+3. **`TriggerConfig.step_m` is a scalar with no units guard**, unlike
+   `wavelength_m()` which raises rather than return nanometres as metres. Its
+   unit depends on the command set (metres vs nanometres) AND on SETTing
+   (it is SECONDS when periodic in time) — while the two manuals disagree about
+   which value that is. Nothing computes with it today, so it is documented
+   rather than restructured, with a note that anything which starts computing
+   with it must resolve the units first.
+
+Also noted, not changed: `analyse_trigger_train` produces confident nonsense if
+handed BOTH polarities of a pulse train (median interval lands between 25 us and
+the real spacing, so every interval reads as a missing pulse). The pipeline
+passes rising-only edges so it cannot happen there, but the function does not
+defend itself.
+
+214 offline tests pass.

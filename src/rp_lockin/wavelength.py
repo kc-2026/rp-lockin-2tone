@@ -286,6 +286,17 @@ def check_alignment(edges: np.ndarray, table_t: np.ndarray,
     table holds rows, and the edges span a correspondingly shorter interval.
     Both are checked, because either alone is weak: a count can also fall short
     through lost edges, and a span can shrink through a truncated capture.
+
+    **THE SPAN CHECK IS VACUOUS IF `table_t` WAS BUILT FROM THE EDGES.**
+    `pipeline.reduce_sweep` derives its step as (edge span) / (N - 1) by
+    default, which makes `table_span` equal `edge_span` identically -- the
+    comparison is then a number against itself and reports 0.00% however wrong
+    the alignment is. Verified 2026-08-25: a capture that misses the first two
+    pulses still shows a 0.00% span error, and only the COUNT check catches it.
+    That is not a reason to drop the span check -- it does real work when the
+    table comes from a configured sweep time or an explicit step -- but a
+    caller must not read "spans match" as corroboration when it built the table
+    from the spans. `SweepReduction.describe()` says so at the point of use.
     """
     e = np.asarray(edges, dtype=float).ravel()
     tt = np.asarray(table_t, dtype=float).ravel()
