@@ -346,7 +346,10 @@ The emulated-DUT test at full sweep length needs a waveform longer than the
       decimation note in `04-hardware-reference.md`; decimation 2 does not fit
       the 128 MiB region and the move to buy it was rejected.
       32,812,500 samples on each channel, exactly as requested, both
-      carrying signal. 125.2 MB, **97.8% of the region.**
+      carrying signal. **125.2 MiB, 97.8% of the 128 MiB region.**
+      (That is 1.050 s of capture, not 1.000 s — it includes pre-roll.
+      The planner's 119.2 MiB figure is exactly one second, 93.1% full.
+      Both are MiB; neither is decimal MB.)
       **Transfer is far slower than the single-channel figure suggests:**
       6.7–11.2 s for 125 MB including arming and the 1 s capture, so
       11–19 MB/s against the 87 MB/s measured on a 64 MB single-channel

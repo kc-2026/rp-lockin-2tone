@@ -98,6 +98,12 @@ def plan_capture(sweep_seconds: float, f_lockin: float,
         rate = fs / dec
         if rate < min_oversample * f_lockin:
             continue
+        # MiB, despite the field name -- 1024**2, matching how ACQ:AXI:SIZE?
+        # and the device tree describe the region. H6.2's "125.2 MB" is also
+        # MiB, and is LARGER than this only because that capture ran 1.05 s
+        # including pre-roll: exactly 1.000 s is 119.2 MiB (93.1% of the
+        # 128 MiB region), 1.050 s is 125.2 MiB (97.8%). Both figures are
+        # right; they describe different captures.
         mb = sweep_seconds * rate * 2 * n_channels / 1024 ** 2
         options.append(CaptureOption(
             decimation=dec,
@@ -214,9 +220,17 @@ def settling_points(output_rate: float, bandwidth: float | None = None,
     start-up before the trace is valid.
 
     THIS IS A DESIGN CONSTRAINT, NOT A DETAIL. At 5000 Sa/s with the honest
-    2.25 kHz bandwidth the transient is ~108 points -- about 22 ms, or 2% of a
-    1 s sweep. If the capture starts at the laser trigger, the first 2% of the
-    wavelength range comes back as garbage.
+    2.25 kHz bandwidth the transient is **113 points at the operating point** --
+    about 22.6 ms, or 2% of a 1 s sweep. If the capture starts at the laser
+    trigger, the first 2% of the wavelength range comes back as garbage.
+
+    **It is 108 or 113 depending on `fs`, and that is not drift.** The multistage
+    chain factorises differently at different input rates, so the transient
+    length steps between 108 and 113 points (21.6 or 22.6 ms) non-monotonically
+    with decimation. At decimation 8, the operating point, it is 113. Pass the
+    `fs` you will actually capture at rather than trusting the 250 MS/s default,
+    which describes decimation 1 -- a configuration nothing uses. The difference
+    is 1 ms of pre-roll and never matters; being surprised by it does.
 
     The fix is a pre-roll: arm the acquisition and place the trigger some
     milliseconds into the record, so the filter is already settled when the

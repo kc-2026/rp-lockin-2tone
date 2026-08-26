@@ -327,7 +327,7 @@ Against a 512 MB ceiling — the size of the upper half:
 | 1 | 250 MS/s | 125 MHz | 954 MB | no | 9.5 s | none |
 | **2** | **125 MS/s** | **62.5 MHz** | **477 MB** | **yes, ~35 MB spare** | **4.8 s** | **none** |
 | 4 | 62.5 MS/s | 31.2 MHz | 238 MB | yes | 2.4 s | 31–60 MHz folds |
-| 8 | 31.2 MS/s | 15.6 MHz | 119 MB | yes | 1.2 s | 15.6–60 MHz folds |
+| 8 | 31.2 MS/s | 15.6 MHz | 119.2 MiB | yes | 1.2 s | 15.6–60 MHz folds |
 
 ### `ACQ:RST` resets gain to LV and coupling to DC — measured
 

@@ -9,8 +9,10 @@ but is not watching continuously.
 1. This file.
 2. `docs/01-overview.md` — what is being built and why.
 3. **`SESSION_LOG.md` — its "HANDOFF / STATUS" block at the very top.**
-   That is the current state, the one live blocker, what is ready to run, and
-   the judgement calls not to relitigate. Read it before touching anything.
+   That is the current state, the live blockers (there are two, and as of
+   2026-08-26 both are hardware access rather than software), what is ready to
+   run, and the judgement calls not to relitigate. Read it before touching
+   anything.
 4. Whatever doc covers the area you are about to touch.
 
 **At the end of every session, append to `SESSION_LOG.md`.** Multiple sessions

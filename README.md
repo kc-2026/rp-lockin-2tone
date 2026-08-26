@@ -122,7 +122,7 @@ scripts/
 | Drive table | 16384 entries, played at fs/16384 |
 | Acquisition | 31.25 MS/s (decimation 8) |
 | Output | 5000 Sa/s, 2250 Hz bandwidth, τ = 71 µs |
-| Memory for 1 s, 2 ch | 119 MB — fits the existing 128 MiB region |
+| Memory for 1 s, 2 ch | **119.2 MiB** — 93% of the existing 128 MiB region |
 | Settling cost | ~113 points (22.6 ms) — pre-roll AND tail required |
 
 **None of the frequencies are round numbers and they cannot be.** The generator

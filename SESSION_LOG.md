@@ -646,6 +646,12 @@ so it cannot silently regress.
 
 ## 2026-08-14 — Claude (Claude Code) — P1 attempted: the laser does not answer, and the host side is eliminated
 
+> **SUPERSEDED IN PART, 2026-08-26.** The conclusion below that "the host
+> side is eliminated" did NOT hold for the VCP half: the laser's virtual COM
+> port node reports `CM_PROB_FAILED_INSTALL` on the control PC. The rest of
+> this entry stands. See Q27 and the HANDOFF block. *(Entries are not
+> rewritten on this project — superseded claims are marked.)*
+
 Kevin ran a patch cable and a BNC, so serial, the laser trigger output and the
 laser light are all available. **P1 ran and failed, but usefully: the fault is
 narrowed to a laser-side setting.**

@@ -236,7 +236,7 @@ Measured 2026-08-14, outputs off, loopback cables attached:
 |---:|---:|---:|---:|---:|---:|
 | 2 | 125 MS/s | 3.29 µV | — | 36.0 µV | 477 MB |
 | 4 | 62.5 MS/s | 3.65 µV | +0.9 dB | 39.8 µV | 238 MB |
-| **8** | **31.2 MS/s** | **3.75 µV** | **+1.1 dB** | **40.9 µV** | **119 MB** |
+| **8** | **31.2 MS/s** | **3.75 µV** | **+1.1 dB** | **40.9 µV** | **119.2 MiB** |
 | 16 | 15.6 MS/s | 4.58 µV | +2.9 dB | 50.1 µV | 60 MB |
 
 **Decimation 8 is the practical operating point on a 128 MB region.** It runs a
@@ -263,8 +263,12 @@ hundred (see the log). The memory question is closed because the requirement
 vanished, not because the fault was understood. If some future design needs the
 whole train recovered intact, that fault is still there and still unexplained.
 
-Note the margin is thin: 1 s at decimation 8 is 119 MB, and 43 ms of pre-roll
-adds ~5 MB, so ~124 MB of 128 MB. Decimation 16 leaves comfortable headroom
+Note the margin is thin, and **every figure here is MiB** — 1024², the unit
+`ACQ:AXI:SIZE?` and the device tree use. Exactly 1.000 s at decimation 8 is
+**119.2 MiB**, 93.1% of the 128 MiB region; 43 ms of pre-roll adds ~5 MiB,
+giving ~124 MiB, 97%. **H6.2's "125.2 MB" is the same unit and is larger only
+because that capture ran 1.050 s** including pre-roll — 97.8% full. Both numbers
+are right; they describe different captures, and neither is decimal MB. Decimation 16 leaves comfortable headroom
 (63 MB) for +2.9 dB if that becomes awkward.
 
 **Why the folding penalty is small here.** Nothing in this measurement has
