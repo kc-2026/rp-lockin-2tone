@@ -56,9 +56,13 @@ class RedPitaya:
         self.base_rate = base_rate
         self.decimation = 1
         # What ACQ:RST leaves behind, so the deep-capture paths restore a known
-        # state even if setup_acquisition was never called.
-        self.coupling = "DC"
-        self.gain = "LV"
+        # state even if setup_acquisition was never called. PER CHANNEL, because
+        # the real experiment needs them to differ: the photodetector wants LV
+        # on IN1 for sensitivity while the laser's 3.3 V trigger needs HV on
+        # IN2. A single pair of values quietly forced both the same, which made
+        # P2 impossible to run as specified. Fixed 2026-08-25.
+        self.front_end = {1: {"coupling": "DC", "gain": "LV"},
+                          2: {"coupling": "DC", "gain": "LV"}}
         self._sock = socket.create_connection((host, port), timeout=timeout)
         self._sock.settimeout(timeout)
         self._buf = b""
@@ -256,22 +260,68 @@ class RedPitaya:
         `ACQ:RST` silently reverts coupling to DC -- and the capture succeeds and
         looks entirely normal, just DC coupled.
         """
+        if coupling not in ("AC", "DC"):
+            raise ValueError(f"coupling must be AC or DC, got {coupling!r}")
+        if gain not in ("LV", "HV"):
+            raise ValueError(f"gain must be LV or HV, got {gain!r}")
         self.write("ACQ:RST")
         self.write(f"ACQ:DEC {int(decimation)}")
         self.decimation = int(decimation)
-        self.coupling = coupling
-        self.gain = gain
+        # Sets BOTH channels, which is what this call has always meant. Use
+        # setup_channel() afterwards where they must differ -- and note the
+        # order matters, since this overwrites both.
         for ch in (1, 2):
+            self.front_end[ch] = {"coupling": coupling, "gain": gain}
             self.write(f"ACQ:SOUR{ch}:COUP {coupling}")
             self.write(f"ACQ:SOUR{ch}:GAIN {gain}")
         self.write("ACQ:DATA:FORMAT BIN")
         self.write("ACQ:DATA:Units RAW")
 
     def _reapply_front_end(self) -> None:
-        """Restore coupling and gain after an ACQ:RST has wiped them."""
+        """Restore coupling and gain after an ACQ:RST has wiped them.
+
+        Per channel. Forcing both to one setting is not a simplification here:
+        IN1 and IN2 genuinely differ in the real experiment, and an IN2 quietly
+        put back to LV clips a 3.3 V trigger into a flat line -- which reads as
+        "the laser is not triggering" rather than as a range error.
+        """
         for ch in (1, 2):
-            self.write(f"ACQ:SOUR{ch}:COUP {self.coupling}")
-            self.write(f"ACQ:SOUR{ch}:GAIN {self.gain}")
+            fe = self.front_end[ch]
+            self.write(f"ACQ:SOUR{ch}:COUP {fe['coupling']}")
+            self.write(f"ACQ:SOUR{ch}:GAIN {fe['gain']}")
+
+    @property
+    def coupling(self) -> str:
+        """Channel 1's coupling. Kept so older callers still read something
+        meaningful; use `front_end` when the two channels differ."""
+        return self.front_end[1]["coupling"]
+
+    @property
+    def gain(self) -> str:
+        """Channel 1's gain. See `coupling`."""
+        return self.front_end[1]["gain"]
+
+    def setup_channel(self, channel: int, coupling: str | None = None,
+                      gain: str | None = None) -> None:
+        """Set ONE channel's coupling and/or gain, and remember it.
+
+        This is what the real experiment needs and what `setup_acquisition`
+        cannot express: IN1 on LV for the detector, IN2 on HV for the laser's
+        3.3 V trigger. The setting is remembered so the deep-capture paths put
+        it back after their ACQ:RST.
+        """
+        if channel not in (1, 2):
+            raise ValueError(f"channel must be 1 or 2, got {channel}")
+        if coupling is not None:
+            if coupling not in ("AC", "DC"):
+                raise ValueError(f"coupling must be AC or DC, got {coupling!r}")
+            self.front_end[channel]["coupling"] = coupling
+            self.write(f"ACQ:SOUR{channel}:COUP {coupling}")
+        if gain is not None:
+            if gain not in ("LV", "HV"):
+                raise ValueError(f"gain must be LV or HV, got {gain!r}")
+            self.front_end[channel]["gain"] = gain
+            self.write(f"ACQ:SOUR{channel}:GAIN {gain}")
 
     # -- fast bulk read ----------------------------------------------------
 

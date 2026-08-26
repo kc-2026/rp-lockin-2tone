@@ -3000,3 +3000,39 @@ passes rising-only edges so it cannot happen there, but the function does not
 defend itself.
 
 214 offline tests pass.
+
+**Bench scripts P2-P6 (same session).** `scripts/_bench.py` plus
+`p2_trigger_check.py`, `p3_drive_chain.py`, `p4_detector.py`,
+`p5_first_measurement.py`, `p6_robustness.py`. **P2 was written too**, not just
+P3-P6, because it is the next step to actually run and had no script.
+
+**Writing P2 found a real blocker in `hardware.py`.** P2 needs IN2 on HV (the
+trigger is 3.3 V) and IN1 on LV, and the docs say so — but `_reapply_front_end`
+forced BOTH channels to one coupling/gain after every `ACQ:RST`, so IN2 came
+back on LV and clipped the trigger into a flat line. That reads as "the laser is
+not triggering", not as a range error. **P2 as specified was impossible with the
+old API.** `front_end` is now per channel, with `setup_channel(ch, coupling,
+gain)`; `setup_acquisition` still sets both, and `rp.coupling`/`rp.gain` still
+read channel 1 so older callers are unaffected.
+
+Safety scaffolding, shared by all five:
+
+* `session()` disarms both outputs and closes the link on EVERY exit path.
+* Anything that drives an output needs `--i-am-present` AND a typed "drive".
+  A flag alone is too easy to leave in a shell history; EOF is not consent.
+* P3 runs ONE sub-step at a time, so nothing is energised as a side effect.
+* **P5.2 refuses to run before P5.1, and refuses if P5.1 was not clean** — the
+  verdict is written to `data/p5_control.json` rather than left to memory.
+  An amplifier-generated product sits at exactly the frequency P5.2 looks at,
+  so a signal there means nothing until the one-tone control is clean.
+* P5 takes the noise floor as an argument and says plainly when the default is
+  the datasheet expectation rather than P4.4's measurement.
+* Every script prints a block to paste into this log, and exits non-zero if any
+  check failed.
+
+Also found while writing P4: `PLAN.grid` does not exist (it is
+`asg_grid(PLAN.fs)`) — a NameError that would have surfaced on the bench with
+an amplifier powered. `tests/test_bench_scripts.py` now imports every script for
+exactly that reason, alongside pinning the consent gates and P5's ordering.
+
+233 offline tests pass. **None of these have been run against hardware.**

@@ -126,3 +126,53 @@ def test_opting_out_leaves_the_outputs_alone(fake):
     rp.close(disable_outputs=False)
     assert not any("OUTPUT" in c for c in fake.sent)
     assert fake.closed
+
+
+# ------------------------------------------- per-channel front end (for P2)
+
+def test_the_two_channels_can_differ_and_survive_a_reset(fake):
+    """IN1 on LV for the detector, IN2 on HV for the laser's 3.3 V trigger.
+
+    This is what P2 needs and what the single coupling/gain pair could not
+    express: _reapply_front_end forced both channels to one setting after every
+    ACQ:RST, so IN2 came back on LV and clipped the trigger into a flat line --
+    which reads as "the laser is not triggering", not as a range error.
+    """
+    rp = RedPitaya("fake-host")
+    rp.setup_acquisition(decimation=8, coupling="DC", gain="LV")
+    rp.setup_channel(2, gain="HV")
+    fake.sent.clear()
+
+    rp._reapply_front_end()
+    assert "ACQ:SOUR1:GAIN LV" in fake.sent
+    assert "ACQ:SOUR2:GAIN HV" in fake.sent
+    assert "ACQ:SOUR2:GAIN LV" not in fake.sent
+
+
+def test_setup_acquisition_still_sets_both_channels(fake):
+    """It always meant both, and callers rely on that."""
+    rp = RedPitaya("fake-host")
+    rp.setup_channel(2, gain="HV")
+    rp.setup_acquisition(decimation=2, coupling="AC", gain="LV")
+    assert rp.front_end[1] == {"coupling": "AC", "gain": "LV"}
+    assert rp.front_end[2] == {"coupling": "AC", "gain": "LV"}
+
+
+def test_a_bad_gain_or_coupling_is_refused_before_it_reaches_the_board(fake):
+    """The board accepts an unknown setting silently -- an unsupported command
+    returns zero bytes exactly like a supported one -- so the check has to be
+    here."""
+    rp = RedPitaya("fake-host")
+    for bad in ({"gain": "HIGH"}, {"coupling": "AC/DC"}):
+        fake.sent.clear()
+        with pytest.raises(ValueError):
+            rp.setup_channel(1, **bad)
+        assert fake.sent == []
+    with pytest.raises(ValueError):
+        rp.setup_acquisition(gain="20V")
+
+
+def test_the_legacy_coupling_and_gain_attributes_still_read(fake):
+    rp = RedPitaya("fake-host")
+    rp.setup_acquisition(coupling="AC", gain="HV")
+    assert (rp.coupling, rp.gain) == ("AC", "HV")
