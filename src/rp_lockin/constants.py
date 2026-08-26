@@ -37,7 +37,21 @@ BOARD_RAM_MB = 1024
 # here, not in Linux's half, so a large reservation costs the OS nothing.
 DMA_REGION_BASE = 0x20000000
 
-# Largest DMA region it is safe to reserve: the whole upper half. Bounded by
+# What is ACTUALLY reserved on the bench board, and therefore what any
+# recommendation has to fit. The 2026-08-12 device-tree work left a 128 MiB
+# region at 0x1000000; H6.2 filled 125.2 MB of it, 97.8% full, and every
+# capture from H6.2 onwards ran that way.
+#
+# Not to be confused with MAX_DMA_MB below. Enlarging the region to 512 MB to
+# buy decimation 2 was CONSIDERED AND REJECTED (docs/04-hardware-reference.md):
+# the objection that motivated it -- needing to recover trigger intervals
+# exactly -- vanished when the wavelength axis moved to the laser's own log.
+# Do not start the move. `describe_capture_plan` used to recommend it by
+# default, which is how that stale advice survived; it now plans inside this.
+DMA_REGION_MB = 128
+
+# Largest DMA region it is safe to reserve IF the move were ever made: the
+# whole upper half. Bounded by
 # where Linux ends, not by the OS's needs, precisely because reserving from up
 # here takes nothing away from it. A 1 s two-channel sweep at decimation 2
 # needs 477 MB and fits with ~35 MB spare.

@@ -26,10 +26,20 @@ Two AOMs gate light, one at f1 = 5 MHz and one at f2 = 6 MHz, by amplitude
 modulating the 80 MHz acoustic drive each AOM needs. **The 80 MHz is the AOM's
 requirement, not the DUT's — the DUT only ever sees light varying in
 brightness.** The DUT mixes the two; a photodetector returns the
-intermodulation response at |f2 − f1| ≈ 991.821 kHz and nothing else. A **Santec**
-laser sweeps its wavelength over ~1 s. We capture the photodetector on IN1,
-trigger the capture from the laser's trigger output on IN2, demodulate in
-software, and deliver a 5000-point trace of **amplitude** across the sweep.
+intermodulation response at |f2 − f1| ≈ 991.821 kHz and nothing else.
+
+**There are TWO Santec lasers, and this was only established on 2026-08-25.**
+A **fine sweeper** covers ~1 s / 5000 points, carries the trigger BNC, and
+supplies the wavelength axis from its own log. A **stepper** sits at 11 discrete
+wavelengths, one per sweep — no trigger, no log, just set, settle and read. The
+deliverable is an **11 × 5000 map**. Note the naming collision: the docs' f1/f2
+are the AOM MODULATION frequencies (MHz); Kevin's "freq1/freq2" are the LASERS
+(THz). Different things by nine orders of magnitude.
+
+Per sweep: capture the photodetector on IN1, trigger the capture from the
+sweeping laser's trigger output on IN2, demodulate in software, and deliver a
+5000-point trace of **amplitude** against wavelength. `pipeline.reduce_sweep`
+is that whole path.
 
 **The wavelength axis comes from the laser over serial, not from trigger timing**
 (Kevin, 2026-08-14). The laser logs **wavelength values with the time axis
@@ -41,16 +51,23 @@ described; the times are simply reconstructed rather than read, as
 t = 0. `santec.py` reads the log; `wavelength.py` places it in
 time. **Neither has ever met a laser.**
 
-**Two traps to design against:**
+**Three traps to design against:**
 
 - **Q21** — both sides call t = 0 "the first trigger", independently. Latch the
   second pulse instead of the first and every wavelength is off by one step,
   with a trace that looks entirely normal. Use
   `wavelength.logged_point_times()`, which locates ONE edge and indexes from it,
   so a missed edge mid-record changes nothing.
-- **Q26** — **neither Santec manual says the log is one point per trigger pulse.**
-  That is an assumption the whole mapping rests on. One sweep settles it:
-  compare `:READout:POINts?` against the pulses in the record.
+- **Q26 is DEAD as of 2026-08-25.** It asked whether the laser logs one point
+  per trigger pulse — which no manual states — and it mattered only while the
+  time step came from the trigger INTERVAL. `pipeline.reduce_sweep` takes the
+  step from the trigger train's SPAN over (N−1) logged points, so nothing counts
+  pulses and the question stops being load-bearing. **Q24 still matters**:
+  the trigger must be periodic in TIME, not in wavelength.
+- **A real trigger is a 25 µs PULSE, so every logged point makes TWO edges.**
+  `find_trigger_edges` defaults to `polarity="both"`; anything deriving a step
+  or counting pulses must pass `polarity="rising"` or it reads half the step and
+  compresses the whole wavelength axis. Found 2026-08-25 by joining the pipeline.
 
 Everything is done in software on a control PC. There is no FPGA work in scope.
 
@@ -90,7 +107,7 @@ This distinction matters more than usual here.
 
 | Area | Status |
 |---|---|
-| `src/rp_lockin/dsp.py` | **Trusted.** 153 offline tests. Do not change without re-running them. |
+| `src/rp_lockin/dsp.py` | **Trusted.** Covered by the offline suite. Do not change without re-running it. |
 | `planning.py`, `emulator.py` | **Trusted.** Same suite. |
 | `waveforms.py` — `make_am_table`, `plan_two_tone_grid` | **Trusted and hardware-verified.** Use these to drive the board. |
 | `waveforms.py` — `make_am_waveform`, `plan_two_tone` | **Sound arithmetic, WRONG hardware model.** Kept because their tests are worth having. Driving the board with them produces no output at all. |
@@ -100,6 +117,8 @@ This distinction matters more than usual here.
 | `wavelength.py` | **Offline-tested, never run against a real laser.** Maps a trace onto wavelength, measures the laser/board clock ratio, and guards the off-by-one trigger. Contains NO serial code. |
 | `santec.py` | **Written from the TSL-770/775 manuals. NEVER RUN AGAINST A LASER.** Bare-CR delimiter and little-endian payloads — both the opposite of `hardware.py`. Every setter reads back. |
 | `output.py` | CSV deliverable plus the raw `.npz`. Trusted, offline. |
+| `pipeline.py` | **THE DELIVERABLE PATH**, added 2026-08-25. `reduce_sweep` joins demodulate → edges → log → wavelength → CSV and is checked against emulator truth. `SweepSeries`/`write_series` handle the 11-step set. `measure_sweep` is the hardware wrapper and **has never run against a board.** |
+| `scripts/bench_gui.py` | Tkinter bench GUI (Q14). Drives the implemented features by hand, including a Simulate path that needs no hardware. Outputs off on close; laser writes gated. |
 
 `hardware.py` is deliberately isolated from the maths so a wrong command string
 produces a connection error rather than corrupted physics. **Keep it that way.**
@@ -195,7 +214,8 @@ pytest -q
 
 ## Current state — updated 2026-08-14
 
-**Phase 0 and Phase 1 are both COMPLETE.** 153 offline tests pass. Every
+**Phase 0 and Phase 1 are both COMPLETE.** The offline suite passes; its size
+grows, so check `SESSION_LOG.md` rather than trusting a number quoted here. Every
 loopback test in `07-phase1-loopback.md` has been run against the board, except two
 that were deliberately skipped and are recorded as such (H6.1, H5.2/H5.3).
 
@@ -286,7 +306,7 @@ move it into the relevant doc and note it in the session log.
 python -m venv .venv
 .venv/Scripts/python -m pip install -e ".[dev]"     # Windows
 .venv/bin/python -m pip install -e ".[dev]"         # Linux
-pytest -q                                            # expect 153 passed
+pytest -q                                            # expect 200+ passed
 ```
 
 Most machines here run Windows; keep the suite passing on it. One test uses

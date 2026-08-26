@@ -45,11 +45,13 @@ the end -- the same off-by-one Q21 warns about, arriving from the other side.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 
 import numpy as np
 
 from .dsp import LockinResult, demodulate
+from .output import write_trace_csv
 from .emulator import find_trigger_edges
 from .planning import recommended_tail
 from .wavelength import (
@@ -62,7 +64,8 @@ from .wavelength import (
     map_to_wavelength,
 )
 
-__all__ = ["SweepReduction", "reduce_sweep", "measure_sweep"]
+__all__ = ["SweepReduction", "SweepSeries", "reduce_sweep",
+           "measure_sweep", "write_series"]
 
 
 @dataclass
@@ -315,3 +318,102 @@ def measure_sweep(rp, wavelengths, *, f_ref: float,
     fs = rp.base_rate / decimation
     return reduce_sweep(detector, trig, fs, wavelengths, f_ref=f_ref,
                         output_rate=output_rate, **reduce_kw)
+
+
+# ------------------------------------------------------------- the series
+
+
+@dataclass
+class SweepSeries:
+    """Several sweeps, each tagged with the STEPPING laser's wavelength.
+
+    Kevin's measurement (2026-08-25) is a two-dimensional one: laser 2 steps
+    through 11 discrete wavelengths, and at each the fine laser sweeps 5000
+    points. The result is an 11 x 5000 map of intermodulation response against
+    both wavelengths.
+
+    The two axes are not symmetric and this class does not pretend otherwise.
+    The swept axis comes from the laser's own log and differs slightly between
+    sweeps; the stepped axis is a scalar read once the laser settled. Nothing
+    is interpolated onto a common grid, because that would be a judgement about
+    the data rather than a record of it -- each sweep keeps its own wavelengths.
+    """
+
+    reductions: list = field(default_factory=list)
+    labels: list = field(default_factory=list)   # stepping wavelength, metres
+
+    def add(self, label_m: float, reduction: SweepReduction) -> None:
+        """Record one sweep taken at stepping wavelength `label_m` METRES."""
+        label_m = float(label_m)
+        # Same units guard as everywhere else: 1550 instead of 1.55e-6 is a
+        # plausible-looking number that would mislabel a whole sweep by 10^9.
+        if not 1.0e-7 < label_m < 1.0e-5:
+            raise ValueError(
+                f"the stepping wavelength must be in METRES, got {label_m!r}. "
+                f"A C-band value is ~1.55e-6, not 1550."
+            )
+        self.reductions.append(reduction)
+        self.labels.append(label_m)
+
+    def __len__(self) -> int:
+        return len(self.reductions)
+
+    def describe(self) -> str:
+        if not self.reductions:
+            return "empty series"
+        lines = [f"{len(self)} sweeps, stepping laser "
+                 f"{min(self.labels) * 1e9:.4f} to {max(self.labels) * 1e9:.4f} nm"]
+        for lab, red in zip(self.labels, self.reductions):
+            wl, amp = red.trace.dropna()
+            flag = "" if red.alignment.ok else "   ** ALIGNMENT SUSPECT **"
+            lines.append(
+                f"  lambda2 {lab * 1e9:9.4f} nm: {wl.size:5d} points, "
+                f"{wl.min() * 1e9:.3f}-{wl.max() * 1e9:.3f} nm, "
+                f"peak {amp.max():.4g} V{flag}")
+        bad = [i for i, r in enumerate(self.reductions) if not r.alignment.ok]
+        if bad:
+            lines.append(f"  {len(bad)} sweep(s) with a suspect alignment: "
+                         f"{bad}. Their wavelengths may all be shifted.")
+        return chr(10).join(lines)
+
+
+def write_series(directory, series: SweepSeries, prefix: str = "sweep") -> list:
+    """Write one CSV per sweep plus an index. Returns the paths written.
+
+    One file per sweep rather than one long file with a lambda2 column, which
+    was the alternative considered: each trace stays independently openable,
+    the per-sweep provenance stays in the header where it belongs rather than
+    being repeated on 55,000 rows, and a sweep that fails costs one file rather
+    than the set.
+
+    The index names every sweep with its stepping wavelength, so the set is
+    reassemblable without reading eleven headers.
+    """
+    if not series.reductions:
+        raise ValueError("nothing to write: the series is empty")
+    os.makedirs(directory, exist_ok=True)
+
+    paths = []
+    index_rows = []
+    width = max(2, len(str(len(series) - 1)))
+    for i, (label, red) in enumerate(zip(series.labels, series.reductions)):
+        name = f"{prefix}_{i:0{width}d}.csv"
+        path = os.path.join(directory, name)
+        meta = {"sweep_index": str(i),
+                "stepping_wavelength_nm": f"{label * 1e9:.6f}"}
+        meta.update(red.metadata())
+        rows = write_trace_csv(path, red.trace.wavelength,
+                               red.trace.amplitude, metadata=meta)
+        paths.append(path)
+        index_rows.append((i, label * 1e9, rows, name, red.alignment.ok))
+
+    index_path = os.path.join(directory, f"{prefix}_index.csv")
+    with open(index_path, "w", encoding="utf-8", newline="") as fh:
+        lines = ["# index for a stepped sweep series",
+                 f"# {len(series)} sweeps",
+                 "sweep_index,stepping_wavelength_nm,rows,file,alignment_ok"]
+        lines += [f"{i},{nm:.6f},{rows},{name},{ok}"
+                  for i, nm, rows, name, ok in index_rows]
+        fh.write(chr(10).join(lines) + chr(10))
+    paths.append(index_path)
+    return paths

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .constants import (ANALOG_BANDWIDTH, BASE_SAMPLE_RATE, BOARD_RAM_MB,
-                        DMA_REGION_BASE, MAX_DMA_MB)
+                        DMA_REGION_BASE, DMA_REGION_MB, MAX_DMA_MB)
 from .dsp import min_record_seconds
 
 __all__ = ["CaptureOption", "plan_capture", "describe_capture_plan",
@@ -43,6 +43,20 @@ __all__ = ["CaptureOption", "plan_capture", "describe_capture_plan",
 # a change of decimation. See SESSION_LOG.md 2026-08-12.
 SCPI_MB_PER_S = 5.7
 
+# What the path we ACTUALLY use manages. `acquire_deep_fast` reads over the raw
+# socket, not SCPI, so quoting the SCPI figure in a capture plan overstates the
+# transfer by ~2-3x for a path nothing takes.
+#
+# MEASURED in H6.2: 6.7-11.2 s for a 125 MB two-channel read INCLUDING arming
+# and the 1 s capture itself, i.e. 11-19 MB/s. The conservative end is used
+# here so an estimate errs slow. That is well short of the 87 MB/s a single
+# 64 MB read reached, and the reason is NOT established -- the recorded
+# explanation ("~125 round trips at ~50 ms") does not survive reading the code,
+# since the client issues at most four GETs per capture. Per-GET timing was
+# added to the board helper on 2026-08-25 to settle it; until a capture is run
+# with that helper, treat this number as an observation and not a model.
+FAST_READ_MB_PER_S = 11.0
+
 
 @dataclass(frozen=True)
 class CaptureOption:
@@ -58,12 +72,18 @@ class CaptureOption:
 
     @property
     def transfer_seconds(self) -> float:
-        return self.megabytes / SCPI_MB_PER_S
+        """Estimated read-back time over the FAST path, which is the one used.
+
+        `acquire_deep_fast` reads the DMA region over a raw socket; SCPI is
+        only used for configuration and arming. Estimating with the SCPI rate
+        overstated a 1 s decimation-8 sweep as 21 s against a measured 7-11 s.
+        """
+        return self.megabytes / FAST_READ_MB_PER_S
 
 
 def plan_capture(sweep_seconds: float, f_lockin: float,
                  fs: float = BASE_SAMPLE_RATE, n_channels: int = 2,
-                 dma_megabytes: int = 32,
+                 dma_megabytes: int = DMA_REGION_MB,
                  min_oversample: int = 8) -> list[CaptureOption]:
     """
     Enumerate viable acquisition decimations for one sweep.
@@ -89,9 +109,17 @@ def plan_capture(sweep_seconds: float, f_lockin: float,
     return options
 
 
-def recommend(options: list[CaptureOption]) -> CaptureOption | None:
-    """Lowest decimation that is aliasing-free and fits the MAX_DMA_MB ceiling."""
-    viable = [o for o in options if o.megabytes <= MAX_DMA_MB]
+def recommend(options: list[CaptureOption],
+              ceiling_megabytes: float = DMA_REGION_MB) -> CaptureOption | None:
+    """Lowest decimation that fits `ceiling_megabytes`, preferring aliasing-free.
+
+    The ceiling defaults to the region that EXISTS (128 MiB), not to
+    MAX_DMA_MB, which is the hypothetical size after a device-tree move that
+    was considered and rejected. Planning against the larger number recommended
+    decimation 2 and a board change, contradicting the settled operating point
+    of decimation 8 -- and did so for eleven days, because nothing tested it.
+    """
+    viable = [o for o in options if o.megabytes <= ceiling_megabytes]
     if not viable:
         return None
     free = [o for o in viable if o.aliasing_free]
@@ -102,7 +130,7 @@ def describe_capture_plan(sweep_seconds: float, f_lockin: float,
                           output_points: int = 5000,
                           fs: float = BASE_SAMPLE_RATE,
                           n_channels: int = 2,
-                          dma_megabytes: int = 32) -> str:
+                          dma_megabytes: int = DMA_REGION_MB) -> str:
     """Human-readable capture plan, including the device-tree edit if needed."""
     out_rate = output_points / sweep_seconds
     bandwidth = 0.9 * out_rate / 2
@@ -127,9 +155,11 @@ def describe_capture_plan(sweep_seconds: float, f_lockin: float,
         lines.append(f"  ! Sweep is shorter than the filter settling time "
                      f"({min_rec * 1e3:.1f} ms).")
 
-    options = plan_capture(sweep_seconds, f_lockin, fs, n_channels, dma_megabytes)
+    options = plan_capture(sweep_seconds, f_lockin, fs, n_channels,
+                           dma_megabytes)
+    fits_label = f"fits {dma_megabytes}MB"
     lines += ["", f"  {'dec':>4} {'rate':>12} {'Nyquist':>10} {'MB':>7} "
-                  f"{'fits 32MB':>10} {'transfer':>9}  aliasing"]
+                  f"{fits_label:>10} {'transfer':>9}  aliasing"]
     for o in options:
         note = "none (below 60 MHz analog rolloff)" if o.aliasing_free \
             else f"{o.nyquist / 1e6:.0f}-60 MHz folds in"
@@ -140,15 +170,18 @@ def describe_capture_plan(sweep_seconds: float, f_lockin: float,
             f"{o.transfer_seconds:>8.1f}s  {note}"
         )
 
-    best = recommend(options)
+    best = recommend(options, dma_megabytes)
     lines.append("")
     if best is None:
-        lines.append(f"  -> Does not fit the {MAX_DMA_MB} MB ceiling at any usable "
-                     f"decimation. Shorten the sweep or split it into segments.")
+        lines.append(
+            f"  -> Does not fit the {dma_megabytes} MB region at any usable "
+            f"decimation. Shorten the sweep, drop to one channel, or split it "
+            f"into segments.")
     elif best.fits_default:
-        lines.append(f"  -> decimation {best.decimation} ({best.megabytes:.0f} MB) "
-                     f"fits the default {dma_megabytes} MB region. No board changes "
-                     f"needed.")
+        lines.append(
+            f"  -> decimation {best.decimation} ({best.megabytes:.0f} MB) fits "
+            f"the {dma_megabytes} MB region. No board changes needed. "
+            f"Read-back ~{best.transfer_seconds:.0f} s over the fast socket.")
     else:
         region = int(np.ceil(best.megabytes / 64) * 64)
         lines += [
@@ -156,9 +189,10 @@ def describe_capture_plan(sweep_seconds: float, f_lockin: float,
             f"({best.sample_rate / 1e6:g} MS/s, "
             f"{'no aliasing penalty' if best.aliasing_free else 'some folding'}) "
             f"and enlarge the reserved DMA region to {region} MB.",
-            f"     Transfer is ~{best.transfer_seconds:.0f} s per sweep -- "
-            f"limited by the SCPI server at {SCPI_MB_PER_S:g} MB/s, measured, "
-            f"not by the link.",
+            f"     Transfer is ~{best.transfer_seconds:.0f} s per sweep over "
+            f"the fast socket at {FAST_READ_MB_PER_S:g} MB/s (measured H6.2). "
+            f"Over SCPI the same bytes would take "
+            f"{best.megabytes / SCPI_MB_PER_S:.0f} s.",
             "",
             f"     On the board ({BOARD_RAM_MB} MB RAM; Linux is capped at "
             f"512 MB by mem=512M, so the upper half is free for this):",

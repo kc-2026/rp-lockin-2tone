@@ -57,7 +57,8 @@ from .emulator import (
     make_trigger_sequence,
     synthesise_dut_output,
 )
-from .pipeline import SweepReduction, measure_sweep, reduce_sweep
+from .pipeline import (SweepReduction, SweepSeries, measure_sweep,
+                       reduce_sweep, write_series)
 from .planning import (
     CaptureOption,
     describe_capture_plan,
@@ -103,6 +104,7 @@ __all__ = [
     "LockinResult",
     "SantecTSL",
     "SweepReduction",
+    "SweepSeries",
     "SweepTrace",
     "TRIGGER_OUTPUT_MODES",
     "SyntheticResponse",
@@ -135,6 +137,7 @@ __all__ = [
     "recommended_tail",
     "settling_points",
     "write_raw_npz",
+    "write_series",
     "write_trace_csv",
     "synthesise_dut_output",
 ]

@@ -2922,3 +2922,39 @@ trace plot, which looked like a result and silently replaced the measurement.
 It now loads the log into the pipeline instead.
 
 195 offline tests pass.
+
+**Same session, continued: the stale planner, the stepped series, and CLAUDE.md.**
+
+1. **`describe_capture_plan()` fixed.** It had recommended decimation 2 plus the
+   device-tree move for eleven days after both were decided against, because
+   `recommend()` bounded by `MAX_DMA_MB` (512, the hypothetical size after a
+   REJECTED move) instead of the region that exists. Added `DMA_REGION_MB = 128`
+   and planned against it; it now says decimation 8, no board changes.
+   **There were no tests on `plan_capture`, `recommend` or
+   `describe_capture_plan` at all** — that is why it drifted. `tests/test_planning.py`
+   now asserts the recommendation IS decimation 8 and that the output contains
+   no device-tree instructions.
+2. **A second stale number in the same function**: the transfer column quoted
+   `SCPI_MB_PER_S` (5.7) for a path that does not use SCPI. `acquire_deep_fast`
+   reads over the raw socket. Added `FAST_READ_MB_PER_S = 11.0` (conservative
+   end of H6.2's measured 11-19 MB/s); a 1 s decimation-8 sweep now estimates
+   ~11 s rather than 21 s, and the summary names both paths.
+3. **`SweepSeries` / `write_series`** for the 11-step measurement. One CSV per
+   sweep plus an index, rather than one long file with a lambda2 column: each
+   trace stays independently openable, provenance stays in a header instead of
+   being repeated on 55,000 rows, and a failed sweep costs one file. The
+   stepping wavelength is unit-guarded like everything else, and the summary
+   flags any sweep whose alignment is suspect — a shifted axis looks normal in
+   the trace, so it has to be said out loud.
+4. **CLAUDE.md refreshed.** It still described a ONE-laser experiment, still
+   listed Q26 as a live assumption, quoted a stale test count, and had no entry
+   for `pipeline.py` or the GUI. All corrected, including the f1/f2 vs
+   freq1/freq2 naming collision.
+
+208 offline tests pass.
+
+**Next, unchanged and still needing hardware:** re-deploy `rp_fastread.py` and
+take one capture to settle where the transfer time goes; run P2 (trigger into
+IN2) once the board is reachable. **Still needing nothing:** bench scripts for
+P3-P6, and a code-review pass over everything written on 2026-08-14, which has
+still never had a second look.

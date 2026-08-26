@@ -261,3 +261,77 @@ def test_a_single_edge_plus_sweep_seconds_is_enough():
                        sweep_seconds=SWEEP)
     assert red.step == pytest.approx(step, rel=1e-9)
     assert "configured" in red.step_source
+
+
+# --------------------------------------------- the 11-step stepped series
+
+
+def test_a_series_writes_one_file_per_sweep_plus_an_index(tmp_path):
+    """Kevin's measurement is 11 steps of laser 2 x one 5000-point sweep each.
+
+    One file per sweep rather than one long file with a lambda2 column: each
+    trace stays independently openable, the per-sweep provenance stays in a
+    header instead of being repeated on 55,000 rows, and a failed sweep costs
+    one file rather than the set.
+    """
+    from rp_lockin import SweepSeries, write_series
+
+    series = SweepSeries()
+    for i in range(11):
+        detector, trigger, wl, _e, _s = build(seed=i + 1)
+        red = reduce_sweep(detector, trigger, FS, wl, f_ref=PLAN.difference)
+        series.add(1550e-9 + i * 0.5e-9, red)
+
+    assert len(series) == 11
+    paths = write_series(tmp_path / "run", series)
+    assert len(paths) == 12                      # 11 sweeps + the index
+
+    index = (tmp_path / "run" / "sweep_index.csv").read_text()
+    assert index.count(chr(10)) == 3 + 11        # 2 comments, header, 11 rows
+    assert "1550.000000" in index and "1555.000000" in index
+
+    first = (tmp_path / "run" / "sweep_00.csv").read_text()
+    assert "# stepping_wavelength_nm: 1550.000000" in first
+    assert "# sweep_index: 0" in first
+    # The per-sweep provenance has to survive into every file, or a trace
+    # cannot be traced back to how its axis was built.
+    assert "# step_source: measured" in first
+
+
+def test_a_series_refuses_a_stepping_wavelength_in_nanometres():
+    """1550 instead of 1.55e-6 would mislabel a whole sweep by 10^9, and 1550
+    is a perfectly plausible-looking number to type."""
+    from rp_lockin import SweepSeries
+
+    detector, trigger, wl, _e, _s = build()
+    red = reduce_sweep(detector, trigger, FS, wl, f_ref=PLAN.difference)
+    series = SweepSeries()
+    with pytest.raises(ValueError, match="METRES"):
+        series.add(1550.0, red)
+    assert len(series) == 0
+
+
+def test_an_empty_series_refuses_to_write_rather_than_making_a_bare_index():
+    from rp_lockin import SweepSeries, write_series
+
+    with pytest.raises(ValueError, match="empty"):
+        write_series("unused", SweepSeries())
+
+
+def test_the_series_summary_flags_a_suspect_alignment(tmp_path):
+    """A shifted wavelength axis looks entirely normal in the trace, so the
+    summary has to say which sweeps to distrust rather than leaving it in a
+    per-sweep field nobody opens."""
+    from rp_lockin import SweepSeries
+
+    detector, trigger, wl, _e, _s = build()
+    good = reduce_sweep(detector, trigger, FS, wl, f_ref=PLAN.difference)
+    bad = reduce_sweep(detector, trigger, FS, wl, f_ref=PLAN.difference)
+    bad.alignment.ok = False
+
+    series = SweepSeries()
+    series.add(1550e-9, good)
+    series.add(1551e-9, bad)
+    text = series.describe()
+    assert "ALIGNMENT SUSPECT" in text
+    assert "1 sweep(s) with a suspect alignment: [1]" in text
