@@ -62,3 +62,32 @@ MAX_DMA_MB = 512
 
 # Arbitrary-waveform buffer depth of the stock generator.
 ASG_BUFFER_MAX = 16384
+
+# ---- ADC scaling -----------------------------------------------------------
+#
+# acquire(), acquire_deep() and acquire_deep_fast() all return RAW ADC COUNTS,
+# not volts. Nothing in the capture path scales them, deliberately: hardware.py
+# stays clear of the maths. Anything comparing a capture against a physical
+# specification has to convert, and forgetting to is not obvious -- a trigger
+# reported as "302 V" was the P2 failure on 2026-08-28.
+#
+# Counts per volt on the LV (+/-1 V) range. A commanded 0.5 V returned 902.8
+# counts, implying 1816.9 counts/V, which matches the 1817.7 inherited from an
+# unrelated measurement to 0.04%.
+#
+# CAVEAT -- this is Q23, and it is still open. Loopback measures DAC x cable x
+# ADC as ONE number and cannot say where the 0.882 factor lives. If it sits in
+# the DAC, this figure is ~12.7% low for a signal driven straight into the
+# input, which is exactly what the real experiment does. Good enough for "is
+# this the right order of magnitude and the right input range?" -- which is all
+# P2 asks. NOT a calibrated absolute until an external source settles Q23.
+ADC_COUNTS_PER_V_LV = 1817.7
+
+# The HV range is +/-20 V, so the same full scale covers 20x the voltage.
+ADC_COUNTS_PER_V_HV = ADC_COUNTS_PER_V_LV / 20.0
+
+# 12-bit signed converter. A record containing either limit is CLIPPED, and an
+# amplitude derived from it is wrong rather than merely noisy -- the failure is
+# silent, because a clipped sine still demodulates to a clean-looking number.
+ADC_COUNT_MAX = 2047
+ADC_COUNT_MIN = -2048

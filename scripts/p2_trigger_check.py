@@ -45,6 +45,8 @@ sys.path.insert(0, "src")
 from rp_lockin import analyse_trigger_train, check_alignment  # noqa: E402
 from rp_lockin.emulator import find_trigger_edges  # noqa: E402
 from rp_lockin.santec import SantecTSL  # noqa: E402
+from rp_lockin.constants import (ADC_COUNTS_PER_V_HV,  # noqa: E402
+                                 ADC_COUNT_MAX, ADC_COUNT_MIN)
 
 # TSL-775 p46, section 6.5. Quoted, not remembered.
 SPEC_HIGH_V = 3.3
@@ -84,16 +86,40 @@ def capture_trigger(rp, args, decimation, res=None):
     return chans[1], rp.base_rate / decimation
 
 
-def pulse_shape(trig, fs, res):
-    """P2.1 -- levels, width, gap and rise time, against the manual."""
+def pulse_shape(counts, fs, res):
+    """P2.1 -- levels, width, gap and rise time, against the manual.
+
+    `counts` is RAW ADC COUNTS, because that is what acquire_deep_fast returns.
+    This converts once, up front, and works in volts thereafter.
+
+    Getting that wrong is not obvious. On 2026-08-28 this check reported the
+    trigger as "302.000 V, expected ~3.3 V" and failed the whole step while the
+    hardware was perfectly correct -- 302 counts on the HV range IS 3.32 V. The
+    old failure text then blamed the input range, sending the reader after a
+    fault that did not exist.
+    """
+    clipped = int(np.count_nonzero((counts >= ADC_COUNT_MAX) |
+                                   (counts <= ADC_COUNT_MIN)))
+    if clipped:
+        res.fail("P2.1 record contains clipped samples",
+                 f"{clipped} of {counts.size} at the 12-bit rail. Every level "
+                 f"and width below is derived from a flattened waveform. Drop "
+                 f"the input or change range before believing any of it.")
+    else:
+        res.ok("P2.1 no clipped samples", f"0 of {counts.size} at the rail")
+
+    # capture_trigger() puts IN2 on HV, so that is the scale that applies.
+    trig = np.asarray(counts, dtype=float) / ADC_COUNTS_PER_V_HV
+
     lo, hi = float(np.percentile(trig, 1)), float(np.percentile(trig, 99))
     res.add("P2.1 idle / high level (V)", f"{lo:.3f} / {hi:.3f}")
     if abs(hi - SPEC_HIGH_V) < 0.5:
         res.ok("P2.1 high level matches the 3.3 V spec", f"{hi:.3f} V")
     else:
         res.fail("P2.1 high level", f"{hi:.3f} V, expected ~{SPEC_HIGH_V} V. "
-                                    f"If it is ~1 V, IN2 is still on LV and "
-                                    f"clipping.")
+                                    f"That is {hi * ADC_COUNTS_PER_V_HV:.0f} "
+                                    f"counts. If it is ~0.17 V, IN2 is on LV "
+                                    f"and the 3.3 V trigger is clipping.")
 
     mid = 0.5 * (lo + hi)
     rise = find_trigger_edges(trig, fs, threshold=mid, polarity="rising")
@@ -129,9 +155,16 @@ def pulse_shape(trig, fs, res):
                              polarity="rising")
     t90 = find_trigger_edges(trig, fs, threshold=lo + 0.9 * (hi - lo),
                              polarity="rising")
-    m = min(t10.size, t90.size)
-    if m:
-        rt = float(np.median(t90[:m] - t10[:m]))
+    # Pair each 10% crossing with the NEXT 90% crossing, exactly as the width
+    # calculation pairs rise against fall. Pairing by INDEX instead assumes both
+    # threshold lists begin on the same pulse; one extra crossing at either end
+    # shifts every pair by a whole pulse and yields a NEGATIVE rise time of
+    # about one period. Measured -199698 ns on 2026-08-28 against a 200 us
+    # period, which is that off-by-one exactly.
+    j = np.searchsorted(t90, t10)
+    paired = j < t90.size
+    if np.any(paired):
+        rt = float(np.median(t90[j[paired]] - t10[paired]))
         res.add("P2.1 rise time 10-90% (ns) -- U7",
                 f"{rt * 1e9:.1f}  (sample period is {1e9 / fs:.1f} ns)")
         if rt < 1.0 / fs:

@@ -162,3 +162,105 @@ def test_finish_returns_nonzero_when_something_failed(capsys):
     bad = bench.Results("bad")
     bad.fail("a", 1)
     assert bad.finish() == 1
+
+
+# ---------------------------------------------------------------------------
+# P2.1 works on RAW ADC COUNTS. These pin the conversion, because getting it
+# wrong does not crash -- it prints a confident, wrong, out-of-range number.
+# On 2026-08-28 P2 failed on real hardware with "302.000 V, expected ~3.3 V"
+# while the trigger was a perfectly correct 3.32 V, and the failure text sent
+# the reader after an input-range fault that did not exist.
+
+
+def _trigger_counts(n_pulses=20, fs=31.25e6, width_s=25e-6, period_s=200e-6,
+                    high_v=3.3, low_v=0.0):
+    """A synthetic TSL-775 trigger train, in ADC counts on the HV range."""
+    import numpy as np
+    from rp_lockin.constants import ADC_COUNTS_PER_V_HV
+
+    n = int(n_pulses * period_s * fs)
+    x = np.full(n, low_v * ADC_COUNTS_PER_V_HV)
+    w = int(width_s * fs)
+    for k in range(n_pulses):
+        i = int(k * period_s * fs)
+        x[i:i + w] = high_v * ADC_COUNTS_PER_V_HV
+    return x, fs
+
+
+def test_pulse_shape_reports_volts_not_counts():
+    """The regression: counts must be scaled before meeting a volt spec."""
+    p2 = load("p2_trigger_check")
+    bench = load("_bench")
+    trig, fs = _trigger_counts()
+
+    res = bench.Results("t")
+    p2.pulse_shape(trig, fs, res)
+
+    level = [r for r in res.rows if r[0].startswith("P2.1 idle / high level")]
+    assert level, "the level row disappeared"
+    hi = float(level[0][1].split("/")[1])
+    assert 2.8 < hi < 3.8, f"reported {hi}, which is not volts"
+
+    assert not [r for r in res.failures if "high level" in r[0]],         f"a correct 3.3 V trigger was failed: {res.failures}"
+
+
+def test_pulse_shape_rise_time_is_never_negative():
+    """t10 and t90 are independent crossing lists, and pairing them by INDEX
+    gives a rise time of about MINUS one period as soon as either has an extra
+    crossing.
+
+    The condition that does it, and the one a real capture hits: the record
+    begins part way UP an edge. The signal is already above the 10% threshold,
+    so no rising 10% crossing is found for that first pulse, but 90% is still
+    crossed -- so t90 gains a leading entry t10 does not have, and every index
+    pair is shifted by one whole pulse. A clean train cannot show this, which
+    is why the first version of this test passed against the bug.
+    """
+    import numpy as np
+    p2 = load("p2_trigger_check")
+    bench = load("_bench")
+    trig, fs = _trigger_counts()
+    trig = np.asarray(trig, dtype=float)
+    trig[0] = 0.5 * trig.max()   # start between the 10% and 90% thresholds
+
+    res = bench.Results("t")
+    p2.pulse_shape(trig, fs, res)
+
+    rows = [r for r in res.rows if r[0].startswith("P2.1 rise time")]
+    assert rows, "the rise-time row disappeared"
+    rt_ns = float(rows[0][1].split()[0])
+    assert rt_ns >= 0.0, f"negative rise time {rt_ns} ns"
+
+
+def test_pulse_shape_flags_a_clipped_record():
+    """A clipped record still yields clean-looking widths and spacings, so the
+    clipping has to be reported separately or it is invisible."""
+    import numpy as np
+    from rp_lockin.constants import ADC_COUNT_MAX
+
+    p2 = load("p2_trigger_check")
+    bench = load("_bench")
+    trig, fs = _trigger_counts()
+    trig = np.asarray(trig)
+    trig[100:200] = ADC_COUNT_MAX
+
+    res = bench.Results("t")
+    p2.pulse_shape(trig, fs, res)
+
+    assert [r for r in res.failures if "clipped" in r[0]],         "clipping at the ADC rail went unreported"
+
+
+def test_a_trigger_left_on_the_lv_range_is_still_caught():
+    """The check must keep catching the real fault it was written for: a 3.3 V
+    trigger on the +/-1 V range clips to a flat line."""
+    p2 = load("p2_trigger_check")
+    bench = load("_bench")
+    # LV clips at +/-1 V, so the 3.3 V pulse arrives as ~1 V worth of counts
+    # read against the HV scale -- about 0.17 V.
+    trig, fs = _trigger_counts(high_v=0.17)
+
+    res = bench.Results("t")
+    p2.pulse_shape(trig, fs, res)
+
+    assert [r for r in res.failures if "high level" in r[0]],         "a clipped LV trigger was accepted as a healthy 3.3 V one"
+
