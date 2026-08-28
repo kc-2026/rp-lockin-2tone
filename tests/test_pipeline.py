@@ -362,3 +362,140 @@ def test_the_span_check_is_vacuous_when_the_step_came_from_the_span():
     assert a.n_table - a.n_edges == 2
     assert "fewer pulse(s)" in a.diagnosis
     assert "span agreement above is automatic" in red.describe()
+
+
+# ---------------------------------------------------------------------------
+# Q29: the trigger is periodic in WAVELENGTH, not in time, so a uniform time
+# grid is only right while the sweep speed is constant. On the real TSL-775 it
+# is not -- measured 2026-08-28, the speed ripples about +/-11% with a period
+# of 0.41 nm, putting the edges up to 0.79 of a step off a uniform grid and
+# misassigning wavelength by ~16 pm.
+#
+# A UNIFORM synthetic train cannot catch this, which is why every earlier test
+# here passed while the axis carried the error. These build a rippling one.
+
+
+def build_rippled(amp_steps=0.35, period=20.0, n_log=N_LOG, peak_row=None,
+                  seed=1):
+    """A sweep whose trigger ripples in time but is uniform in wavelength.
+
+    The resonance is planted at the TIME of one particular trigger edge, so its
+    true wavelength is that row's wavelength by construction -- no matter what
+    the timing does. That is what makes this a truth check.
+    """
+    step = SWEEP / (n_log - 1)
+    duration = FIRST_EDGE + SWEEP + 6e-3
+    wavelengths = np.linspace(1540e-9, 1560e-9, n_log)
+
+    k = np.arange(n_log, dtype=float)
+    # Accumulated timing offset. Its DERIVATIVE is the gap variation, so a
+    # 0.35-step amplitude at period 20 gives 2*pi*0.35/20 = 11% gap ripple --
+    # matching the instrument rather than exceeding it. Overshooting is not
+    # conservative here: at ~25% ripple two merged gaps can reach 2.6x the
+    # median, which rounds to THREE missing rows and sends the lost-pulse path
+    # into the uniform fallback for a reason the instrument never produces.
+    offset = amp_steps * step * np.sin(2 * np.pi * k / period)
+    edge_t = FIRST_EDGE + k * step + offset
+    assert np.all(np.diff(edge_t) > 0), "edges must stay ordered"
+
+    if peak_row is None:
+        # Largest ripple in the MIDDLE of the sweep. Not simply argmax: the
+        # first ripple peak sits ~8 ms in, inside the 22.6 ms of filter
+        # settling that LockinResult.t trims, so the resonance would be
+        # discarded before the mapping ever saw it (CLAUDE.md trap 3).
+        mid = np.zeros_like(offset)
+        lo_i, hi_i = int(0.4 * n_log), int(0.6 * n_log)
+        mid[lo_i:hi_i] = np.abs(offset[lo_i:hi_i])
+        peak_row = int(np.argmax(mid))
+    peak_t = float(edge_t[peak_row])
+
+    def envelope(t):
+        w = 0.12 * SWEEP
+        return 1.0 / (1.0 + ((t - peak_t) / w) ** 2)
+
+    detector, _truth = synthesise_dut_output(
+        PLAN.difference, duration, fs=FS, envelope_fn=envelope,
+        noise_rms=0.0, amplitude=0.2, seed=seed)
+
+    n = int(round(duration * FS))
+    trigger = np.zeros(n)
+    w = int(round(25e-6 * FS))
+    for t0 in edge_t:
+        i = int(round(t0 * FS))
+        trigger[i:i + w] = 3.3
+    trigger -= trigger.mean()                  # bipolar, so threshold 0 works
+
+    return (detector, trigger, wavelengths, float(wavelengths[peak_row]),
+            step, edge_t)
+
+
+def test_measured_edge_times_beat_a_uniform_grid_on_a_rippling_train():
+    """The Q29 regression, and the reason the default changed.
+
+    Asserts on the AXIS, not on where a peak lands. A peak test cannot work at
+    this scale: one output sample is 0.59 of a logged step here, so peak
+    position is quantised more coarsely than the whole effect. Measured with
+    both argmax and a centroid before writing this -- neither could separate
+    the two axes, and a centroid even favoured the wrong one. The axis itself
+    has no such limit.
+    """
+    detector, trigger, wl, _exp, step, edge_t = build_rippled()
+
+    good = reduce_sweep(detector, trigger, FS, wl, f_ref=PLAN.difference)
+    poor = reduce_sweep(detector, trigger, FS, wl, f_ref=PLAN.difference,
+                        use_edge_times=False)
+
+    assert good.table_source.startswith("measured")
+    assert poor.table_source.startswith("uniform")
+
+    # Truth from the times the train was BUILT with, not from the detected
+    # edges -- otherwise the measured branch would be graded on its own input.
+    truth_rel = edge_t - edge_t[0]
+    dw = float(wl[1] - wl[0])
+
+    def axis_error(red):
+        t = np.asarray(red.trace.t_rel, dtype=float)
+        w = np.asarray(red.trace.wavelength, dtype=float)
+        ok = np.isfinite(w)
+        true_w = np.interp(t[ok], truth_rel, wl)
+        return float(np.max(np.abs(w[ok] - true_w))) / dw
+
+    err_good, err_poor = axis_error(good), axis_error(poor)
+    assert err_good < 0.05, (
+        f"measured-time axis is {err_good:.3f} steps off its own truth")
+    assert err_poor > 0.25, (
+        f"the uniform grid should be clearly wrong on a rippling train; it is "
+        f"only {err_poor:.3f} steps off. If this is small, the ripple is not "
+        f"reaching the axis and the test proves nothing.")
+    assert err_poor > 5 * err_good
+
+
+def test_the_deviation_from_uniform_is_reported_not_hidden():
+    """The error being avoided has to be visible, or nobody knows it was there."""
+    detector, trigger, wl, _e, step, _et = build_rippled()
+    red = reduce_sweep(detector, trigger, FS, wl, f_ref=PLAN.difference)
+    # 0.35-step sine, so rms deviation is 0.35/sqrt(2) steps.
+    assert red.table_deviation == pytest.approx(0.35 * step / np.sqrt(2),
+                                                rel=0.15)
+    assert "vacuous" in red.describe()
+    assert f"{red.table_deviation * 1e6:.1f}" in red.describe()
+
+
+def test_a_lost_pulse_is_interpolated_rather_than_dropping_the_measured_axis():
+    """A gap must cost one estimated row, not the whole measured axis.
+
+    Falling back to a uniform grid on any lost pulse would throw away every
+    other measured edge too -- and on a rippling train that is the Q29 error
+    returning through the back door.
+    """
+    detector, trigger, wl, _e, _step, _et = build_rippled()
+    edges = find_trigger_edges(trigger, FS, polarity="rising")
+    victim = edges[len(edges) // 2]
+    lo, hi = int((victim - 5e-6) * FS), int((victim + 35e-6) * FS)
+    damaged = trigger.copy()
+    damaged[lo:hi] = trigger.min()
+
+    red = reduce_sweep(detector, damaged, FS, wl, f_ref=PLAN.difference)
+    assert red.table_source.startswith("measured"), red.table_source
+    assert "interpolated" in red.table_source
+

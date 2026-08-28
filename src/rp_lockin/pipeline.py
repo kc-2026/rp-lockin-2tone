@@ -80,6 +80,8 @@ class SweepReduction:
     first_edge: float
     step: float
     step_source: str
+    table_source: str = "uniform step"
+    table_deviation: float = 0.0   # rms of measured times vs a uniform grid, s
 
     @property
     def n_points(self) -> int:
@@ -95,6 +97,8 @@ class SweepReduction:
             "first_trigger_edge_s": f"{self.first_edge:.9f}",
             "logged_point_step_s": f"{self.step:.12f}",
             "step_source": self.step_source,
+            "wavelength_axis_from": self.table_source,
+            "table_deviation_from_uniform_us": f"{self.table_deviation * 1e6:.4f}",
             "trigger_edges_found": str(self.edges.size),
             "trigger_pulses_missing": (
                 str(self.train.n_missing) if self.train else "unknown"),
@@ -112,11 +116,23 @@ class SweepReduction:
             f"{self.result.bandwidth:.1f} Hz",
             f"first trigger edge at {self.first_edge * 1e3:.4f} ms; "
             f"logged-point step {self.step * 1e6:.4f} us ({self.step_source})",
+            f"wavelength axis placed by: {self.table_source}",
             self.train.describe() if self.train else
             f"{self.edges.size} edge(s): too few to characterise the train",
             self.alignment.describe(),
         ]
-        if self.step_source.startswith("measured"):
+        if self.table_source.startswith("measured"):
+            # With the table built from the edges themselves, check_alignment
+            # compares each edge against itself: BOTH its span and its count
+            # agree by construction, so neither is evidence. The count is not
+            # untested -- it is the precondition for taking this branch at all,
+            # checked before the table was built rather than after.
+            lines.append(
+                f"  (alignment above is vacuous here -- the table IS the "
+                f"edges. The edge/row count was tested as the precondition. "
+                f"Those edges sit {self.table_deviation * 1e6:.1f} us rms off "
+                f"a uniform grid, which is the error this avoids -- see Q29.)")
+        elif self.step_source.startswith("measured"):
             # Said out loud because the line above prints two spans that agree
             # exactly, which reads like corroboration and is not: the step came
             # FROM that span, so the two are the same number. Only the pulse
@@ -150,6 +166,7 @@ def reduce_sweep(detector: np.ndarray,
                  step: float | None = None,
                  sweep_seconds: float | None = None,
                  nominal_step: float | None = None,
+                 use_edge_times: bool = True,
                  trigger_threshold: float = 0.0,
                  trigger_polarity: str = "rising",
                  min_separation: float = 1e-6,
@@ -247,14 +264,73 @@ def reduce_sweep(detector: np.ndarray,
                         output_rate=output_rate)
     amplitude = result.amplitude(smooth=amplitude_smooth)
 
-    table_t = logged_point_times(wl.size, 0.0, step)
+    table_t, table_source, table_dev = _resolve_table_times(
+        edges, first_edge, wl.size, step, use_edge_times)
     alignment = check_alignment(edges, table_t)
     trace = map_to_wavelength(result.t, amplitude, first_edge, table_t, wl,
                               overrun_tol=overrun_tol)
 
     return SweepReduction(trace=trace, result=result, edges=edges, train=train,
                           alignment=alignment, first_edge=first_edge,
-                          step=step, step_source=step_source)
+                          step=step, step_source=step_source,
+                          table_source=table_source, table_deviation=table_dev)
+
+
+def _resolve_table_times(edges: np.ndarray, first_edge: float, n_points: int,
+                         step: float,
+                         use_edge_times: bool) -> tuple[np.ndarray, str, float]:
+    """When each logged point has its own recorded edge, USE IT.
+
+    The trigger is periodic in WAVELENGTH, not in time (Q24), so a uniform time
+    grid is only correct while the sweep speed is constant -- and on this
+    instrument it is not. Measured 2026-08-28: the speed ripples by about
+    +/-11% with a period of 0.41 nm, which puts the real edges up to 0.79 of a
+    step away from a uniform grid. Assuming uniformity therefore misassigns
+    wavelength by up to ~16 pm, on a laser whose own log is linear to 0.4 pm.
+    See Q29.
+
+    The edges are already in the record, so using them costs nothing and
+    removes the error rather than bounding it.
+
+    Falls back to the uniform grid when the record does NOT hold exactly one
+    edge per logged point, because then there is no way to say which edge
+    belongs to which row. That is the same reasoning that killed Q26: nothing
+    here counts pulses to derive a step, and a mismatch degrades the axis
+    rather than silently mislabelling it.
+    """
+    uniform = logged_point_times(n_points, 0.0, step)
+    if not use_edge_times or edges.size < 3 or n_points < 2:
+        return uniform, "uniform step (assumes constant sweep speed)", 0.0
+
+    rel = np.asarray(edges, dtype=float) - float(first_edge)
+
+    # Which row each surviving edge belongs to. A LOST pulse leaves one
+    # interval of about twice the step, so the ordinals must be derived the
+    # same way analyse_trigger_train does rather than by position in the array.
+    # Indexing rows by array position is precisely the counting bug Q21 warns
+    # about: after a gap every row would shift by one step, and the trace would
+    # still look perfect.
+    d = np.diff(rel)
+    step0 = float(np.median(d))
+    if step0 <= 0:
+        return uniform, "uniform step (assumes constant sweep speed)", 0.0
+    mult = np.maximum(np.rint(d / step0).astype(int), 1)
+    ordinal = np.concatenate([[0], np.cumsum(mult)])
+
+    # Only usable if the train, gaps included, spans exactly the logged rows.
+    if int(ordinal[-1]) != n_points - 1:
+        return uniform, "uniform step (assumes constant sweep speed)", 0.0
+
+    # Interpolate across any lost pulses; every surviving edge keeps its own
+    # measured time, so a gap costs one estimated row rather than the axis.
+    measured = np.interp(np.arange(n_points, dtype=float),
+                         ordinal.astype(float), rel)
+    dev = float(np.std(measured - uniform))
+    n_lost = int(np.sum(mult - 1))
+    label = "measured edge times, one per logged point"
+    if n_lost:
+        label += f" ({n_lost} lost pulse(s) interpolated)"
+    return measured, label, dev
 
 
 def _resolve_step(step: float | None, sweep_seconds: float | None,
