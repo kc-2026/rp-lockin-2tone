@@ -3442,3 +3442,72 @@ out cleanly and left the board healthy.
 5. ~~`.gitattributes`; repo URL into `README.md`~~ — done.
 6. **Whether the LAN dropouts correlate with the binary log reads.** Two for two
    today. If they do, the fix may be as simple as pacing those reads.
+
+---
+
+## 2026-08-28 (later) — Claude (Claude Code) — the full sweep runs, and the time axis is not uniform
+
+**Goal:** get to a full end-to-end laser sweep as fast as possible.
+
+**Did:** vendored the proven `tsl775.py` into `scripts/` (it was the only
+working laser code and it lived on the Desktop), and wrote
+`scripts/full_sweep_test.py` — the first run of `pipeline.reduce_sweep` against
+real hardware. **It passes.** One sweep, shutter closed, no RF: real trigger,
+real laser log, real reduction, `sweep_001.csv` with 5097 rows.
+
+Two mis-sizings found by the code refusing rather than guessing:
+
+- `map_to_wavelength` **refused to extrapolate** past the end of the laser's
+  table when the record was sized to the DMA ceiling (1.0737 s) rather than to
+  the sweep (1.000 s). It was right to: every sample past the last logged point
+  has no wavelength. The record is now pre-roll + sweep + tail.
+- The `trigger_threshold=0.0` default finds **no edges at all** on our unipolar
+  trigger, which idles at 6 counts and peaks at 302. The script computes the
+  threshold from the record.
+
+### Q29 — the answer to the 43.2 µs residual, and a correction
+
+**I was wrong about the mechanism.** From P2's four summary numbers I inferred
+"a large smooth wander plus one isolated short gap", and ruled out widespread
+gap variation. The captured edges say otherwise:
+
+```
+gaps: mean 200.005  sd 5.867  min 181.212  max 225.038 us
+      2061 of 5000 gaps more than 5 us off the median
+      peak-to-peak 43.8 us = 21.9% of the mean
+```
+
+The gaps vary *everywhere*, not in one place. **The error was reasoning from
+`min` without `sd`** — P2 reports the minimum gap but not its spread, and I
+assumed a small spread. It is 5.87 µs. Print the spread.
+
+**What it actually is: the sweep speed ripples by about ±11%, periodically,
+with a period of 0.41 nm (~20.4 triggers, 4.1 ms).** Because the trigger is
+periodic in WAVELENGTH (Q24), that speed ripple is recorded directly as
+interval variation. Integrated, it puts the edges up to **157.7 µs = 0.79 of a
+step** off a uniform grid — **15.8 pm of wavelength error**, against a laser
+whose own log is linear to 0.4 pm. Assuming uniformity inflates the error ~40×.
+
+**Why nothing caught it before.** The laser-side check is tautological:
+`sweep_capture.py` sets `dt = TRIG_STEP_NM / SPEED_NM_S` from the *commanded*
+settings, builds `xs = [i*dt]`, then fits wavelength against `xs`. Wavelength is
+uniform in index by construction, so "linear in time" tests nothing about time,
+and "fitted rate == commanded" returns the commanded number by arithmetic —
+which is why it reads **+100.0000 nm/s** against 100.0. Same genre as the
+vacuous span test in `check_alignment`.
+
+**The fix costs nothing:** stop deriving a uniform step and use the measured
+edge times, which every capture already contains. Not yet done.
+
+**Broke / still broken:** `reduce_sweep` still defaults to the uniform step, so
+today's CSV carries up to 15.8 pm of axis error. The laser's LAN dropped out
+twice more today; front-panel reapply fixed it both times.
+
+**Next:**
+
+1. **Use the measured edge times in `reduce_sweep`** instead of span/(N−1), with
+   an offline test built on a rippling train. This is the live task.
+2. Ask santec what the 0.41 nm ripple is — etalon, or grating drive?
+3. The detector still has never seen light (Q11b), and the PDA05CF2 damage
+   threshold is still unknown.
+
