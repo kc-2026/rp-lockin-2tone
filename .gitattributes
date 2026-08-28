@@ -1,0 +1,13 @@
+# Line endings.
+#
+# core.autocrlf=true is the Git for Windows default, so every text file is
+# checked out with CRLF. Harmless for the files that only ever run on the
+# control PC -- but scripts/rp_fastread.py runs ON THE BOARD, which is Linux.
+# A CRLF shebang makes `./rp_fastread.py` fail with the memorable and
+# unhelpful "bad interpreter: python3^M".
+#
+# It is deployed and launched as `python3 /dev/shm/rp_fastread.py` today, and
+# Python does not care about CRLF, so nothing is broken right now. This pins it
+# so nothing breaks the day someone makes it executable instead.
+* text=auto
+scripts/rp_fastread.py text eol=lf

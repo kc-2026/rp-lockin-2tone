@@ -1,5 +1,11 @@
 # rp-lockin-2tone
 
+**Repository:** <https://github.com/kc-2026/rp-lockin-2tone>
+
+*Recorded here deliberately. On 2026-08-28 the control PC was rebuilt from
+scratch and the remote URL was written down nowhere in the repository — which
+is exactly the moment it is needed.*
+
 Two-tone lock-in detection on a Red Pitaya SIGNALlab 250-12.
 
 Two AOMs gate light — one at 5 MHz, one at 6 MHz — by amplitude modulating the
