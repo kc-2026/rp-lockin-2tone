@@ -10,7 +10,7 @@ intensity is modulated** — one at f1, the other at f2. The DUT's nonlinearity
 mixes them, and the response appears at the difference frequency |f2 − f1|. A
 photodetector returns that response and nothing else.
 
-**The 80 MHz is the AOM's requirement, not the DUT's** (Kevin, 2026-08-14). An
+**The 80 MHz is the AOM's requirement, not the DUT's** (Kevin, 2026-08-18). An
 acousto-optic modulator diffracts light only while it is driven acoustically, and
 the Aerodiode 1550AOM-1 is an 80 MHz part. Amplitude-modulating that 80 MHz —
 sweeping its envelope from zero to full — gates the light, and that is what
@@ -84,7 +84,7 @@ The deliverable per sweep is a 4000–5000 point time series of the demodulated
 response — **amplitude only** — mapped onto wavelength using the laser's serial
 report, with the trigger fixing the time origin.
 
-**Scope narrowed 2026-08-12 (Kevin): amplitude, not amplitude and phase.**
+**Scope narrowed 2026-08-10 (Kevin): amplitude, not amplitude and phase.**
 Phase is still computed and returned by `demodulate()`, and is still useful
 within a sweep, but it is not a deliverable and nothing should be gated on it.
 This is what downgraded Q6 (the OUT1/OUT2 relative carrier phase is not

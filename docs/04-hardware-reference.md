@@ -49,7 +49,7 @@ is aliasing-free because 62.5 MHz Nyquist sits above the rolloff.
 link-local IP is negotiated and changes on reconnect, so prefer the hostname
 in `RP_HOST`. The board's own hostname derives from its MAC (`ff:fe:42`).
 
-## First contact — 2026-08-12
+## First contact — 2026-08-10
 
 Link-local (APIPA) addressing on a direct Ethernet cable; no DHCP in the path.
 PC side self-assigned `169.254.96.225`, board `169.254.56.245`. Link negotiates
@@ -81,7 +81,7 @@ way: the label on the board, `monitor -f` over SSH, or a loopback measurement
 of the actual sample rate. `ACQ:SOUR<n>:COUP` being supported is suggestive
 (it is documented as 250-12 only) but is not proof on its own.
 
-**Resolved 2026-08-12: Kevin read the board's label — it is a SIGNALlab
+**Resolved 2026-08-10: Kevin read the board's label — it is a SIGNALlab
 250-12.** The 250 MS/s base rate and the whole frequency plan therefore stand.
 H1.3 should still confirm the rate by measurement once loopback is wired, since
 the label proves the hardware but not that the OS is configured for it.
@@ -627,7 +627,7 @@ Ten volts against a ±1 V range is a problem, and the answer is almost certainly
 drops the pedestal and lets the sensitive ±1 V range see only the modulation.
 The alternative — the ±20 V range — is a bad trade: σ there is 45 µV, four times
 the detector's own noise, so the ADC would dominate a measurement it currently
-does not. **Measured 2026-08-14 (Q25) and it is free: the corner is 17.0 Hz, single-pole,
+does not. **Measured 2026-08-17 (Q25) and it is free: the corner is 17.0 Hz, single-pole,
 so attenuation at 991.821 kHz is 1.3×10⁻⁹ dB, and the noise floor is unchanged
 AC coupled.** The one thing AC coupling does cost is any DC reading of average
 optical power; the laser's own `:READout:DATa:POWer?` log can supply that if it
@@ -647,7 +647,7 @@ combined 25 Ω allows ~135 mA and damages the output driver. With the Red Pitaya
 
 ## The RF chain — ZHL-1-2W+ amplifier and 1550AOM-1
 
-From the Mini-Circuits and Aerodiode datasheets, both read 2026-08-14. Neither is
+From the Mini-Circuits and Aerodiode datasheets, both read 2026-08-17. Neither is
 connected yet.
 
 | Mini-Circuits ZHL-1-2W+ | |
@@ -673,7 +673,7 @@ connected yet.
 
 ### RF DRIVE LEVEL: leave it where Kevin tuned it. No attenuator.
 
-**Recommendation withdrawn 2026-08-14.** Three revisions of this section (20 dB,
+**Recommendation withdrawn 2026-08-17.** Three revisions of this section (20 dB,
 then 10 dB, then 6 dB of attenuation, then "turn the drive down 4 dB") were all
 solving a problem this experiment does not have. **Kevin's tuning is correct and
 should not be changed.** The reasoning is recorded because the mistake is an easy

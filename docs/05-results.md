@@ -41,7 +41,7 @@ above stand; only the explanation was wrong.
 noise floor, and the fact that the demodulator's noise gain is **not** the
 nominal bandwidth. Both are below.
 
-## AC coupling — measured 2026-08-14, and it is free at the operating point
+## AC coupling — measured 2026-08-17, and it is free at the operating point
 
 The photodetector's 0–10 V unipolar output has to be AC coupled to reach the
 ±1 V range. Two things were unverified: where the coupling rolls off, and whether
@@ -114,7 +114,7 @@ unaffected.
 
 ---
 
-## Measured noise floor and the on-board spur family — 2026-08-12 (H3.3)
+## Measured noise floor and the on-board spur family — 2026-08-13 (H3.3)
 
 Outputs off, loopback cables fitted, DC coupled, decimation 2.
 

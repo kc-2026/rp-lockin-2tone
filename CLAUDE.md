@@ -83,11 +83,18 @@ Loopback phase only, for now. Within that:
 
 - **Never exceed the Red Pitaya's own specifications.** Output range is
   software-selectable; do not command amplitudes outside it.
-- **As of 2026-08-26 you cannot reach the board at all** — the Ethernet link has
-  been dead since 25 August and the board is not at fault. Anything needing
-  hardware is blocked until that is fixed; see Q28 and the HANDOFF block.
-- **As of 2026-08-14 the laser, its trigger BNC and the laser light ARE
-  connected**, but the DUT, amplifiers, AOMs and photodetector are **not**. If
+- **As of 2026-08-28 the board and the laser BOTH answer.** The board is on a
+  new control PC at 1 Gbps with SCPI and key-based SSH working; the laser
+  answers over LAN. Q28 and Q27 are both closed — see the HANDOFF block.
+- **The laser's USB is a HARDWARE FAULT inside the instrument. Use LAN**
+  (`10.101.0.197:5000`, bare CR, one held connection). Windows shows
+  `CM_PROB_FAILED_INSTALL` on the USB node; ignore it, it is a red herring that
+  has already cost this project real time. Full evidence in `TSL775_HANDOFF.md`.
+- **The laser's LAN interface drops out periodically** — it happened twice on
+  2026-08-28. Recovery is to reapply the LAN settings on the front panel. That
+  is Kevin's, not yours.
+- **As of 2026-08-28 the laser, its trigger BNC (on IN2) and the photodetector
+  on IN1 ARE connected**, but the DUT, amplifiers and AOMs are **not**. If
   you believe a test needs those, stop and write the request into
   `SESSION_LOG.md` — do not improvise a way around it.
 - **Reads are always safe; writes to the laser are not.** `*IDN?` and the
@@ -120,7 +127,7 @@ This distinction matters more than usual here.
 | `hardware.py` — `acquire_deep_2ch` | **The SCPI read is broken.** Arming is fine; the read returns garbage. Use `acquire_deep_fast`. |
 | `scripts/rp_fastread.py` | **Runs ON THE BOARD**, not the control PC. The one deliberate exception to "everything runs on the PC". |
 | `wavelength.py` | **Offline-tested, never run against a real laser.** Maps a trace onto wavelength, measures the laser/board clock ratio, and guards the off-by-one trigger. Contains NO serial code. |
-| `santec.py` | **Written from the TSL-770/775 manuals. NEVER RUN AGAINST A LASER.** Bare-CR delimiter and little-endian payloads — both the opposite of `hardware.py`. Every setter reads back. |
+| `santec.py` | **Written from the TSL-770/775 manuals. STILL NEVER RUN AGAINST A LASER** — the working laser code on 2026-08-28 was `tsl775.py`, not this. Has both serial and LAN transports; **LAN is the only path that works.** Bare-CR delimiter and little-endian payloads — both the opposite of `hardware.py`. Every setter reads back. |
 | `output.py` | CSV deliverable plus the raw `.npz`. Trusted, offline. |
 | `pipeline.py` | **THE DELIVERABLE PATH**, added 2026-08-25. `reduce_sweep` joins demodulate → edges → log → wavelength → CSV and is checked against emulator truth. `SweepSeries`/`write_series` handle the 11-step set. `measure_sweep` is the hardware wrapper and **has never run against a board.** |
 | `scripts/bench_gui.py` | Tkinter bench GUI (Q14). Drives the implemented features by hand, including a Simulate path that needs no hardware. Outputs off on close; laser writes gated. |
@@ -288,22 +295,26 @@ the agent's** (asked 2026-08-14).
 | H7.3 mid-capture disconnect | **done — all three stages fail cleanly and leave the board healthy** |
 | H7.4 outputs off after a crash | **failed, then fixed — `close()` now disarms both outputs** |
 
-**Two blockers, both hardware access, neither software.**
+**Both former blockers are CLOSED as of 2026-08-28.**
 
-**1. The Ethernet link to the board has been dead since 2026-08-25.** Not
-flaky — it has not linked at any speed since, including with a new cable. The
-board is healthy (its LEDs confirm it boots), which also clears the SD-card and
-device-tree worries. The control PC's port is the leading suspect. See Q28.
+**1. The board is reachable** from the new control PC — 1 Gbps, ping 1 ms, SCPI
+on port 5000 and key-based SSH both working. Q28's root cause was never found;
+the evidence pointed at the old PC's port and replacing the machine removed it.
 
-**2. The laser has never answered a byte**, and on 2026-08-26 its virtual COM
-port driver was found reporting `CM_PROB_FAILED_INSTALL` on the control PC —
-the most concrete lead this blocker has had. See Q27.
+**2. The laser answers over LAN.** Its USB is a hardware fault inside the
+instrument, established exhaustively — see Q27 and `TSL775_HANDOFF.md`. The
+trigger train has now been observed electrically on IN2: 5001 pulses against
+5001 logged points, 24.997 µs wide, 199.997 µs apart, none lost at decimation 8.
 
 The lasers are a **TSL-770 and a TSL-775** (Kevin, 2026-08-14).
 
-`santec.py` **is** now written, entirely from the manuals — bare-CR delimiter,
-little-endian payloads, every setter reading back. **It has still never spoken
-to a laser.** One command string in it is inferred rather than quoted
+`santec.py` **is** written, entirely from the manuals — bare-CR delimiter,
+little-endian payloads, every setter reading back. **It has a LAN transport
+(`SantecTSL.over_lan`) as well as a serial one, and LAN is the working path.**
+The module itself has still never been exercised against the instrument — the
+2026-08-28 work drove the laser through `TSL775_HANDOFF.md`'s `tsl775.py`
+instead — so treat its command strings as unproven even though the protocol
+they speak is now known to be right. One command string in it is inferred rather than quoted
 (`set_wavelength_m`, whose SET form is not in the manuals' tables); that is safe
 only because it verifies itself by read-back, and the module says so. **Do not
 extend that pattern to a command whose effect cannot be read back** — on this

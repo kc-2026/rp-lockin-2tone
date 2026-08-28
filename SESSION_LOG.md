@@ -17,18 +17,16 @@ Template:
 
 ---
 
-## HANDOFF / STATUS — updated 2026-08-26, read this first
+## HANDOFF / STATUS — updated 2026-08-28, read this first
 
-**Phase 0 and Phase 1 are COMPLETE. The end-to-end pipeline now exists and is
-checked against known truth.** 233 offline tests pass. Phase 2 has not started
-and is still gated on a planning session with Kevin.
+**Both blockers from the 2026-08-26 handoff are GONE.** The board answers, the
+laser answers, and the whole environment has been rebuilt on a new control PC.
+Phase 0 and Phase 1 remain complete; the end-to-end pipeline exists and is
+checked against known truth. Phase 2 is still gated on a planning session.
 
-**Two blockers, and neither is software:**
-
-1. **The Ethernet link to the board is dead.** Not flaky — dead since
-   2026-08-25. The board is healthy.
-2. **The Santec laser has never answered a byte** — but there is now a concrete
-   lead that was never checked. See below.
+**The live task is the first real two-instrument measurement.** What stands in
+the way is no longer access — it is two wiring/units issues, both found on
+2026-08-28 and both written up below.
 
 ### Where to look
 
@@ -42,169 +40,217 @@ and is still gated on a planning session with Kevin.
 | Phase 2: risks U1–U12, steps P1–P6 | `docs/08-phase2-hardware.md` |
 | Anything undecided | `docs/10-open-questions.md` |
 | Agent ground rules and traps | `CLAUDE.md` |
+| **The TSL-775 laser, in full** | **`TSL775_HANDOFF.md` — see "BLOCKER 2" below** |
 
 ---
 
-### THE EXPERIMENT IS TWO LASERS. This was only established on 2026-08-25.
+### THE EXPERIMENT IS TWO LASERS
 
-Every document written before that date describes a single sweeping laser. That
-was wrong, and it is corrected everywhere now, but assume any older prose you
-find elsewhere still carries it.
+- A **fine sweeper** (TSL-775): ~1 s, 5001 points, carries the trigger BNC into
+  IN2, and supplies the wavelength axis from its own log.
+- A **stepper** (TSL-770): 11 discrete wavelengths, one per sweep. No trigger,
+  no log — set it, let it settle, read `:WAVelength?`.
 
-- A **fine sweeper**: ~1 s, 5000 points, carries the trigger BNC into IN2, and
-  supplies the wavelength axis from its own log.
-- A **stepper**: 11 discrete wavelengths, one per sweep. No trigger, no log —
-  set it, let it settle, read `:WAVelength?`.
+The deliverable is an **11 × 5000 map**. `SweepSeries` / `write_series` in
+`pipeline.py` handle the set.
 
-The deliverable is an **11 × 5000 map** of intermodulation response against both
-wavelengths. `SweepSeries` / `write_series` in `pipeline.py` handle the set.
+**Naming collision.** The docs' **f1/f2** are the AOM *modulation* frequencies
+(5.004883 and 5.996704 MHz). Kevin's **freq1/freq2** are the *lasers*. Nine
+orders of magnitude apart, same names.
 
-**Naming collision, and it will bite someone.** The docs' **f1/f2** are the AOM
-*modulation* frequencies (5.004883 and 5.996704 MHz). Kevin's **freq1/freq2**
-are the *lasers*. Nine orders of magnitude apart, same names.
-
-**Serial control of the stepping laser is PARKED** at Kevin's request
-(2026-08-25). `SantecTSL.set_wavelength_m()` is written and tested but nothing
-calls it.
+**Serial control of the stepping laser is PARKED** at Kevin's request.
 
 ---
 
-### BLOCKER 1: the Ethernet link is dead, and the board is not at fault
+### THE CONTROL PC IS NEW, as of 2026-08-27/28
 
-Established 2026-08-26 from the control PC's own event log:
-
-- Through 14 Aug the link established repeatedly at **1 Gbps**.
-- On 25 Aug at 14:12 it linked at 1 Gbps, then immediately at **100 Mbps**
-  twice — falling back means pairs were dropping out, since gigabit needs four
-  and 100 Mbps needs two.
-- **After 14:20 on 25 Aug it has never linked again, at any speed**, including
-  after a new cable was fitted.
-- Separately, the NIC logged **107 resets in one day** (25 Aug) against a
-  background of 1–6, in a loop every 4–10 seconds.
-
-**The board is healthy** — Kevin confirmed its LEDs are on and blinking, so it
-boots and runs. That also **clears the SD-card and device-tree worries**: a
-board that boots has neither problem. Do not chase them.
-
-**The leading suspect is the control PC's Ethernet port.**
-`Get-NetAdapterPowerManagement` on it returns *"a device attached to the system
-is not functioning"*. The decisive test is a cross-check against a third device
-(a router or switch): whichever end will not link to known-good hardware is the
-failed one.
-
-**Recommendation, and it also fixes a standing annoyance:** put the board on a
-switch or router rather than a direct cable. Direct link-local was always the
-weaker arrangement, and the address changed on every reconnect
-(`04-hardware-reference.md:56`).
-
-### BLOCKER 2: the laser — and a lead nobody had checked
-
-The old handoff said the host side was "eliminated" because the device
-enumerated cleanly over both VCP and D2XX. **On 2026-08-26 that turned out not
-to be true of the VCP half.** On the control PC:
-
-```
-FriendlyName           : USB Serial Port
-InstanceId             : FTDIBUS\VID_2428+PID_0116+2601S967A\0000
-ConfigManagerErrorCode : CM_PROB_FAILED_INSTALL
-Present                : True
-```
-
-`VID_2428 PID_0116` serial `2601S967` is the TSL-775 exactly. **Its virtual COM
-port driver failed to install**, and no COM ports were present on the machine at
-all. Whether that dates from August or happened since is unknown.
-
-**This is the most concrete lead the laser blocker has ever had, and the cheapest
-test of it is a clean driver install on different hardware.**
-
-Still eliminated, do not retry: cable, baud rate (6 tried), terminator
-(CR/LF/CRLF), flow control, and the D2XX path. Still untried and cheap: **line
-settings other than 8N1** (7E1, 8E1), a power cycle to clear a stuck REMOTE
-state, **Santec's own software**, and LAN.
-
-**Command set: SCPI.** Not cosmetic — SCPI answers `:WAVelength?` in metres and
-Legacy in nanometres, so `wavelength_m()` checks and raises rather than being
-wrong by 10⁹.
-
----
-
-### What was built on 2026-08-25/26
-
-**`src/rp_lockin/pipeline.py` — THE DELIVERABLE PATH.** `reduce_sweep()` joins
-demodulate → trigger edges → laser log → wavelength → CSV. Verified against
-emulator truth: a resonance planted at a known wavelength comes back at that
-wavelength. `measure_sweep()` is the hardware wrapper and **has never run against
-a board**. `SweepSeries` / `write_series` handle the 11-step set as one CSV per
-sweep plus an index.
-
-**The time step comes from the trigger train's SPAN over (N−1) logged points**,
-measured from the record rather than assumed from the configured sweep time.
-Kevin's scheme, with the span measured. **Watch the (N−1)** — dividing by N is a
-1-in-N error that equals exactly one step of drift by the far end.
-
-**`scripts/bench_gui.py`** — Tkinter bench GUI (Q14 answered). Board, outputs,
-capture, demodulation, trace view, CSV, laser. Has a **Simulate** path that runs
-the whole chain to a wavelength axis with nothing connected. Outputs off on
-close; laser writes behind a gate that starts off.
-
-**`scripts/p2_trigger_check.py` … `p6_robustness.py`** plus `scripts/_bench.py`.
-Nothing drives an output without `--i-am-present` AND a typed confirmation.
-**P5.2 refuses to run before P5.1, and refuses if P5.1 was not clean** — an
-amplifier product sits at exactly the frequency P5.2 looks at.
-
-### Five things found by joining it all up, all silent-failure kind
-
-1. **`find_trigger_edges` returns BOTH polarities, and a real trigger is a 25 µs
-   PULSE.** Every logged point makes two edges, so a step derived from "both" is
-   near half the truth and compresses the wavelength axis 2×, cleanly. Pass
-   `polarity="rising"`. **This would have been live on the first real sweep.**
-2. **The emulator only made SQUARE WAVES**, which hid trap 1 completely. Fixed:
-   `make_trigger_pulses`, with `n_pulses` — a train running past the end of the
-   sweep inflates the measured step.
-3. **`check_alignment`'s span test is VACUOUS under the pipeline's default
-   step** and reads as though it is not. The step comes from the span, so the
-   two are the same number: a capture missing its first two pulses still reports
-   0.00% span error. Only the COUNT check catches it. `describe()` now says so.
-4. **`santec.py` could not resynchronise.** A read timing out mid-reply left the
-   remainder buffered, so every later query returned the tail of the previous
-   one. `hardware.py` records this exact failure against the board. Added
-   `resync()`.
-5. **The front end was not per channel**, so IN2 could not be on HV while IN1
-   was on LV — which made **P2 impossible to run as specified**. A 3.3 V trigger
-   on the ±1 V range is a flat clipped line that reads as "the laser is not
-   triggering". Fixed: `setup_channel()`.
-
-### Corrections to things previously recorded as fact
-
-- **Q26 IS DEAD.** It asked whether the laser logs one point per trigger pulse.
-  It mattered only while the step came from the trigger INTERVAL; the span/(N−1)
-  scheme never counts pulses. **Q24 still matters** — the trigger must be
-  periodic in TIME, not wavelength.
-- **The recorded cause of the slow deep-capture transfer is WRONG.** H6.2
-  attributed 6.7–11.2 s for 125 MB to "~125 round trips at ~50 ms". There are no
-  such round trips: the client issues at most FOUR GETs per capture and the
-  helper streams the reply over one connection. **The real cause is still
-  unknown.** Per-GET timing was added to the helper to settle it.
-- **`describe_capture_plan()` recommended decimation 2 plus the rejected
-  device-tree move** for eleven days, because `recommend()` bounded by
-  `MAX_DMA_MB` (the hypothetical enlarged region) instead of the 128 MiB that
-  exists. Fixed; `DMA_REGION_MB` added. It also quoted the SCPI transfer rate for
-  a path that does not use SCPI — `FAST_READ_MB_PER_S` now does.
-
----
-
-### Ready to run the moment the link is back
+The old machine is gone, and with it its venv, its clone, and its SSH key. The
+rebuild is recorded in the 2026-08-28 entry. What a fresh machine needs:
 
 ```bash
-scp scripts/rp_fastread.py root@rp-fffe42.local:/dev/shm/     # board runs the OLD one
-python scripts/p2_trigger_check.py --serial COM29             # no RF, no optics
-python scripts/bench_gui.py                                   # needs nothing
+winget install --id Python.Python.3.13 --scope user
+git clone https://github.com/kc-2026/rp-lockin-2tone.git C:\dev\rp-lockin-2tone
+cd C:\dev\rp-lockin-2tone
+python -m venv .venv && .venv\Scripts\python -m pip install -e ".[dev]"
 ```
 
-**The board still runs the OLD helper.** None of the 2026-08-25 transfer work —
-zero-copy sends, TCP_NODELAY, per-GET timing — takes effect until it is
-re-copied. The first capture afterwards prints the line that settles where the
-7–11 s actually goes.
+**The repo URL was recorded nowhere in the repo** and had to be asked for during
+a rebuild — exactly when it is needed. Keep it in `README.md`.
+
+**Do not put the project in a OneDrive folder.** It lives at
+`C:\dev\rp-lockin-2tone`. OneDrive scanning a `.venv` is slow, and the previous
+machine's nested-repo incident started that way.
+
+**Verified on the new stack 2026-08-28:** Python 3.13.15, numpy 2.5.2,
+scipy 1.18.1, pytest 9.1.1 — **232 passed, 1 skipped, ~4 min**. Nothing in the
+suite needed changing for a stack several versions newer than it was written on.
+
+**`core.autocrlf=true`** (the Git for Windows default) gives
+`scripts/rp_fastread.py` a CRLF shebang. Harmless as documented, because the
+helper is launched as `python3 <file>`; but `./rp_fastread.py` would fail with
+`bad interpreter: python3^M`. A `.gitattributes` would settle it permanently.
+
+---
+
+### BLOCKER 1 — DEAD. The board is reachable again.
+
+The Ethernet link that had not come up since 2026-08-25 works on the new PC:
+1 Gbps, board at `169.254.56.245` via `rp-fffe42.local`, ping 1 ms. **Q28's
+cause was never identified**, and the evidence pointed at the old PC's port;
+replacing the machine removed it either way. If it recurs, put the board on a
+switch rather than a direct cable — that also ends the link-local churn.
+
+SCPI (port 5000) and key-based SSH both work. **A new SSH key was generated on
+the new PC** and installed by Kevin; the old one is gone.
+
+**The fast-read helper is deployed and is now the NEW build** — the one with
+zero-copy sends, TCP_NODELAY and per-GET timing, which had never actually been
+on the board. It still lives in `/dev/shm`, so **it disappears on every reboot**.
+
+### BLOCKER 2 — DEAD. The laser works, over LAN.
+
+**The laser has never answered over USB because USB is a hardware fault inside
+the instrument.** Not a driver problem, and not fixable on the host. Established
+2026-08-21 in a separate effort whose notes live in `TSL775_HANDOFF.md`, and
+confirmed on the new PC 2026-08-28.
+
+The evidence, so nobody re-debugs it: the FT232H enumerates correctly and the
+PC→chip half is provably healthy, but the instrument never replies — across 9
+baud rates × 3 terminators, D2XX as UART, D2XX async and synchronous 245 FIFO,
+santec's own init sequence replicated byte-for-byte, a full power cycle, and a
+3 s passive listen. The **identical commands with the identical `\r` delimiter
+work perfectly over LAN**. The fault is between the FT232H and the internal
+controller. It is a warranty item for santec.
+
+**Windows will show `CM_PROB_FAILED_INSTALL` on the USB node. Ignore it.** This
+unit's EEPROM sets `IsVCP=0`, so a COM port is the wrong end state anyway. The
+2026-08-26 handoff called that driver state "the most concrete lead this blocker
+has ever had". It was a red herring, and chasing it cost real time.
+
+**Keep the USB cable plugged in** — the FT232H is self-powered from the
+instrument, so its presence in Device Manager is the fastest proof the laser has
+power, which separates "network problem" from "someone turned it off".
+
+**The working path:** raw TCP to `10.101.0.197:5000`, ASCII, bare CR. **Open one
+connection and hold it** — roughly one reconnect in four dies with
+`WinError 10054`, while a single held session went 20/20.
+
+**The LAN interface drops out entirely, and this recurs.** Symptom: no ping, no
+TCP. Recovery is to reapply the LAN settings on the front panel (Other →
+Communication → LAN). It happened again on 2026-08-28 and the front panel fixed
+it in one go. Run the §3.3 triage in `TSL775_HANDOFF.md` each time — but note
+its "no ARP entry" indicator is **vacuous in this topology**, because the laser
+is off-subnet and routed, so it would never have an ARP entry either way.
+
+`santec.py` **already has a LAN transport** (`SantecTSL.over_lan`), and
+`p2_trigger_check.py` already takes `--lan`. Anything implying the driver is
+serial-only is wrong.
+
+---
+
+### WHAT IS MEASURED AND WHAT IS NOT, as of 2026-08-28
+
+**The laser sweep is verified end to end, three times, reproducibly:**
+
+| Check | Result |
+|---|---|
+| Point count | 5001 |
+| Span | 1499.9999 → 1600.0002 nm, endpoints within 0.10 pm |
+| Uniform step | worst deviation 0.40 pm on a 0.02 nm step |
+| Linear in time | max 0.255 pm, rms 0.104 pm |
+| Fitted rate | +100.0000 nm/s against 100.0 commanded |
+| Trigger interval | **200.0 µs → 5000 Hz** |
+
+**The electrical trigger has now been observed** — the item
+`TSL775_HANDOFF.md` §7.3 called its top priority — and it holds up:
+
+| P2 check | Result |
+|---|---|
+| P2.2 capture triggered | PASS — 33554432 samples at 31.2500 MS/s |
+| P2.1 pulses in the record | **5001 — exactly the laser's log length** |
+| P2.1 pulse width | **24.997 µs, sd 0.001** against the 25 µs spec |
+| P2.1 spacing | mean 199.997 µs |
+| P2.5 pulses lost at decimation 8 | **none** |
+| P2.4 measured step | 199.9861 µs |
+
+**Q24 is ANSWERED.** `:TRIG:OUTP:SETT` = 0 on the TSL-775 means *periodic in
+wavelength*. The readback alone cannot settle it — a 0 is a 0 under either
+manual — but the sweep runs at 0 and produces sub-picometre-linear points at
+exactly 0.02 nm spacing, which is only consistent with that encoding. **The
+TSL-775 manual is right and the TSL-770's table is the erroneous one.** It
+matters less than feared: at constant sweep speed, uniform-in-wavelength is also
+uniform-in-time, which is what `reduce_sweep`'s span/(N−1) step needs.
+
+**Q26 stays dead, and P2 corroborated it anyway** — 5001 recorded pulses against
+5001 logged points is 1:1.
+
+---
+
+### WHAT IS ACTUALLY BROKEN — one real defect, one artefact
+
+**1. `p2_trigger_check.py` compares COUNTS against VOLTS.** It is the only P2
+failure, and it is the script's fault, not the hardware's:
+
+```
+[ FAIL ] P2.1 high level: 302.000 V, expected ~3.3 V
+```
+
+`acquire_deep_fast` returns **raw ADC counts** — its own docstring says
+"amplitude 361 counts". `pulse_shape()` treats them as volts. IN2 is on HV
+(±20 V), and at ~1817 counts/V on LV that is ~90.9 counts/V on HV, so
+**302 counts = 3.32 V and idle 6 counts = 0.07 V**. The trigger is exactly on
+spec. Two related defects in the same function: the **10–90 % rise time comes
+out NEGATIVE** (−199698 ns) when the edge is faster than one sample, and the
+failure text ("If it is ~1 V, IN2 is still on LV and clipping") actively
+misdirects, because the number is not in volts at all.
+
+**Fix the units before trusting any other number this script prints.**
+
+**2. A probe of IN1 read full-scale, and it was an ARTEFACT. Read this before
+re-measuring anything with the standard buffer.**
+
+A first pass reported `IN1: peak-to-peak 2056 counts, min -9, max 2047,
+mean 840.6` and was written up as the detector clipping the +/-1 V range. **It is
+not reproducible.** Re-measured properly -- 40 captures, both couplings:
+
+```
+DC:  IN1 median p-p 1.0  max 9.0  mean -7.4 counts     IN2 p-p 1.0  mean 7.0
+AC:  IN1 median p-p 2.0  max 2.0                       IN2 p-p 1.0
+     captures with p-p > 100 counts: 0 of 40
+```
+
+**IN1 sits at roughly 0 V with about 1 count of noise.** There is no 840-count
+offset and no clipping.
+
+**The likely cause of the bad reading, and the lesson:** those probes ran
+immediately after a deep AXI capture, and `acquire()` reads the standard buffer.
+`hardware.py` already warns that reading the ring at the wrong offset "looks
+plausible" while being stale. A single full-range capture among a hundred, with
+the maximum taken across all of them, is exactly what stale DMA content looks
+like. **Take a median across captures, never a maximum, and do not trust the
+standard buffer straight after a deep capture.**
+
+**What this does NOT establish.** IN1 reading ~0 V with the shutter CLOSED is
+equally consistent with a healthy detector in the dark and with nothing
+connected at all. **The detector has never been shown to respond to light.**
+That needs the shutter open, which is a decision for Kevin, and the power
+question below comes first.
+
+The standing advice to **AC-couple IN1** still holds on its own merits -- the
+PDA05CF2 is 0-10 V unipolar into Hi-Z and Q25 measured AC coupling as free -- but
+it is not currently fixing an observed fault.
+
+### OPEN, AND WORTH A LOOK
+
+**P2.4's line-fit residual is 43.2 µs rms**, and the pulse spacing has a
+**minimum of 178.125 µs against a 199.997 µs mean**. Local spacing is clean, so a
+43 µs residual on a line through 5001 edges suggests a step or discontinuity in
+the train rather than jitter. **This is the measurement the wavelength axis rests
+on (U11, Q19), so it needs explaining before the axis is trusted.** Not yet
+investigated. Note it may itself be an artefact of the same units/edge-detection
+defects above — check the script before concluding anything about the laser.
+
+---
 
 ### Judgement calls not to relitigate
 
@@ -215,24 +261,27 @@ re-copied. The first capture afterwards prints the line that settles where the
 - **No averaging** (Q13) and **CSV output** (Q15), both Kevin's decisions.
 - **Do not "fix" the RF drive level.** Kevin's CW tuning is correct because the
   drive is depth-1 AM and the AOM is switched fully on and off.
+- **Do not chase the laser's USB.** It is broken inside the instrument.
 
 ### Habits this project learned the hard way
 
-- **When a claim is corrected, sweep the whole repo for it.** The "wavelength
-  against time" claim was fixed three times in three files because it was
-  patched where noticed rather than searched for. The two-laser correction on
-  2026-08-25 was swept properly; check that it stayed swept.
+- **When a claim is corrected, sweep the whole repo for it.**
 - **A manual describing something differently from how a person described it is
   not the same as the person being wrong.** Kevin's Q20 answer was recorded as
   wrong in four documents, and was not.
-- **Verify before theorising about hardware.** Two diagnoses this project
-  recorded as fact did not survive being checked against the code and the event
-  log.
+- **Verify before theorising about hardware.** Several diagnoses this project
+  recorded as fact did not survive being checked. The laser's "driver problem"
+  is the most expensive example.
+- **Check whether the work has already been done elsewhere.** The laser was
+  solved on 2026-08-21 in a folder on the Desktop, while two later sessions went
+  on describing it as an unsolved blocker and recommending a driver reinstall.
 
 ### Still wanted from Kevin
 
 - An **optical damage threshold** for the PDA05CF2 — the manual gives saturation
-  (~0.96 mW) but no damage figure
+  (~0.96 mW) but no damage figure. **The laser's own setpoint was found at
+  12 dBm ≈ 15.8 mW on 2026-08-28, roughly 16× that saturation level**; it was set
+  back to the validated 4.00 dBm. This number now matters.
 - Whether there is a **second ZHL-1-2W+**; the design needs two
 - **Q17**, the Phase 2 success criteria, and the **unattended-operation
   boundary** — both deferred at his request
@@ -284,7 +333,7 @@ starting by recording the OS version.
 
 ---
 
-## 2026-08-12 — Claude (Claude Code) — first hardware contact; H1 essentially done
+## 2026-08-10 — Claude (Claude Code) — first hardware contact; H1 essentially done
 
 **Goal:** Onboard, validate the repo, get the board talking, and begin H1.
 
@@ -644,7 +693,7 @@ so it cannot silently regress.
 
 ---
 
-## 2026-08-14 — Claude (Claude Code) — P1 attempted: the laser does not answer, and the host side is eliminated
+## 2026-08-20 — Claude (Claude Code) — P1 attempted: the laser does not answer, and the host side is eliminated
 
 > **SUPERSEDED IN PART, 2026-08-26.** The conclusion below that "the host
 > side is eliminated" did NOT hold for the VCP half: the laser's virtual COM
@@ -721,7 +770,7 @@ a reply to check it against.
 
 ---
 
-## 2026-08-14 — Claude (Claude Code) — correction: Kevin's Q20 answer was right after all
+## 2026-08-18 — Claude (Claude Code) — correction: Kevin's Q20 answer was right after all
 
 An earlier entry today is titled "Q22 answered, Q20 was WRONG" and says Kevin's
 description of the laser log was mistaken. **It was not, and this corrects it.**
@@ -759,7 +808,7 @@ sentence of thought.
 
 ---
 
-## 2026-08-14 — Claude (Claude Code) — the 80 MHz belongs to the AOM, not the DUT
+## 2026-08-18 — Claude (Claude Code) — the 80 MHz belongs to the AOM, not the DUT
 
 **Kevin, 2026-08-14: the DUT does not require 80 MHz.** The spec has said it did
 since Phase 0 and it was wrong.
@@ -796,7 +845,7 @@ time a claim is corrected rather than fixing them as they surface.
 
 ---
 
-## 2026-08-14 — Claude (Claude Code) — attenuator recommendation WITHDRAWN; Kevin's tuning was right
+## 2026-08-17 — Claude (Claude Code) — attenuator recommendation WITHDRAWN; Kevin's tuning was right
 
 **Three attenuator recommendations (20 dB, 10 dB, 6 dB) and a "turn the drive
 down 4 dB" are all withdrawn. Kevin's drive level is correct and must not be
@@ -881,7 +930,7 @@ through a model.
 
 ---
 
-## 2026-08-14 — Claude (Claude Code) — attenuator revised to 10 dB; Santec driver, unbiased amplitude, CSV output
+## 2026-08-17 — Claude (Claude Code) — attenuator revised to 10 dB; Santec driver, unbiased amplitude, CSV output
 
 Kevin measured the board's real 80 MHz output and then went away, so the rest is
 offline. **147 offline tests pass, up from 107.** No hardware touched.
@@ -1021,7 +1070,7 @@ seen a laser, and the attenuator figure needs the scope impedance confirmed.
 
 ---
 
-## 2026-08-14 — Claude (Claude Code) — Q12 answered: attenuator decided at 20 dB; Phase 2 is unblocked
+## 2026-08-17 — Claude (Claude Code) — Q12 answered: attenuator decided at 20 dB; Phase 2 is unblocked
 
 Kevin supplied the ZHL-1-2W+ and 1550AOM-1 datasheets, confirmed the laser's
 interfaces, and delegated the remaining decisions. **All three Phase 2 blockers
@@ -1114,7 +1163,7 @@ No hardware touched this session. 107 offline tests pass.
 
 ---
 
-## 2026-08-14 — Claude (Claude Code) — Q25 measured: AC coupling is free, and a defect that would have hidden it
+## 2026-08-17 — Claude (Claude Code) — Q25 measured: AC coupling is free, and a defect that would have hidden it
 
 Kevin started the SCPI server; loopback only, outputs off throughout and left off.
 
@@ -2549,7 +2598,7 @@ which is why it survived first verification.
 
 ---
 
-## 2026-08-12 — Claude (Claude Code) — H3.3 done: noise floor measured, Q8 answered
+## 2026-08-13 — Claude (Claude Code) — H3.3 done: noise floor measured, Q8 answered
 
 **Goal:** H3.3 — the noise floor at the lock-in frequency, the number that
 predicts whether the real measurement can work. Loopback only; both cables
@@ -3221,3 +3270,175 @@ harmless — it is a record of creation, not a runtime lookup.
 
 **Next:** unchanged — the two hardware blockers. The layout is no longer one of
 them.
+
+---
+
+## 2026-08-28 — Claude (Claude Code) — new control PC; both blockers dead; the trigger is real
+
+**Goal:** Kevin is on an entirely new machine with nothing but the code, VSCode
+and git. Get the project running again, then reconnect the instruments.
+
+### Dates: the previous entries were wrong, and are now fixed
+
+Nine entry headers disagreed with the commits that produced the work. Corrected
+against `git log`, which is the only authoritative record:
+
+| Entry | Was | Now |
+|---|---|---|
+| first hardware contact; H1 essentially done | 08-12 | **08-10** |
+| H3.3 done: noise floor measured, Q8 answered | 08-12 | **08-13** |
+| Q25 measured: AC coupling is free | 08-14 | **08-17** |
+| Q12 answered: attenuator decided at 20 dB | 08-14 | **08-17** |
+| attenuator revised to 10 dB | 08-14 | **08-17** |
+| attenuator recommendation WITHDRAWN | 08-14 | **08-17** |
+| the 80 MHz belongs to the AOM, not the DUT | 08-14 | **08-18** |
+| correction: Kevin's Q20 answer was right after all | 08-14 | **08-18** |
+| P1 attempted: the laser does not answer | 08-14 | **08-20** |
+
+The pattern: a fortnight of work between 08-17 and 08-20 had been collapsed onto
+08-14. **This matters beyond tidiness** — "the laser has never answered since
+2026-08-14" was six days more alarming than the truth, and the attenuator
+decision looked like three reversals in one day rather than a day's iteration.
+
+**Not yet swept:** the same wrong dates appear in prose across `CLAUDE.md`,
+`docs/10-open-questions.md` and others ("Kevin, 2026-08-14" on the AOM point,
+Q12, Q25, Q27's "raised 2026-08-14"). Those need the same treatment, carefully —
+many 08-14 references are correct, so a blind replace would corrupt them.
+
+### The environment, rebuilt
+
+New PC had git, VSCode, OpenSSH and winget — and only the WindowsApps Python
+stub. Installed Python 3.13.15, cloned to `C:\dev\rp-lockin-2tone` (deliberately
+off OneDrive), venv, editable install. **232 passed, 1 skipped in 4m17s** on
+numpy 2.5.2 / scipy 1.18.1 / pytest 9.1.1 — a much newer stack than the suite was
+written against, and it needed no changes.
+
+Git identity was unset; set to match the existing history rather than guessed.
+The unzipped snapshot Kevin had was byte-identical to `main` — all 54 apparent
+differences were CRLF from `core.autocrlf`, zero real content differences.
+
+**The repo URL is recorded nowhere in the repo**, so a rebuild has to ask for it.
+
+### The laser: found already solved, five days earlier
+
+`Desktop\TSL-775 Test\` contains a complete working driver, a 27 KB handoff and
+verified sweep data, all dated **2026-08-21**. The 08-25 and 08-26 sessions never
+saw it and went on calling the laser an open blocker, recommending a driver
+reinstall that could not possibly have worked.
+
+**USB is a hardware fault inside the instrument**, exhaustively established. LAN
+works. Full detail is in the HANDOFF block above and in `TSL775_HANDOFF.md`.
+
+On the day: the laser was unreachable, and the documented triage placed it
+exactly — instrument powered (FT232H enumerating), gateway and internet fine,
+`10.101.0.1` replying, `tracert` reaching hop 1 and dying. Kevin reapplied the
+LAN settings on the front panel and it came straight back.
+
+**Its configuration had drifted off the validated one** and three of the
+differences fail silently: `:TRIG:OUTP` was 0 (no trigger train, empty log),
+`:WAV:SWE:MOD` was 3 (two-way — the return pass overwrites the log), and the
+speed/step combination gave a 10 Hz trigger where the board expects 5 kHz.
+`sweep_capture.py` sets all of them and restores the originals in a `finally`.
+
+**Power was found at 12.00 dBm ≈ 15.8 mW** against the August-validated 4.00 dBm,
+with a photodetector now connected whose saturation is ~0.96 mW and whose damage
+threshold is still unknown. Set back to 4.00 dBm before anything was enabled.
+
+**The whole verification was run with the shutter CLOSED**, which emits no light
+at all. `sweep_capture.py` only reports the shutter, never opens it. Worth
+knowing: the internal power log still reads correctly with it closed (3.983 –
+4.027 dBm), so the monitor sits before the shutter.
+
+### The trigger, observed electrically for the first time
+
+`TSL775_HANDOFF.md` §7.3 called this the top priority: everything about the
+trigger/log 1:1 correspondence rested on instrument-side self-consistency plus
+the manual, and nobody had put a digitiser on the BNC.
+
+**First attempt failed** — P2 sat at `WAIT` for 90 s through a sweep that
+emitted all 5001 pulses. A read-only probe of both inputs during a live sweep
+settled it in one shot:
+
+```
+IN1: peak-to-peak 2056.0 counts   min -9.0   max 2047.0   mean 840.6
+IN2: peak-to-peak    1.0 counts   min  6.0   max    7.0   mean   7.0
+```
+
+IN2 dead flat: the trigger was in the board's **dedicated external-trigger
+connector**, not analog **IN2**. Those are different things, and the design needs
+the train *digitised* — `find_trigger_edges` runs on the IN2 trace, and the
+external pin would start a capture while recording no train, losing both the
+measured time step and the free clock-ratio check. Kevin moved it.
+
+**Second attempt: the trigger is real and on spec.** 5001 pulses recorded against
+5001 logged points, width 24.997 µs (sd 0.001) against the 25 µs spec, spacing
+199.997 µs, no pulses lost at decimation 8. **Q24 answered** — see the HANDOFF.
+
+**Learned:** the probe that settled it took two minutes and replaced an argument
+about wiring with a number. Reach for that earlier.
+
+**Broke / still broken:**
+
+1. **`p2_trigger_check.py` compares raw ADC counts against a voltage spec** — the
+   only P2 failure, and the hardware is fine. 302 counts on HV is 3.32 V. The
+   rise-time figure comes out negative too, and the failure message misdirects.
+   Not fixed; it needs an offline test alongside the fix.
+2. **NOT broken after all: the IN1 "clipping" was an artefact.** The full-scale
+   reading above came from a stale standard-buffer capture taken right after a
+   deep AXI capture. Re-measured over 40 captures, IN1 is flat at ~1 count and
+   ~0 V on both couplings. **The IN1 numbers in the probe block above are the
+   bad reading, kept deliberately so the artefact is recognisable.** What
+   remains genuinely unknown is whether the detector responds to light at all —
+   it has only ever been observed with the shutter closed.
+3. **P2.4's line-fit residual is 43.2 µs rms** with a minimum spacing of
+   178.125 µs. Unexplained, and it may be an artefact of (1). The wavelength axis
+   rests on this measurement.
+
+### Fixed later the same day
+
+- **The counts/volts bug is FIXED**, with `ADC_COUNTS_PER_V_LV/_HV`,
+  `ADC_COUNT_MAX/_MIN` added to `constants.py` carrying Q23's caveat, so the
+  disputed absolute scale is not silently enshrined. `pulse_shape()` now
+  converts once, up front, and reports volts.
+- **A clipping check was added** to P2.1. A clipped record still yields
+  clean-looking widths and spacings, so it has to be reported separately or it
+  is invisible.
+- **The negative rise time is FIXED.** `t10` and `t90` were paired by INDEX;
+  they are independent crossing lists, so one extra crossing at either end
+  shifts every pair by a whole pulse. Now paired with `searchsorted`, as the
+  width calculation already did.
+- **Four offline tests added**, and — importantly — **each was checked against
+  the OLD code and seen to fail.** The first version of the rise-time test
+  passed against the bug, because a clean synthetic train cannot produce the
+  mismatched crossing lists; it was tightened to start the record part way up
+  an edge, which is what a real capture does. **A regression test that has
+  never failed proves nothing.** Suite is now **237 passed**.
+- **Dates swept through the docs**, but only where the commit that introduced
+  the line could be identified with `git log -S`. Note that three lines came
+  back as "Reorganise docs into a coherent set" (08-14) — that commit MOVED
+  text between files, so it dates the move, not the work; those fell back to
+  the session-log mapping. Q24, Q27 and Q28 updated in
+  `docs/10-open-questions.md`; the stale blocker claims in `CLAUDE.md` replaced.
+- `.gitattributes` pins `rp_fastread.py` to LF. **The repo URL is now in
+  `README.md`.**
+
+**Blocked, not forgotten:** the 43.2 µs residual could not be investigated
+because **the laser's LAN interface dropped out a second time** partway through
+the session, with the same signature as the first (instrument powered, both
+gateways replying, no answer on 5000). Two dropouts in one afternoon, both after
+sustained activity including the 40 KB + 20 KB binary log reads that
+`TSL775_HANDOFF.md` §3.5 already lists as a suspected contributor. **That is now
+two data points for an open question that had none.** The armed capture timed
+out cleanly and left the board healthy.
+
+**Next:**
+
+1. ~~Fix the counts/volts units in `p2_trigger_check.py`~~ — done.
+2. Show the detector responds to light at all — IN1 has only been seen in the
+   dark. Needs the shutter open, and the PDA05CF2 damage threshold first.
+3. Explain the 43 µs residual before trusting the wavelength axis. Needs the
+   laser back. `scratchpad/edge_profile.py` is written and ready to run.
+4. ~~Sweep the stale dates~~ — done for everything pinnable to a commit.
+5. ~~`.gitattributes`; repo URL into `README.md`~~ — done.
+6. **Whether the LAN dropouts correlate with the binary log reads.** Two for two
+   today. If they do, the fix may be as simple as pacing those reads.
