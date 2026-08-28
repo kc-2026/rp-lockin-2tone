@@ -102,10 +102,34 @@ class TcpTransport:
             self._sock.settimeout(self._timeout)
 
     def close(self) -> None:
+        """Close so the instrument sees a clean FIN, never an RST.
+
+        `socket.close()` with unread data still buffered makes the OS send RST
+        rather than FIN, and unread data is the normal state here -- a query
+        that timed out mid-reply leaves its tail behind, which is exactly the
+        desync `resync()` exists for. An RST is an abort, and a small embedded
+        stack is likelier to leak a connection slot on abort than on an orderly
+        close. This instrument's LAN server stops listening every so often and
+        needs a front-panel reset; a leak across connect/close cycles fits
+        that. Unproven as the cause, but free to rule out.
+        """
         try:
-            self._sock.close()
-        except OSError:
-            pass
+            try:
+                self._sock.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+            self._sock.settimeout(0.3)
+            for _ in range(64):            # bounded: never block on close
+                try:
+                    if not self._sock.recv(4096):
+                        break
+                except OSError:
+                    break
+        finally:
+            try:
+                self._sock.close()
+            except OSError:
+                pass
 
 
 class SerialTransport:

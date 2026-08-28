@@ -331,24 +331,87 @@ class LanBackend(_Backend):
         # unit: median round trip 6.7 ms with Nagle on, 4.7 ms with it off.
         self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.sock.settimeout(0.1)
+        # Journalled on close. The LAN server stops listening every so often
+        # and only a front-panel reset revives it, so each failure costs a trip
+        # to the bench. Recording what a session actually DID means the next
+        # dropout arrives with evidence instead of a shrug -- is it connection
+        # count, query count, bytes transferred, or just elapsed time?
+        import time as _t
+        self._t0 = _t.time()
+        self._n_writes = 0
+        self._n_bytes = 0
         return self
 
     def close(self):
-        if self.sock is not None:
+        """Close so the INSTRUMENT sees a clean FIN, never an RST.
+
+        This is not fussiness. `socket.close()` on a socket with unread data
+        still in the receive buffer makes the OS send RST instead of FIN, and
+        unread data is normal here -- any query that timed out mid-reply leaves
+        its tail buffered (that is the desync `resync()` exists for).
+
+        An RST is an abort: the peer never learns the connection ended
+        normally, and a small embedded stack is far more likely to leak a
+        connection slot on abort than on an orderly close. The instrument's LAN
+        server stops listening entirely every so often and needs a front-panel
+        reset (section 3.4), and a leak across many connect/close cycles fits
+        that. This does not prove the cause, but it removes the cheapest
+        candidate at no cost.
+
+        Shut down the sending half, drain whatever comes back until EOF, then
+        close.
+        """
+        if self.sock is None:
+            return
+        self._journal()
+        import socket as _s
+        try:
+            try:
+                self.sock.shutdown(_s.SHUT_WR)
+            except OSError:
+                pass
+            self.sock.settimeout(0.3)
+            for _ in range(64):                 # bounded: never block on close
+                try:
+                    if not self.sock.recv(4096):
+                        break
+                except OSError:
+                    break
+        finally:
             try:
                 self.sock.close()
             except OSError:
                 pass
             self.sock = None
 
+    def _journal(self):
+        """One line per session, appended. Never raises -- diagnostics must not
+        be able to break the measurement they are diagnosing."""
+        try:
+            import os, time
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            path = os.path.join(root, "data", "laser_sessions.log")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            dt = time.time() - getattr(self, "_t0", time.time())
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  "
+                         f"host={self.host}  held={dt:8.2f}s  "
+                         f"cmds={getattr(self, '_n_writes', 0):5d}  "
+                         f"bytes_in={getattr(self, '_n_bytes', 0):9d}\n")
+        except Exception:
+            pass
+
     def write(self, data: bytes):
+        self._n_writes += 1
         self.sock.sendall(data)
 
     def read_some(self) -> bytes:
         import socket
 
         try:
-            return self.sock.recv(4096)
+            b = self.sock.recv(4096)
+            self._n_bytes += len(b)
+            return b
         except socket.timeout:
             return b""
 

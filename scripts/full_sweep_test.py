@@ -221,7 +221,7 @@ def main():
             while time.time() - t0 < 30.0:
                 if d.query(":WAV:SWE?").strip().lstrip("+") == "0" and time.time() - t0 > 2:
                     break
-                time.sleep(0.05)
+                time.sleep(0.1)   # 10 Hz: the handoff blames high query rates
             print(f">>> sweep finished in {time.time()-t0:.2f} s")
 
             t.join(timeout=180.0)

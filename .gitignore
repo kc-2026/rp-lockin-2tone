@@ -16,6 +16,7 @@ venv/
 # the trace is re-derivable from the .npz, which is the whole reason the raw
 # capture is kept alongside it (Q15).
 data/*.csv
+data/*.log
 data/*.npz
 data/*.h5
 data/*.bin
