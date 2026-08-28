@@ -3511,3 +3511,61 @@ twice more today; front-panel reapply fixed it both times.
 3. The detector still has never seen light (Q11b), and the PDA05CF2 damage
    threshold is still unknown.
 
+---
+
+## 2026-08-28 (later still) — Claude (Claude Code) — Q29 fixed: the axis uses the measured edges
+
+**Goal:** stop `reduce_sweep` assuming a uniform time step.
+
+**Did:** the wavelength axis is now built from the trigger edges the capture
+already contains. Re-reducing the SAME real capture (`data/sweep_001.npz`) both
+ways:
+
+```
+measured edge times   deviation from uniform  50.55 us
+uniform step          deviation                0.00 us
+difference between the two axes: max 13.68 pm = 0.684 logged steps, rms 2.81 pm
+                                 (one logged step is 20 pm)
+```
+
+That difference is the error the uniform grid was carrying, and removing it
+cost nothing — the edges were always in the record.
+
+**Lost pulses are handled by ORDINAL, not array position.** This mattered more
+than expected: the obvious implementation (fall back to a uniform grid whenever
+a pulse is missing) *broke the existing Q21 test*, and rightly — it throws away
+every other measured edge because one is absent, which lets Q29's error back in
+through the door Q21 guards. Indexing rows by array position instead would BE
+the Q21 counting bug. A gap now costs one interpolated row.
+
+**Learned, about testing rather than about the instrument:**
+
+- **A peak-position test could not work here.** One output sample is 0.59 of a
+  logged step in the synthetic harness, so the peak is quantised more coarsely
+  than the whole effect. Measured both argmax and a centroid before committing
+  to an assertion — neither separated the two axes and the **centroid actually
+  favoured the wrong one**. The tests assert on the axis itself instead.
+- **An over-harsh synthetic is not conservative.** The first rippling train used
+  ±25% gap variation against the instrument's ±11%; at that level two merged
+  gaps reach 2.6× the median, round to THREE missing rows, and drop into the
+  uniform fallback for a reason the hardware never produces. The synthetic now
+  matches the measurement.
+- The first ripple peak sits inside the 22.6 ms of filter settling, so a
+  resonance planted there is trimmed before the mapping sees it — CLAUDE.md
+  trap 3, met from the inside.
+
+All three new tests were checked to fail with `use_edge_times=False`. **240
+tests pass.**
+
+**Broke / still broken:** the laser's LAN dropped out a **third** time, which is
+why the fix is validated against the stored capture rather than a fresh sweep.
+Three dropouts in one afternoon, all after sustained activity.
+
+**Next:**
+
+1. Re-run `full_sweep_test.py` once the laser is back, to confirm on live data.
+2. The LAN dropouts now have three data points. If they track the binary log
+   reads, pacing those may be the whole fix.
+3. Q11b — the detector has still never seen light — and the PDA05CF2 damage
+   threshold.
+
