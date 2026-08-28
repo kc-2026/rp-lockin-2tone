@@ -17,11 +17,13 @@ plumbing. A signal would hide plumbing errors, not reveal them.
 
 SAFETY. The script enables emission, because a sweep cannot run without it.
 
-  * It REFUSES if the shutter is open, unless --shutter-open-ok. The
-    photodetector is connected, it saturates around 0.96 mW, and its DAMAGE
-    threshold is unknown (still outstanding from Kevin). With the shutter shut
-    the trigger train and the wavelength log both work perfectly -- verified
-    2026-08-28 -- so the entire electrical path can be tested with no light.
+  * It REFUSES to emit above --max-dbm, default 0 dBm = 1 mW. The detector is
+    connected and saturates near 0.96 mW, so staying under a milliwatt keeps
+    it below saturation and therefore well below damage (Kevin, 2026-08-28).
+    That setpoint is measured at the LASER, and fibre loss only widens the
+    margin. The trigger train and the wavelength log both work with the
+    shutter CLOSED (verified 2026-08-28), so the whole electrical path can
+    still be exercised with no light at all.
   * It restores every laser setting it changed and turns emission off in a
     finally block, as sweep_capture.py does.
   * It drives NO board output. There is no RF anywhere in this script.
@@ -80,10 +82,9 @@ def parse():
     ap.add_argument("--laser-ip", default="10.101.0.197")
     ap.add_argument("--out", default="data/sweep",
                     help="output basename; data/ is gitignored for captures")
-    ap.add_argument("--shutter-open-ok", action="store_true",
-                    help="proceed even with the shutter OPEN. The detector's "
-                         "damage threshold is unknown; do not pass this "
-                         "casually.")
+    ap.add_argument("--max-dbm", type=float, default=0.0,
+                    help="refuse to emit above this setpoint. Default 0 dBm "
+                         "= 1 mW; the PDA05CF2 saturates near 0.96 mW.")
     ap.add_argument("--arm-delay", type=float, default=3.0,
                     help="seconds to let the capture arm before the sweep starts")
     return ap.parse_args()
@@ -94,14 +95,21 @@ def configure_laser(d, args):
     print(f"laser: {d.query('*IDN?')}")
 
     shutter = d.query(":POW:SHUT?").strip().lstrip("+")
-    print(f"shutter: {shutter} (1 = closed)")
-    if shutter == "0" and not args.shutter_open_ok:
+    level = float(d.query(":POWer:LEVel?"))
+    print(f"shutter: {shutter} (1 = closed)   setpoint {level:.2f} dBm "
+          f"({10 ** (level / 10):.3f} mW)")
+
+    # The gate is POWER, not the shutter (Kevin, 2026-08-28). The detector
+    # saturates near 0.96 mW, so staying under a milliwatt is below
+    # saturation and therefore comfortably below damage. Fibre and connector
+    # loss only widen the margin: this is the setpoint at the LASER, not the
+    # power arriving at the detector.
+    if level > args.max_dbm:
         raise SystemExit(
-            "REFUSING: the shutter is OPEN and the photodetector is connected.\n"
-            "It saturates around 0.96 mW and its damage threshold is unknown.\n"
-            "The trigger train and the wavelength log both work with the "
-            "shutter CLOSED, so close it and run again -- or pass "
-            "--shutter-open-ok if you have decided the power is safe.")
+            f"REFUSING: setpoint {level:.2f} dBm = {10 ** (level / 10):.3f} "
+            f"mW, above the {args.max_dbm:.2f} dBm limit. The detector is "
+            f"connected and saturates near 0.96 mW. Lower the setpoint, or "
+            f"raise --max-dbm deliberately.")
 
     before = {k: d.query(q) for k, q in (
         ("start", ":WAV:SWE:STAR?"), ("stop", ":WAV:SWE:STOP?"),

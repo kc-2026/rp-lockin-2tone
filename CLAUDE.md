@@ -102,7 +102,10 @@ Loopback phase only, for now. Within that:
   laser setting without asking — the light goes somewhere.
 - **Leave outputs off when you finish.** `tests/hardware/conftest.py` does this
   automatically; preserve that behaviour.
-- Going beyond loopback requires a dedicated planning session with the human.
+- **The Phase 2 planning gate is DISCHARGED as of 2026-08-28** -- its answers
+  are in `docs/09-phase2-plan.md`. **P1 and P2 are done; P3-P6 are not, and no
+  RF has ever left this board.** Follow the P-series order and its gates.
+- One item remains open: **nothing runs unattended** until Kevin says otherwise.
   **Phase 1 is complete; what Phase 2 needs is in `docs/08-phase2-hardware.md`.**
   Do not start it unilaterally.
 - **Do not "fix" the RF drive level.** Kevin tuned it by maximising the
