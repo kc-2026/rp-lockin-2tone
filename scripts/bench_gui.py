@@ -1512,12 +1512,18 @@ class BenchGui:
         self.sw_blocked = tk.BooleanVar(value=False)
         ttk.Checkbutton(c, text="CONTROL RUN -- beam blocked",
                         variable=self.sw_blocked).pack(side="left", padx=(0, 12))
+        ttk.Button(c, text="Modulation ON",
+                   command=self.sweep_mod_on).pack(side="left", padx=(0, 4))
+        ttk.Button(c, text="Modulation OFF",
+                   command=self.sweep_mod_off).pack(side="left", padx=(0, 12))
         self.sw_run = ttk.Button(c, text="RUN SWEEP", command=self.sweep_run)
         self.sw_run.pack(side="left")
-        ttk.Button(c, text="Modulation OFF",
-                   command=self.outputs_off).pack(side="left", padx=6)
         ttk.Button(c, text="Save CSV",
                    command=self.sweep_save).pack(side="left", padx=6)
+
+        self.sw_mod_state = tk.StringVar(value="OUT1: off")
+        ttk.Label(c, textvariable=self.sw_mod_state,
+                  font=("TkDefaultFont", 9, "bold")).pack(side="left", padx=12)
 
         self.sw_status = tk.StringVar(value="idle")
         ttk.Label(f, textvariable=self.sw_status).grid(
@@ -1529,6 +1535,76 @@ class BenchGui:
         f.rowconfigure(4, weight=1)
         for col in range(6):
             f.columnconfigure(col, weight=1)
+
+    def _refresh_mod_state(self):
+        on = 1 in self.st.outputs_on
+        self.sw_mod_state.set("OUT1: ON" if on else "OUT1: off")
+
+    def sweep_mod_on(self):
+        """Turn the drive on and LEAVE it on, so it can be looked at.
+
+        RUN SWEEP sets the drive itself and disarms it afterwards, which is
+        right for a measurement and wrong for aligning an AOM or putting a
+        scope on the amplifier. This is the standalone switch.
+        """
+        rp = self._need_board()
+        if not rp:
+            return
+        p = self._sweep_params()
+        if p is None:
+            return
+        if not messagebox.askokcancel(
+                "Enable the modulation",
+                "Enable OUT1 and LEAVE it on?\n\n"
+                "Carrier      %.6f MHz\n"
+                "Modulation   %.4f kHz  (AM, depth 1)\n"
+                "Amplitude    %s V\n\n"
+                "This reaches the amplifier and the modulator. It stays on "
+                "until you press Modulation OFF, close the GUI, or run a "
+                "sweep (which disarms it at the end)."
+                % (p["carrier"] / 1e6, p["mod"] / 1e3, p["amp"])):
+            return self.log("modulation enable cancelled")
+
+        def go():
+            return rp.setup_am_generator(carrier=p["carrier"],
+                                         modulation=p["mod"],
+                                         amplitude=p["amp"], depth=1.0,
+                                         channel=1)
+
+        def done(table):
+            self.st.outputs_on.add(1)
+            self._refresh_outputs()
+            self._refresh_mod_state()
+            # The ASG snaps both frequencies onto the fs/16384 grid, so what
+            # is actually being generated is not exactly what was typed.
+            self.log("OUT1 ON: carrier %.6f MHz, modulation %.4f kHz "
+                     "(snapped to the ASG grid), %s V"
+                     % (table.carrier / 1e6, table.modulation / 1e3, p["amp"]))
+            self.sw_status.set("modulation on -- OUT1 %.4f kHz AM"
+                               % (table.modulation / 1e3))
+
+        self.submit("modulation on", go, done)
+
+    def sweep_mod_off(self):
+        rp = self.st.rp
+        if rp is None:
+            self.st.outputs_on.clear()
+            self._refresh_mod_state()
+            return self.log("no board connected, so nothing to disable")
+
+        def go():
+            for ch in (1, 2):
+                rp.write("OUTPUT%d:STATE OFF" % ch)
+            return True
+
+        def done(_v):
+            self.st.outputs_on.clear()
+            self._refresh_outputs()
+            self._refresh_mod_state()
+            self.log("OUT1/OUT2 disabled")
+            self.sw_status.set("modulation off")
+
+        self.submit("modulation off", go, done)
 
     def _sweep_params(self):
         try:
@@ -1709,6 +1785,11 @@ class BenchGui:
 
     def _sweep_done(self, out):
         self.sw_run.configure(state="normal")
+        # _sweep_job disarms the outputs in its finally, so whatever the
+        # indicator said before, OUT1 is off now.
+        self.st.outputs_on.discard(1)
+        self._refresh_outputs()
+        self._refresh_mod_state()
         if not isinstance(out, dict):
             self.sw_status.set("failed -- see the Log tab")
             return

@@ -347,3 +347,38 @@ def test_switching_back_to_time_clears_the_spectrum_readout(app):
     app.raw_domain.set("time")
     app._redraw_raw()
     assert app.spec_info.get() == ""
+
+
+# ---------------------------------------------------------------------------
+# The Linear Sweep tab's standalone drive switch. Added 2026-08-28 after the
+# tab shipped with no way to turn the modulation ON at all: RUN SWEEP enabled
+# it internally and disarmed it again, so "Modulation OFF" appeared to do
+# nothing because nothing had ever been on. Aligning an AOM or putting a scope
+# on the amplifier both need the drive to stay up.
+
+
+def test_the_sweep_tab_can_turn_the_modulation_on_and_off(app):
+    assert hasattr(app, "sweep_mod_on"), "no way to enable the drive"
+    assert hasattr(app, "sweep_mod_off")
+    assert app.sw_mod_state.get() == "OUT1: off"
+
+
+def test_modulation_on_refuses_without_a_board(app):
+    """It must not pretend. Nothing is driven with no board connected."""
+    app.st.rp = None
+    app.sweep_mod_on()
+    settle(app)
+    assert 1 not in app.st.outputs_on
+    assert app.sw_mod_state.get() == "OUT1: off"
+
+
+def test_modulation_off_with_no_board_still_clears_the_indicator(app):
+    """A stale "ON" indicator after a disconnect would be a lie about a
+    physical output, which is the one thing this readout must never be."""
+    app.st.rp = None
+    app.st.outputs_on.add(1)
+    app.sweep_mod_off()
+    settle(app)
+    assert 1 not in app.st.outputs_on
+    assert app.sw_mod_state.get() == "OUT1: off"
+
