@@ -3569,3 +3569,87 @@ Three dropouts in one afternoon, all after sustained activity.
 3. Q11b — the detector has still never seen light — and the PDA05CF2 damage
    threshold.
 
+---
+
+## 2026-08-28 (evening) — Claude (Claude Code) — THE CHAIN WORKS: first real optical measurement
+
+**The linear sweep runs end to end and the signal is provably optical.** Every
+component between the board and the detector is now exercised and confirmed.
+
+| Run | Amplitude at 915.527 kHz |
+|---|---|
+| Normal, laser +4.00 dBm | **130 mV** |
+| Control, laser −5.00 dBm | **15 mV** |
+| Control, OUT1 disarmed | **nanovolts** |
+
+**The two controls answer two different questions and both came back clean.**
+
+- **No drive → nanovolts.** The 915 kHz exists only while OUT1 is on. It is not
+  ambient, not another instrument, not the demodulator inventing something.
+- **Low power → the amplitude scales with LIGHT.** +4 to −5 dBm is a 9 dB drop,
+  predicting a 7.94× fall; measured 130/15 = **8.67×**, agreeing to **0.38 dB**.
+  The RF drive was byte-identical in both runs, so an electrical pickup path
+  could not have moved at all. It moved by the optical ratio.
+
+**Q11b is CLOSED.** The photodetector responds to light. Until today every
+optical measurement had run with the shutter closed, where a working detector
+and a disconnected one are indistinguishable.
+
+**What this proves, in one line each:** the AM drive reaches the amplifier; the
+amplifier drives the AOM; the AOM modulates light at f1; the light reaches the
+detector; the detector converts it; IN1 digitises it; the lock-in recovers it;
+the trigger places it on a wavelength axis; the CSV comes out.
+
+### How the controls got there, which is the part worth remembering
+
+Three of them were wrong before this one worked, and each was wrong in a way
+that still produced a confident-looking result:
+
+1. **The checkbox only LABELLED the output file.** A "control" run with the
+   beam never blocked is indistinguishable from a real one. Kevin ticked it,
+   got the same amplitude, and correctly disbelieved the setup rather than the
+   control.
+2. **Closing the shutter in software does not work.** The instrument REOPENS it
+   when a sweep starts — found with a scope on the detector, not by us. Any
+   shutter-based control silently has light in it. The shutter is now read
+   DURING the sweep, because its state beforehand means nothing.
+3. **The replacement control asked for −10 dBm and the laser ignored it.** Its
+   range is −5 to +13 dBm (`:POWer:LEVel? MIN`/`MAX`), and a request below the
+   floor is not refused — the setpoint stays put and the query answers with the
+   old value. Only the read-back caught it. The limits are now queried from the
+   instrument and the request clamped to them.
+
+**The control that finally worked removes the LIGHT or the DRIVE, and depends
+on neither a human remembering nor a shutter behaving.** Kevin's suggestion of
+"just don't sweep" would not have worked for a reason worth recording: the
+sweep does not create the signal, so a static run shows the same amplitude with
+no wavelength axis and no trigger to capture on.
+
+### Also fixed
+
+- **A failed job left the UI wedged.** `_pump` logged the error and showed a
+  dialog but ran no callback, so one refused sweep greyed out RUN SWEEP until
+  the GUI was restarted from a terminal. Jobs carry an `on_error` now.
+- **Indicators measured rather than inferred.** OUT1's state came from
+  remembering which buttons had been pressed; it is polled from
+  `OUTPUT1:STATE?` once a second, skipped while the worker is busy.
+- **Amplitude is in volts, not ADC counts**, and the wavelength axis prints
+  1500/1550/1600 rather than "1.5k".
+- **The power gate reads at the DETECTOR**, not at the laser: the 90/10 and
+  50/50 put about 13 dB between them, and gating on the laser's own number
+  refused runs that were nowhere near saturation.
+
+**Broke / still broken:** nothing known. 245 tests pass.
+
+**Next:**
+
+1. **Look at the SHAPE.** 130 mV is the level; the wavelength dependence is the
+   physics. A smooth curve is the AOM's Bragg efficiency times the detector's
+   responsivity. Structure would want explaining.
+2. **Sanity-check the modulation depth** against the DC level on the scope. If
+   the AC amplitude is far below half the DC, the AOM is not being switched as
+   fully as depth-1 AM assumes, which bears on Q12.
+3. The stepping laser (TSL-770) is still untouched — half the deliverable's
+   wavelength axis.
+4. Then P3 properly, and the two-tone measurement.
+
