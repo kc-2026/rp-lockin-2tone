@@ -271,6 +271,7 @@ class Job:
     name: str
     fn: object
     on_done: object = None
+    on_error: object = None
 
 
 class Worker(threading.Thread):
@@ -282,8 +283,8 @@ class Worker(threading.Thread):
         self.results = results
         self.busy = False
 
-    def submit(self, name, fn, on_done=None):
-        self.jobs.put(Job(name, fn, on_done))
+    def submit(self, name, fn, on_done=None, on_error=None):
+        self.jobs.put(Job(name, fn, on_done, on_error))
 
     def run(self):
         while True:
@@ -339,6 +340,7 @@ class BenchGui:
         self._reorder_tabs()
         self._build_statusbar()
 
+        self.root.after(1200, self._poll_measured_state)
         self.log("Bench GUI started. Nothing is connected.")
         self.log(f"Plan: f1 {PLAN.f1 / 1e6:.6f} MHz, f2 {PLAN.f2 / 1e6:.6f} "
                  f"MHz, lock-in {PLAN.difference / 1e3:.3f} kHz")
@@ -370,10 +372,10 @@ class BenchGui:
         self.logbox.see("end")
         self.logbox.configure(state="disabled")
 
-    def submit(self, name, fn, on_done=None):
+    def submit(self, name, fn, on_done=None, on_error=None):
         if self.worker.busy:
             self.log(f"queued: {name} (worker busy)")
-        self.worker.submit(name, fn, on_done)
+        self.worker.submit(name, fn, on_done, on_error)
 
     def _pump(self):
         """Marshal worker results back onto the Tk thread."""
@@ -387,6 +389,15 @@ class BenchGui:
                     if exc is not None:
                         self.log(f"FAILED {job.name}: "
                                  f"{exc.__class__.__name__}: {exc}")
+                        # Before this existed, a failed job never ran ANY
+                        # callback, so anything a handler had disabled on the
+                        # way in stayed disabled -- a refused sweep left RUN
+                        # SWEEP greyed out until the GUI was restarted.
+                        if job.on_error:
+                            try:
+                                job.on_error(exc)
+                            except Exception:            # noqa: BLE001
+                                pass
                         messagebox.showerror(job.name, str(exc))
                     elif job.on_done:
                         job.on_done(value)
@@ -1502,6 +1513,17 @@ class BenchGui:
         # detector sees a small fraction of the setpoint and gating on the
         # LASER's number refuses runs that were never near saturation.
         self.sw_loss = tk.StringVar(value="13.0")
+        # Power used for a CONTROL run. The shutter is not usable as a control:
+        # the instrument REOPENS it by itself when a sweep starts (observed on
+        # a scope, 2026-08-28), so a "shutter closed" control still has light
+        # in it and nothing in the result says so.
+        #
+        # Dropping the power is better than blocking anyway, because it is
+        # QUANTITATIVE. An optical signal falls by the full power ratio; pickup
+        # from the amplifier does not move at all, because the RF drive is
+        # untouched. That distinguishes them by how much they change, not by
+        # whether something was remembered.
+        self.sw_ctrl_dbm = tk.StringVar(value="-10.0")
         for r, (lbl, var, unit) in enumerate((
                 ("Laser IP", self.sw_ip, ""),
                 ("Start", self.sw_start, "nm"),
@@ -1509,7 +1531,8 @@ class BenchGui:
                 ("Speed", self.sw_speed, "nm/s"),
                 ("Trigger step", self.sw_step, "nm"),
                 ("Path loss", self.sw_loss, "dB"),
-                ("Max at detector", self.sw_maxdbm, "dBm"))):
+                ("Max at detector", self.sw_maxdbm, "dBm"),
+                ("Control power", self.sw_ctrl_dbm, "dBm"))):
             ttk.Label(h, text=lbl).grid(row=r, column=0, sticky="w")
             ttk.Entry(h, textvariable=var, width=14).grid(row=r, column=1)
             ttk.Label(h, text=unit).grid(row=r, column=2, sticky="w")
@@ -1517,7 +1540,7 @@ class BenchGui:
         c = ttk.Frame(f)
         c.grid(row=2, column=0, columnspan=6, sticky="w", pady=(10, 6))
         self.sw_blocked = tk.BooleanVar(value=False)
-        ttk.Checkbutton(c, text="CONTROL RUN -- close the shutter",
+        ttk.Checkbutton(c, text="CONTROL RUN -- drop the laser power",
                         variable=self.sw_blocked).pack(side="left", padx=(0, 12))
         ttk.Button(c, text="Modulation ON",
                    command=self.sweep_mod_on).pack(side="left", padx=(0, 4))
@@ -1602,19 +1625,56 @@ class BenchGui:
                 d.close()
 
         def done(state):
+            stamp = time.strftime("%H:%M:%S")
             if state == "1":
-                self.sw_shutter_state.set("shutter: CLOSED (no light)")
+                self.sw_shutter_state.set("shutter: CLOSED @ %s" % stamp)
             elif state == "0":
-                self.sw_shutter_state.set("shutter: OPEN (light out)")
+                self.sw_shutter_state.set("shutter: OPEN @ %s" % stamp)
             else:
-                self.sw_shutter_state.set("shutter: ? (%s)" % state)
-            self.log("laser shutter read back as %s" % state)
+                self.sw_shutter_state.set("shutter: ? (%s) @ %s"
+                                          % (state, stamp))
+            self.log("laser shutter read back as %s at %s"
+                     % (state, time.strftime("%H:%M:%S")))
 
         self.submit("shutter", go, done)
 
     def _refresh_mod_state(self):
+        """Fallback only. The live value comes from _poll_measured_state."""
         on = 1 in self.st.outputs_on
         self.sw_mod_state.set("OUT1: ON" if on else "OUT1: off")
+
+    def _poll_measured_state(self):
+        """Ask the BOARD what its output is actually doing, once a second.
+
+        Inferring it from which buttons were pressed is how an indicator ends
+        up lying about a physical output: anything that changes the state
+        without going through this GUI -- a failed job, a script, a reboot --
+        leaves the label stale. OUTPUT1:STATE? costs nothing and cannot be
+        wrong.
+
+        Skipped while the worker is busy, so a one-second poll never queues up
+        behind a capture and never interleaves with a sweep.
+        """
+        try:
+            rp = self.st.rp
+            if rp is not None and not self.worker.busy:
+                def go():
+                    return rp.query("OUTPUT1:STATE?").strip()
+
+                def done(v):
+                    on = v not in ("0", "OFF", "off")
+                    self.sw_mod_state.set("OUT1: ON (measured)" if on
+                                          else "OUT1: off (measured)")
+                    if on:
+                        self.st.outputs_on.add(1)
+                    else:
+                        self.st.outputs_on.discard(1)
+
+                self.submit("read OUT1 state", go, done, lambda _e: None)
+            elif rp is None:
+                self.sw_mod_state.set("OUT1: ? (no board)")
+        finally:
+            self.root.after(1000, self._poll_measured_state)
 
     def sweep_mod_on(self):
         """Turn the drive on and LEAVE it on, so it can be looked at.
@@ -1694,6 +1754,7 @@ class BenchGui:
                 speed=float(self.sw_speed.get()),
                 step=float(self.sw_step.get()),
                 loss=float(self.sw_loss.get()),
+                ctrl_dbm=float(self.sw_ctrl_dbm.get()),
                 maxdbm=float(self.sw_maxdbm.get()),
             )
         except ValueError as e:
@@ -1739,7 +1800,7 @@ class BenchGui:
         self.sw_status.set("running...")
         p["blocked"] = bool(self.sw_blocked.get())
         self.submit("linear sweep", lambda: self._sweep_job(rp, p),
-                    self._sweep_done)
+                    self._sweep_done, self._sweep_failed)
 
     def _sweep_job(self, rp, p):
         """Runs on the worker thread. Returns everything the UI needs."""
@@ -1776,13 +1837,23 @@ class BenchGui:
                 ("mode", ":WAV:SWE:MOD?"), ("trig", ":TRIG:OUTP?"),
                 ("trigstep", ":TRIG:OUTP:STEP?"))}
             shutter_before = d.query(":POW:SHUT?").strip().lstrip("+")
-            if shutter_before == "1" and not p.get("blocked"):
-                raise RuntimeError(
-                    "the laser's shutter is CLOSED, so this run would see no "
-                    "light at all -- a control run wearing the label of a real "
-                    "one, and nothing in the trace would show it. Press "
-                    "'Shutter OPEN', or tick CONTROL RUN if that is what you "
-                    "meant.")
+            level_before = level
+            if p.get("blocked"):
+                d.write(":POWer:LEVel %.3f" % p["ctrl_dbm"])
+                time.sleep(0.5)
+                got = float(d.query(":POWer:LEVel?"))
+                if abs(got - p["ctrl_dbm"]) > 0.2:
+                    raise RuntimeError(
+                        "asked for a CONTROL run at %.2f dBm but the laser "
+                        "reads back %.2f dBm; refusing rather than reporting a "
+                        "control that was not one"
+                        % (p["ctrl_dbm"], got))
+                level = got
+            # NOT a refusal. This guard used to raise here, and it was
+            # wrong: the instrument OPENS the shutter by itself when a sweep
+            # starts, so a shutter that is closed beforehand says nothing about
+            # whether light is present during the sweep. It only blocked
+            # legitimate runs. The state that matters is read mid-sweep below.
             if p.get("blocked"):
                 # A REAL control. The checkbox used to only label the output
                 # file, which meant a control run that forgot to block the beam
@@ -1832,7 +1903,13 @@ class BenchGui:
             time.sleep(3.0)                        # let the capture arm first
             d.write(":WAV:SWE 1")
             t0 = time.time()
+            shutter_during = None
             while time.time() - t0 < 30.0:
+                if shutter_during is None and time.time() - t0 > 1.0:
+                    # The state that actually matters. The instrument opens the
+                    # shutter by itself when a sweep starts, so what it was
+                    # BEFORE says nothing about whether light was present.
+                    shutter_during = d.query(":POW:SHUT?").strip().lstrip("+")
                 if (d.query(":WAV:SWE?").strip().lstrip("+") == "0"
                         and time.time() - t0 > 2):
                     break
@@ -1846,7 +1923,7 @@ class BenchGui:
                 d.write(":WAV:SWE 0")
                 d.write(":POW:STAT 0")
                 if p.get("blocked"):
-                    d.write(":POW:SHUT %s" % shutter_before)
+                    d.write(":POWer:LEVel %.3f" % level_before)
                 if before:
                     for cmd, key in ((":WAV:SWE:STAR", "start"),
                                      (":WAV:SWE:STOP", "stop"),
@@ -1895,7 +1972,17 @@ class BenchGui:
                     clipped=dclip, swing_counts=swing_counts,
                     blocked=bool(p.get("blocked")),
                     shutter_before=shutter_before,
+                    shutter_during=shutter_during,
+                    laser_dbm=level,
                     swing_v=swing_counts / ADC_COUNTS_PER_V_LV)
+
+    def _sweep_failed(self, _exc):
+        """Re-arm after a refused or failed run. Without this the button that
+        sweep_run() disabled stays disabled for the life of the process."""
+        self.sw_run.configure(state="normal")
+        self.sw_status.set("failed -- see the Log tab")
+        self.st.outputs_on.discard(1)
+        self._refresh_mod_state()
 
     def _sweep_done(self, out):
         self.sw_run.configure(state="normal")
@@ -1930,9 +2017,15 @@ class BenchGui:
                     out["table"].modulation / 1e3,
                     "CLOSED" if out.get("shutter_before") == "1" else "open",
                     red.table_source))
+        self.log("laser was at %.2f dBm; shutter read %s DURING the sweep"
+                 % (out.get("laser_dbm", float("nan")),
+                    {"0": "OPEN", "1": "CLOSED"}.get(out.get("shutter_during"),
+                                                     "unread")))
         if out.get("blocked"):
-            self.log("This is the PICKUP FLOOR, measured with no light. A real "
-                     "optical signal has to stand clear of it.")
+            self.log("CONTROL RUN at reduced power. Compare its amplitude with "
+                     "the full-power run: an OPTICAL signal falls by the power "
+                     "ratio, electrical pickup does not move at all, because "
+                     "the RF drive was identical in both.")
         if out["clipped"]:
             self.log("WARNING: %d IN1 samples at the ADC rail. Every amplitude "
                      "above is derived from a flattened waveform. Reduce the "
