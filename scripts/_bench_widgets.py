@@ -94,7 +94,10 @@ class Worker(threading.Thread):
 # --------------------------------------------------------------------- plot
 
 class Plot(tk.Canvas):
-    """A minimal line plot. No matplotlib, no dependencies, no zoom.
+    """A minimal line plot. No matplotlib, no dependencies.
+
+    Wheel zooms X, shift+wheel Y, ctrl+wheel both, drag pans, double-click
+    fits. All about the pointer, so whatever is under it stays under it.
 
     Reduces to two points per pixel column -- the min and the max of everything
     falling in it -- so a 33 M-sample record draws quickly AND keeps its narrow
@@ -115,17 +118,90 @@ class Plot(tk.Canvas):
         self.yfmt = None
         self.on_cursor = on_cursor
         self._limits = (0.0, 1.0, 0.0, 1.0)
+        # The VIEW, when zoomed. None on an axis means "fit the data".
+        # Kept apart from the data limits so autoscale is always recoverable
+        # and a redraw with new data does not silently inherit an old window.
+        self.xview = None
+        self.yview = None
         self._readout = ""
+        self._pan = None
         self.bind("<Configure>", lambda _e: self._draw())
         self.bind("<Motion>", self._hover)
         self.bind("<Leave>", lambda _e: self._clear_readout())
+        # Wheel zooms X, shift+wheel zooms Y, ctrl+wheel zooms both, always
+        # about the pointer so the feature under it stays put. Drag pans.
+        self.bind("<MouseWheel>", self._wheel)
+        self.bind("<Button-4>", lambda e: self._wheel(e, 120))
+        self.bind("<Button-5>", lambda e: self._wheel(e, -120))
+        self.bind("<ButtonPress-1>", self._pan_start)
+        self.bind("<B1-Motion>", self._pan_move)
+        self.bind("<ButtonRelease-1>", lambda _e: setattr(self, "_pan", None))
+        self.bind("<Double-Button-1>", lambda _e: self.reset_view())
 
-    def show(self, x, y, xlabel="", ylabel="", xfmt=None, yfmt=None):
+    def show(self, x, y, xlabel="", ylabel="", xfmt=None, yfmt=None,
+             keep_view=False):
+        """Draw new data. Resets the zoom unless `keep_view` is asked for.
+
+        Resetting is the safe default: a window left over from another trace
+        would silently crop the new one, and a cropped trace looks like a
+        measurement rather than a viewport.
+        """
         self.x = np.asarray(x, dtype=float).ravel()
         self.y = np.asarray(y, dtype=float).ravel()
         self.xlabel, self.ylabel = xlabel, ylabel
         self.xfmt, self.yfmt = xfmt, yfmt
         self._readout = ""
+        if not keep_view:
+            self.xview = self.yview = None
+        self._draw()
+
+    def reset_view(self):
+        self.xview = self.yview = None
+        self._draw()
+
+    def _data_limits(self):
+        xmin, xmax = float(np.nanmin(self.x)), float(np.nanmax(self.x))
+        with np.errstate(invalid="ignore"):
+            ymin, ymax = float(np.nanmin(self.y)), float(np.nanmax(self.y))
+        if not np.isfinite(ymin) or not np.isfinite(ymax):
+            ymin, ymax = 0.0, 1.0
+        if xmax <= xmin:
+            xmax = xmin + 1.0
+        if ymax <= ymin:
+            ymin, ymax = ymin - 0.5, ymax + 0.5
+        return xmin, xmax, ymin, ymax
+
+    def _wheel(self, event, delta=None):
+        if self.x.size < 2:
+            return
+        d = event.delta if delta is None else delta
+        factor = 0.8 if d > 0 else 1.25
+        x0, y0, x1, y1 = self._box()
+        xmin, xmax, ymin, ymax = self._limits
+        state = getattr(event, "state", 0)
+        shift, ctrl = bool(state & 0x0001), bool(state & 0x0004)
+        if not shift or ctrl:
+            fx = min(max((event.x - x0) / max(1, x1 - x0), 0.0), 1.0)
+            at = xmin + fx * (xmax - xmin)
+            self.xview = (at - (at - xmin) * factor, at + (xmax - at) * factor)
+        if shift or ctrl:
+            fy = 1.0 - min(max((event.y - y0) / max(1, y1 - y0), 0.0), 1.0)
+            at = ymin + fy * (ymax - ymin)
+            self.yview = (at - (at - ymin) * factor, at + (ymax - at) * factor)
+        self._draw()
+
+    def _pan_start(self, event):
+        self._pan = (event.x, event.y, self._limits)
+
+    def _pan_move(self, event):
+        if not self._pan or self.x.size < 2:
+            return
+        px, py, (xmin, xmax, ymin, ymax) = self._pan
+        x0, y0, x1, y1 = self._box()
+        dx = (event.x - px) / max(1, x1 - x0) * (xmax - xmin)
+        dy = (event.y - py) / max(1, y1 - y0) * (ymax - ymin)
+        self.xview = (xmin - dx, xmax - dx)
+        self.yview = (ymin + dy, ymax + dy)
         self._draw()
 
     def clear(self):
@@ -153,12 +229,11 @@ class Plot(tk.Canvas):
             self.create_text((x0 + x1) / 2, (y0 + y1) / 2, fill="#909090",
                              text="all points are NaN")
             return
-        xmin, xmax = float(np.nanmin(self.x)), float(np.nanmax(self.x))
-        ymin, ymax = float(np.nanmin(self.y)), float(np.nanmax(self.y))
-        if xmax <= xmin:
-            xmax = xmin + 1.0
-        if ymax <= ymin:
-            ymin, ymax = ymin - 0.5, ymax + 0.5
+        xmin, xmax, ymin, ymax = self._data_limits()
+        if self.xview:
+            xmin, xmax = self.xview
+        if self.yview:
+            ymin, ymax = self.yview
         self._limits = (xmin, xmax, ymin, ymax)
 
         def sy(v):
@@ -190,6 +265,10 @@ class Plot(tk.Canvas):
         if self._readout:
             self.create_text(x1 - 4, y0 + 4, anchor="ne", text=self._readout,
                              font=("TkDefaultFont", 8), fill="#404040")
+        if self.xview or self.yview:
+            self.create_text(x0 + 4, y0 + 4, anchor="nw", fill="#a04000",
+                             font=("TkDefaultFont", 8),
+                             text="ZOOMED -- double-click to fit")
 
     def _reduce(self, width: int):
         """min/max per pixel column, so narrow features survive."""
@@ -199,9 +278,14 @@ class Plot(tk.Canvas):
             return
         xmin, xmax = self._limits[0], self._limits[1]
         span = xmax - xmin or 1.0
-        col = np.clip(((self.x - xmin) / span * (width - 1)).astype(int),
+        # Only what is inside the window. Without this, zooming in would keep
+        # binning the whole record into the same columns and reveal nothing.
+        inside = (self.x >= xmin) & (self.x <= xmax)
+        if not inside.any():
+            return
+        xs, y = self.x[inside], self.y[inside]
+        col = np.clip(((xs - xmin) / span * (width - 1)).astype(int),
                       0, width - 1)
-        y = self.y
         order = np.argsort(col, kind="stable")
         col, y = col[order], y[order]
         edges = np.flatnonzero(np.diff(col)) + 1
@@ -256,6 +340,27 @@ class ScrollFrame(ttk.Frame):
         bar.pack(side="right", fill="y")
         self.body.bind("<Configure>", self._on_body)
         self.canvas.bind("<Configure>", self._on_canvas)
+        # bind_all while the pointer is inside, because the wheel event goes to
+        # the widget under the cursor -- an entry or a button, not this canvas --
+        # so binding the canvas alone does nothing over most of the rail.
+        self.bind("<Enter>", self._grab_wheel)
+        self.bind("<Leave>", self._release_wheel)
+
+    def _grab_wheel(self, _e=None):
+        self.canvas.bind_all("<MouseWheel>", self._wheel)
+        self.canvas.bind_all("<Button-4>", lambda e: self._wheel(e, 120))
+        self.canvas.bind_all("<Button-5>", lambda e: self._wheel(e, -120))
+
+    def _release_wheel(self, _e=None):
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            try:
+                self.canvas.unbind_all(seq)
+            except Exception:                    # noqa: BLE001
+                pass
+
+    def _wheel(self, event, delta=None):
+        d = event.delta if delta is None else delta
+        self.canvas.yview_scroll(-1 if d > 0 else 1, "units")
 
     def _on_body(self, _e):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))

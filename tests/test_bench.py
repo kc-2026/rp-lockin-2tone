@@ -228,3 +228,157 @@ def test_the_armed_indicator_exists_and_starts_empty(app):
     assert hasattr(app, "h_armed")
     assert app.h_armed.get() == ""
 
+
+# --------------------------------------------- the workspace dependency order
+# Reported from the bench: re-demodulating at a different frequency updated the
+# lock-in and left the OLD trace beside it, so the workspace showed a 915 kHz
+# trace next to a 1.83 MHz lock-in as though both were current.
+
+
+def _fake_capture(n=64):
+    return {"ch1": np.zeros(n), "ch2": np.zeros(n), "fs": 31.25e6,
+            "decimation": 8, "preroll": 0, "trigger": "CH2_PE", "t": 0.0}
+
+
+class _FakeLockin:
+    def __init__(self, f_ref):
+        self.f_ref = f_ref
+        self.fs_out = 5000.0
+        self.t = np.zeros(10)
+
+
+def test_redemodulating_clears_the_stale_trace(bench_module):
+    """THE reported bug. A trace made at one f_ref must not survive a
+    demodulation at another -- two numbers that cannot both be true."""
+    ws = bench_module.Workspace()
+    ws.set_capture(_fake_capture())
+    ws.set_log(np.linspace(1500e-9, 1600e-9, 5))
+
+    class _Red:
+        result = _FakeLockin(915527.0)
+        trace = None
+
+    ws.set_reduction(_Red())
+    assert ws.reduction is not None
+
+    ws.set_lockin(_FakeLockin(1831054.0))       # 2*f1, as an SHG pass would
+    assert ws.reduction is None, "the old trace outlived its f_ref"
+    assert ws.lockin.f_ref == 1831054.0
+
+
+def test_a_new_capture_clears_everything_derived_from_the_old_one(bench_module):
+    ws = bench_module.Workspace()
+    ws.set_capture(_fake_capture())
+    ws.set_lockin(_FakeLockin(915527.0))
+    ws.set_capture(_fake_capture(128))
+    assert ws.lockin is None and ws.reduction is None
+
+
+def test_a_new_laser_log_clears_the_trace(bench_module):
+    """The wavelength axis came from the old log; the amplitudes did not."""
+    ws = bench_module.Workspace()
+
+    class _Red:
+        result = _FakeLockin(915527.0)
+        trace = None
+
+    ws.set_capture(_fake_capture())
+    ws.set_log(np.linspace(1500e-9, 1600e-9, 5))
+    ws.set_reduction(_Red())
+    ws.set_log(np.linspace(1540e-9, 1560e-9, 5))
+    assert ws.reduction is None
+
+
+def test_map_sets_the_trace_and_lockin_together(bench_module):
+    """They come from one reduce_sweep call, so they cannot disagree."""
+    ws = bench_module.Workspace()
+
+    class _Red:
+        result = _FakeLockin(915527.0)
+        trace = None
+
+    red = _Red()
+    ws.set_reduction(red)
+    assert ws.lockin is red.result
+    assert "trace" in ws.stamps and "lock-in" in ws.stamps
+
+
+def test_every_slot_carries_a_timestamp(bench_module):
+    ws = bench_module.Workspace()
+    ws.set_capture(_fake_capture())
+    assert ws.age("capture").strip().startswith("@")
+    assert ws.age("trace") == "", "an empty slot has no time"
+
+
+def test_clearing_drops_the_stamps_too(bench_module):
+    ws = bench_module.Workspace()
+    ws.set_capture(_fake_capture())
+    ws.clear()
+    assert ws.stamps == {} and ws.capture is None
+
+
+# ------------------------------------------------------------- plot and rail
+
+def test_the_plot_zooms_and_can_always_be_fitted_again(app):
+    """A zoom that cannot be undone would crop a trace permanently, and a
+    cropped trace looks like a measurement rather than a viewport."""
+    p = app.plot
+    p.show(np.linspace(1500, 1600, 100), np.random.default_rng(0).normal(size=100))
+    assert p.xview is None and p.yview is None
+    p.xview = (1520.0, 1530.0)
+    p._draw()
+    assert p._limits[0] == 1520.0 and p._limits[1] == 1530.0
+    p.reset_view()
+    assert p.xview is None
+    assert p._limits[0] < 1501.0
+
+
+def test_new_data_drops_a_stale_zoom_window(app):
+    """Otherwise a window left from another trace silently crops the new one."""
+    p = app.plot
+    p.show(np.linspace(0, 1, 50), np.zeros(50))
+    p.xview = (0.2, 0.3)
+    p.show(np.linspace(1500, 1600, 50), np.zeros(50))
+    assert p.xview is None
+
+
+def test_the_rail_scrolls_with_the_wheel(app):
+    """The wheel event goes to the widget under the pointer -- an entry or a
+    button, not the canvas -- so binding the canvas alone does nothing over
+    most of the rail."""
+    assert hasattr(app.rail, "_wheel")
+    assert hasattr(app.rail, "_grab_wheel")
+
+
+# ------------------------------------------------------------------- SHG
+
+def test_the_shg_sequence_is_offered(app):
+    import tkinter.ttk as ttk_
+    found = []
+
+    def walk(widget):
+        for child in widget.winfo_children():
+            if isinstance(child, ttk_.Combobox):
+                found.extend(child.cget("values"))
+            walk(child)
+
+    walk(app.root)
+    assert any("SHG" in str(v) for v in found), f"no SHG option in {found}"
+
+
+def test_shg_demodulates_at_twice_the_drive(app, monkeypatch):
+    """The whole point: a chi(2) crystal is a square law, so light modulated at
+    f1 returns a component at 2*f1. Demodulating there isolates the
+    nonlinearity from linear leakage."""
+    captured = {}
+    monkeypatch.setattr(app, "_need_board", lambda: object())
+    monkeypatch.setattr(app, "_need_laser", lambda: object())
+    monkeypatch.setattr(app.__class__, "_seq_thread",
+                        lambda self, name, rp, d, drive, sweep, f_ref, *a:
+                        captured.update(name=name, f_ref=f_ref,
+                                        mod=drive["modulation"]))
+    app.v_seq.set("SHG (demodulate at 2*f1)")
+    app.seq_run()
+    assert captured, "the sequence never started"
+    assert captured["f_ref"] == pytest.approx(2 * captured["mod"])
+

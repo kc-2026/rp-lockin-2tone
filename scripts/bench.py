@@ -64,13 +64,64 @@ DEFAULT_MOD_HZ = 60 * ops.ASG_GRID          # 915.527 kHz -- see the Drive panel
 
 @dataclass
 class Workspace:
-    """What is currently in memory. Panels read and write these."""
+    """What is currently in memory, and when each piece was made.
+
+    The slots have a dependency order -- capture -> lock-in -> trace, with the
+    laser log feeding the trace as well -- and the setters enforce it by
+    CLEARING what downstream of them is now stale.
+
+    That is not tidiness. Re-demodulating a capture at a different frequency
+    used to update the lock-in and leave the old trace sitting beside it, so
+    the workspace showed a 915 kHz trace next to a 1.83 MHz lock-in as though
+    both were current. Two numbers on screen that cannot both be true is
+    exactly the kind of quiet wrongness this project keeps finding.
+    """
 
     capture: dict = None
     laser_log: np.ndarray = None
     lockin: object = None
     reduction: object = None
+    stamps: dict = field(default_factory=dict)
     meta: dict = field(default_factory=dict)
+
+    def _stamp(self, key):
+        self.stamps[key] = time.time()
+
+    def set_capture(self, cap):
+        self.capture = cap
+        self._stamp("capture")
+        self.lockin = None                  # both were derived from the old
+        self.reduction = None               # record and no longer belong to it
+        self.stamps.pop("lock-in", None)
+        self.stamps.pop("trace", None)
+
+    def set_log(self, wl):
+        self.laser_log = wl
+        self._stamp("laser log")
+        self.reduction = None               # the axis came from the old log
+        self.stamps.pop("trace", None)
+
+    def set_lockin(self, r):
+        self.lockin = r
+        self._stamp("lock-in")
+        self.reduction = None               # the trace used a different f_ref
+        self.stamps.pop("trace", None)
+
+    def set_reduction(self, red):
+        """Map produces both at once, so they are consistent by construction."""
+        self.reduction = red
+        self.lockin = red.result
+        self._stamp("trace")
+        self._stamp("lock-in")
+
+    def clear(self):
+        self.capture = self.laser_log = self.lockin = self.reduction = None
+        self.stamps.clear()
+
+    def age(self, key):
+        t = self.stamps.get(key)
+        return "" if t is None else time.strftime("  @%H:%M:%S",
+                                                  time.localtime(t))
 
     def summary(self):
         rows = []
@@ -78,25 +129,28 @@ class Workspace:
             c = self.capture
             rows.append(("capture", f"{c['ch1'].size / 1e6:.1f} Msa x2 @ "
                                     f"{c['fs'] / 1e6:.3f} MS/s, trig "
-                                    f"{c['trigger']}"))
+                                    f"{c['trigger']}" + self.age("capture")))
         else:
             rows.append(("capture", "-"))
         if self.laser_log is not None:
             w = self.laser_log
             rows.append(("laser log", f"{w.size} pts, {w[0] * 1e9:.3f} -> "
-                                      f"{w[-1] * 1e9:.3f} nm"))
+                                      f"{w[-1] * 1e9:.3f} nm"
+                                      + self.age("laser log")))
         else:
             rows.append(("laser log", "-"))
         if self.lockin is not None:
             rows.append(("lock-in", f"{self.lockin.f_ref / 1e3:.4f} kHz, "
                                     f"{self.lockin.t.size} pts @ "
-                                    f"{self.lockin.fs_out:.0f} Sa/s"))
+                                    f"{self.lockin.fs_out:.0f} Sa/s"
+                                    + self.age("lock-in")))
         else:
             rows.append(("lock-in", "-"))
         if self.reduction is not None:
             w, a = self.reduction.trace.dropna()
             rows.append(("trace", f"{w.size} pts, {np.median(a) * 1e3:.3f} mV "
-                                  f"median, {a.max() * 1e3:.3f} mV max"))
+                                  f"median, {a.max() * 1e3:.3f} mV max"
+                                  + self.age("trace")))
         else:
             rows.append(("trace", "-"))
         return rows
@@ -253,6 +307,12 @@ class Bench:
         cb.pack(side="left", padx=6)
         cb.set("trace (amplitude vs wavelength)")
         ttk.Button(bar, text="Redraw", command=self.redraw).pack(side="left")
+        ttk.Button(bar, text="Fit",
+                   command=lambda: self.plot.reset_view()).pack(side="left",
+                                                                padx=4)
+        ttk.Label(bar, text="wheel = zoom X | shift+wheel = Y | "
+                            "ctrl+wheel = both | drag = pan | double-click = fit",
+                  foreground="#666").pack(side="left", padx=10)
         self.plot = Plot(f, height=340)
         self.plot.pack(fill="both", expand=True, pady=(6, 0))
 
@@ -286,7 +346,7 @@ class Bench:
             self.ws_vars[key].set(val)
 
     def clear_workspace(self):
-        self.ws = Workspace()
+        self.ws.clear()
         self.refresh_workspace()
         self.plot.clear()
         self.log("workspace cleared")
@@ -635,7 +695,11 @@ class Bench:
             return
 
         def done(v):
-            self.ws.laser_log = v["wavelengths"]
+            had = self.ws.reduction is not None
+            self.ws.set_log(v["wavelengths"])
+            if had:
+                self.log("new laser log: the previous trace used the old one "
+                         "and has been cleared.")
             self.refresh_workspace()
             self.log(f"laser log: {v['wavelengths'].size} points "
                      f"(:READ:POIN? said {v['points_reported']})")
@@ -663,17 +727,16 @@ class Bench:
                           "and one time base.",
                   foreground="#666", justify="left").grid(
             row=4, column=0, columnspan=3, sticky="w", pady=(4, 2))
-        ttk.Label(f, text="ORDER: press Capture FIRST -- it arms and waits --\n"
-                          "then Sweep > Start. The laser has its own worker,\n"
-                          "so it is not stuck behind the waiting capture.",
+        ttk.Label(f, text="ORDER: Capture FIRST -- it arms and waits --\n"
+                          "then Start in the Sweep panel above. The laser has\n"
+                          "its own worker, so it is not stuck behind the\n"
+                          "waiting capture.",
                   foreground="#144", justify="left").grid(
             row=5, column=0, columnspan=3, sticky="w", pady=(0, 4))
         b = ttk.Frame(f)
         b.grid(row=6, column=0, columnspan=3, sticky="w")
-        ttk.Button(b, text="1. Capture (arm)",
+        ttk.Button(b, text="Capture (arms and waits)",
                    command=self.acquire_now).pack(side="left")
-        ttk.Button(b, text="2. Sweep > Start",
-                   command=self.sweep_start).pack(side="left", padx=4)
 
     def acquire_now(self):
         rp = self._need_board()
@@ -706,7 +769,11 @@ class Bench:
 
         def done(cap):
             self.h_armed.set("")
-            self.ws.capture = cap
+            had = self.ws.lockin is not None or self.ws.reduction is not None
+            self.ws.set_capture(cap)
+            if had:
+                self.log("new capture: the previous lock-in and trace were "
+                         "derived from the old record and have been cleared.")
             self.refresh_workspace()
             c1, c2 = cap["ch1"], cap["ch2"]
             self.log(f"captured {c1.size} samples on BOTH channels. "
@@ -752,7 +819,12 @@ class Bench:
             return messagebox.showerror("Demodulate", f"Not a number: {e}")
 
         def done(r):
-            self.ws.lockin = r
+            had = self.ws.reduction is not None
+            self.ws.set_lockin(r)
+            if had:
+                self.log("demodulated at a new frequency: the previous trace "
+                         "was made at a different f_ref and has been cleared. "
+                         "Run Map again.")
             self.refresh_workspace()
             a = r.amplitude()
             self.log(f"demodulated at {r.f_ref / 1e3:.4f} kHz: {a.size} points, "
@@ -790,8 +862,7 @@ class Bench:
             return messagebox.showerror("Map", f"Not a number: {e}")
 
         def done(red):
-            self.ws.reduction = red
-            self.ws.lockin = red.result
+            self.ws.set_reduction(red)
             self.refresh_workspace()
             self.log(red.describe())
             self.plot_what.set("trace (amplitude vs wavelength)")
@@ -849,8 +920,9 @@ class Bench:
                   foreground="#666", justify="left").grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
         self.v_seq = tk.StringVar(value="linear sweep")
-        ttk.Combobox(f, textvariable=self.v_seq, width=24, state="readonly",
+        ttk.Combobox(f, textvariable=self.v_seq, width=26, state="readonly",
                      values=("linear sweep",
+                             "SHG (demodulate at 2*f1)",
                              "control: no drive",
                              "control: low power")).grid(row=1, column=0,
                                                          sticky="w")
@@ -878,11 +950,22 @@ class Bench:
         except ValueError as e:
             return messagebox.showerror("Sequence", f"Not a number: {e}")
 
+        if name.startswith("SHG"):
+            # A chi(2) crystal is a SQUARE law, so light modulated at f1 comes
+            # back with a component at 2*f1. Demodulating there isolates the
+            # nonlinearity from any linear leakage, exactly as |f2-f1| does in
+            # the two-tone scheme.
+            f_ref = 2.0 * drive["modulation"]
         detail = (f"OUT1 {drive['carrier'] / 1e6:.6f} MHz AM "
                   f"{drive['modulation'] / 1e3:.4f} kHz @ {drive['amplitude']} V\n"
                   f"Laser {sweep['start_nm']}-{sweep['stop_nm']} nm at "
                   f"{sweep['speed_nm_s']} nm/s\n"
                   f"Demodulate at {f_ref / 1e3:.4f} kHz\n\n")
+        if name.startswith("SHG"):
+            detail += ("SHG: demodulating at TWICE the drive frequency.\n"
+                       "NOTE the AOM makes 2*f1 by itself -- depth-1 AM on a\n"
+                       "sin^2 device -- so a signal here does NOT prove SHG\n"
+                       "until a crystal-out run is compared against it.\n\n")
         if name == "control: no drive":
             detail += "CONTROL: OUT1 stays OFF. Tests whether the signal comes "\
                       "from our drive at all.\n\n"
@@ -967,15 +1050,20 @@ class Bench:
                               nominal_step=sweep["step_nm"] / sweep["speed_nm_s"])
 
             def finish():
-                self.ws.capture = out
-                self.ws.laser_log = log["wavelengths"]
-                self.ws.reduction = red
-                self.ws.lockin = red.result
+                self.ws.set_capture(out)
+                self.ws.set_log(log["wavelengths"])
+                self.ws.set_reduction(red)
                 self.refresh_workspace()
                 _w, a = red.trace.dropna()
                 self.log(f"[{name}] DONE: median {np.median(a) * 1e3:.4f} mV, "
                          f"max {a.max() * 1e3:.4f} mV, axis from "
                          f"{red.table_source}")
+                if name.startswith("SHG"):
+                    self.log(f"[{name}] demodulated at "
+                             f"{f_ref / 1e3:.4f} kHz = 2 x the drive. Run this "
+                             f"again with the crystal OUT: the difference is "
+                             f"the SHG, the common part is the AOM's own "
+                             f"harmonic.")
                 if name == "control: low power":
                     drop = power_before - ctrl_dbm
                     self.log(f"[{name}] a {drop:.1f} dB drop: an OPTICAL signal "
