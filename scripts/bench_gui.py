@@ -1496,13 +1496,20 @@ class BenchGui:
         self.sw_speed = tk.StringVar(value="100")
         self.sw_step = tk.StringVar(value="0.02")
         self.sw_maxdbm = tk.StringVar(value="0.0")
+        # Loss between the laser and the detector. Kevin's bench on 2026-08-28:
+        # modulator, then a 90/10, then a 50/50. Taking the 10% arm that is
+        # 10 + 3 = 13 dB before the modulator's own insertion loss, so the
+        # detector sees a small fraction of the setpoint and gating on the
+        # LASER's number refuses runs that were never near saturation.
+        self.sw_loss = tk.StringVar(value="13.0")
         for r, (lbl, var, unit) in enumerate((
                 ("Laser IP", self.sw_ip, ""),
                 ("Start", self.sw_start, "nm"),
                 ("Stop", self.sw_stop, "nm"),
                 ("Speed", self.sw_speed, "nm/s"),
                 ("Trigger step", self.sw_step, "nm"),
-                ("Max power", self.sw_maxdbm, "dBm"))):
+                ("Path loss", self.sw_loss, "dB"),
+                ("Max at detector", self.sw_maxdbm, "dBm"))):
             ttk.Label(h, text=lbl).grid(row=r, column=0, sticky="w")
             ttk.Entry(h, textvariable=var, width=14).grid(row=r, column=1)
             ttk.Label(h, text=unit).grid(row=r, column=2, sticky="w")
@@ -1686,6 +1693,7 @@ class BenchGui:
                 stop=float(self.sw_stop.get()),
                 speed=float(self.sw_speed.get()),
                 step=float(self.sw_step.get()),
+                loss=float(self.sw_loss.get()),
                 maxdbm=float(self.sw_maxdbm.get()),
             )
         except ValueError as e:
@@ -1748,11 +1756,20 @@ class BenchGui:
         cap = {}
         try:
             level = float(d.query(":POWer:LEVel?"))
-            if level > p["maxdbm"]:
+            # What the DETECTOR sees, which is the number that matters. The
+            # laser's own setpoint says nothing without the splitters between
+            # them. The detector saturates near 0.96 mW = 0 dBm; above that it
+            # stops being linear, and a saturated detector still produces a
+            # smooth, plausible, wrong trace.
+            at_det = level - p["loss"]
+            if at_det > p["maxdbm"]:
                 raise RuntimeError(
-                    "laser setpoint %.2f dBm is above the %.2f dBm limit; the "
-                    "detector sees the fundamental in this test"
-                    % (level, p["maxdbm"]))
+                    "laser is at %.2f dBm and you have declared %.1f dB of "
+                    "path loss, so about %.2f dBm (%.3f mW) reaches the "
+                    "detector -- above the %.2f dBm limit. Lower the laser, or "
+                    "correct the path loss if it is really lossier than that."
+                    % (level, p["loss"], at_det, 10 ** (at_det / 10),
+                       p["maxdbm"]))
             before = {k: d.query(q) for k, q in (
                 ("start", ":WAV:SWE:STAR?"), ("stop", ":WAV:SWE:STOP?"),
                 ("speed", ":WAV:SWE:SPE?"), ("cycles", ":WAV:SWE:CYCL?"),
