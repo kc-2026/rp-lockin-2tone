@@ -78,7 +78,7 @@ def settle(app, timeout=90.0):
 def test_every_tab_builds(app):
     labels = [app.nb.tab(i, "text") for i in range(app.nb.index("end"))]
     assert labels == ["Board", "Outputs", "Acquire", "Demodulate", "Laser",
-                      "Log"]
+                      "Linear Sweep", "Log"]
 
 
 def test_simulate_then_demodulate_produces_a_trace(app, gui_module):

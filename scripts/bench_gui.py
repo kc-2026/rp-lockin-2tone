@@ -56,6 +56,10 @@ from tkinter import filedialog, messagebox, ttk
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+# This directory too, so tsl775 imports whether bench_gui is run as a script
+# or imported by the test suite. Without it the GUI tests fail at collection
+# and the tab that drives the amplifier goes untested.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from rp_lockin import (  # noqa: E402
     demodulate,
@@ -65,6 +69,7 @@ from rp_lockin import (  # noqa: E402
     recommended_preroll,
     recommended_tail,
     reduce_sweep,
+    settling_points,
     synthesise_dut_output,
     write_raw_npz,
     write_trace_csv,
@@ -72,6 +77,10 @@ from rp_lockin import (  # noqa: E402
 from rp_lockin.constants import BASE_SAMPLE_RATE  # noqa: E402
 from rp_lockin.hardware import RedPitaya  # noqa: E402
 from rp_lockin.santec import SantecTSL  # noqa: E402
+# Sweep control. santec.py can read the log and set the
+# trigger mode, but it has no sweep setters and cannot START
+# a sweep; tsl775.py is the proven path for that.
+from tsl775 import TSL775  # noqa: E402
 
 PLAN = plan_two_tone_grid(1e6)
 
@@ -317,6 +326,7 @@ class BenchGui:
         self._build_acquire()
         self._build_view()
         self._build_laser()
+        self._build_sweep()
         self._reorder_tabs()
         self._build_statusbar()
 
@@ -1428,6 +1438,297 @@ class BenchGui:
         self.nb.select(3)
 
     # -- tab: log
+
+    # ------------------------------------------------- the linear sweep
+
+    def _build_sweep(self):
+        """One click: modulation on, sweep, demodulate, wavelength vs power.
+
+        Deliberately self-contained. The Laser tab talks through santec.py,
+        which can read the log but CANNOT start a sweep; this tab opens its own
+        TSL775 connection for the run and closes it again.
+        """
+        f = ttk.Frame(self.nb, padding=10)
+        self.nb.add(f, text="Linear Sweep")
+
+        ttk.Label(f, text=(
+            "OUT1 --AM--> amplifier --> modulator --> light --> detector --> IN1"
+            "\nlaser trigger --> IN2.   Demodulates AT the modulation frequency:"
+            "\nnothing here squares the light, so the signal is at f1, not 2*f1."),
+            justify="left").grid(row=0, column=0, columnspan=6, sticky="w",
+                                 pady=(0, 8))
+
+        g = ttk.LabelFrame(f, text="Drive", padding=8)
+        g.grid(row=1, column=0, sticky="nw", padx=(0, 8))
+        self.sw_carrier = tk.StringVar(value="80.0")
+        self.sw_mod = tk.StringVar(
+            value="%.4f" % (60 * BASE_SAMPLE_RATE / 16384 / 1e3))
+        self.sw_amp = tk.StringVar(value="1.0")
+        for r, (lbl, var, unit) in enumerate((
+                ("Carrier", self.sw_carrier, "MHz"),
+                ("Modulation", self.sw_mod, "kHz"),
+                ("Amplitude", self.sw_amp, "V"))):
+            ttk.Label(g, text=lbl).grid(row=r, column=0, sticky="w")
+            ttk.Entry(g, textvariable=var, width=12).grid(row=r, column=1)
+            ttk.Label(g, text=unit).grid(row=r, column=2, sticky="w")
+        ttk.Label(g, text=("915.527 kHz = 60 ASG grid steps: whole cycles in\n"
+                           "the table, and 94 kHz clear of the 504.868 kHz\n"
+                           "switcher family. Avoid 1007.080 kHz -- 2.7 kHz off\n"
+                           "a harmonic, where interference reads as a clean,\n"
+                           "steady optical signal."),
+                  justify="left", foreground="#555").grid(
+            row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
+        h = ttk.LabelFrame(f, text="Laser sweep", padding=8)
+        h.grid(row=1, column=1, sticky="nw")
+        self.sw_ip = tk.StringVar(value="10.101.0.197")
+        self.sw_start = tk.StringVar(value="1500")
+        self.sw_stop = tk.StringVar(value="1600")
+        self.sw_speed = tk.StringVar(value="100")
+        self.sw_step = tk.StringVar(value="0.02")
+        self.sw_maxdbm = tk.StringVar(value="0.0")
+        for r, (lbl, var, unit) in enumerate((
+                ("Laser IP", self.sw_ip, ""),
+                ("Start", self.sw_start, "nm"),
+                ("Stop", self.sw_stop, "nm"),
+                ("Speed", self.sw_speed, "nm/s"),
+                ("Trigger step", self.sw_step, "nm"),
+                ("Max power", self.sw_maxdbm, "dBm"))):
+            ttk.Label(h, text=lbl).grid(row=r, column=0, sticky="w")
+            ttk.Entry(h, textvariable=var, width=14).grid(row=r, column=1)
+            ttk.Label(h, text=unit).grid(row=r, column=2, sticky="w")
+
+        c = ttk.Frame(f)
+        c.grid(row=2, column=0, columnspan=6, sticky="w", pady=(10, 6))
+        self.sw_blocked = tk.BooleanVar(value=False)
+        ttk.Checkbutton(c, text="CONTROL RUN -- beam blocked",
+                        variable=self.sw_blocked).pack(side="left", padx=(0, 12))
+        self.sw_run = ttk.Button(c, text="RUN SWEEP", command=self.sweep_run)
+        self.sw_run.pack(side="left")
+        ttk.Button(c, text="Modulation OFF",
+                   command=self.outputs_off).pack(side="left", padx=6)
+        ttk.Button(c, text="Save CSV",
+                   command=self.sweep_save).pack(side="left", padx=6)
+
+        self.sw_status = tk.StringVar(value="idle")
+        ttk.Label(f, textvariable=self.sw_status).grid(
+            row=3, column=0, columnspan=6, sticky="w")
+
+        self.sw_plot = Plot(f, height=300)
+        self.sw_plot.grid(row=4, column=0, columnspan=6, sticky="nsew",
+                          pady=(8, 0))
+        f.rowconfigure(4, weight=1)
+        for col in range(6):
+            f.columnconfigure(col, weight=1)
+
+    def _sweep_params(self):
+        try:
+            return dict(
+                carrier=float(self.sw_carrier.get()) * 1e6,
+                mod=float(self.sw_mod.get()) * 1e3,
+                amp=float(self.sw_amp.get()),
+                ip=self.sw_ip.get().strip(),
+                start=float(self.sw_start.get()),
+                stop=float(self.sw_stop.get()),
+                speed=float(self.sw_speed.get()),
+                step=float(self.sw_step.get()),
+                maxdbm=float(self.sw_maxdbm.get()),
+            )
+        except ValueError as e:
+            messagebox.showerror("Sweep settings", "Not a number: %s" % e)
+            return None
+
+    def sweep_run(self):
+        rp = self._need_board()
+        if not rp:
+            return
+        p = self._sweep_params()
+        if p is None:
+            return
+        if self.st.laser is not None:
+            return messagebox.showerror(
+                "Laser already connected",
+                "The Laser tab holds a connection. This instrument is "
+                "unreliable with more than one, and roughly one reconnect in "
+                "four fails outright.\n\nDisconnect on the Laser tab first.")
+
+        n_points = int(round((p["stop"] - p["start"]) / p["step"])) + 1
+        sweep_s = (n_points - 1) * (p["step"] / p["speed"])
+        msg = (
+            "This DRIVES OUT1 into the amplifier and the modulator, and "
+            "sweeps the laser.\n\n"
+            "OUT1     %.6f MHz, AM at %.4f kHz, depth 1, %s V\n"
+            "Laser    %g-%g nm at %g nm/s (%.3f s)\n"
+            "Trigger  every %g nm -> %d points, %.1f us apart\n"
+            "Demod    AT %.4f kHz\n\n" % (
+                p["carrier"] / 1e6, p["mod"] / 1e3, p["amp"],
+                p["start"], p["stop"], p["speed"], sweep_s,
+                p["step"], n_points, p["step"] / p["speed"] * 1e6,
+                p["mod"] / 1e3))
+        if self.sw_blocked.get():
+            msg += "CONTROL RUN: the beam should be BLOCKED.\n\n"
+        if not messagebox.askokcancel("Run the sweep",
+                                      msg + "Light goes somewhere. Continue?"):
+            return self.log("sweep cancelled")
+
+        self.sw_run.configure(state="disabled")
+        self.sw_status.set("running...")
+        self.submit("linear sweep", lambda: self._sweep_job(rp, p),
+                    self._sweep_done)
+
+    def _sweep_job(self, rp, p):
+        """Runs on the worker thread. Returns everything the UI needs."""
+        fs = BASE_SAMPLE_RATE / 8
+        _n_settle, t_settle = settling_points(5000.0, fs=fs)
+        tail = recommended_tail(5000.0, fs=fs)
+        preroll = int(t_settle * 1.1 * fs)
+        n_points = int(round((p["stop"] - p["start"]) / p["step"])) + 1
+        sweep_s = (n_points - 1) * (p["step"] / p["speed"])
+        n = min(int(np.ceil((preroll / fs + sweep_s + tail) * fs)), 33554432)
+
+        d = TSL775.connect("lan", host=p["ip"], timeout=5.0)
+        before = None
+        cap = {}
+        try:
+            level = float(d.query(":POWer:LEVel?"))
+            if level > p["maxdbm"]:
+                raise RuntimeError(
+                    "laser setpoint %.2f dBm is above the %.2f dBm limit; the "
+                    "detector sees the fundamental in this test"
+                    % (level, p["maxdbm"]))
+            before = {k: d.query(q) for k, q in (
+                ("start", ":WAV:SWE:STAR?"), ("stop", ":WAV:SWE:STOP?"),
+                ("speed", ":WAV:SWE:SPE?"), ("cycles", ":WAV:SWE:CYCL?"),
+                ("mode", ":WAV:SWE:MOD?"), ("trig", ":TRIG:OUTP?"),
+                ("trigstep", ":TRIG:OUTP:STEP?"))}
+            d.write(":POW:STAT 1")
+            time.sleep(2.0)                        # laser ON before configuring
+            d.write(":WAV:SWE 0")
+            time.sleep(0.5)                        # explicit stop, or it never starts
+            d.write(":WAV:SWE:SPE %g" % p["speed"])   # speed first: range depends on it
+            d.write(":WAV:SWE:STAR %.9E" % (p["start"] * 1e-9))   # METRES
+            d.write(":WAV:SWE:STOP %.9E" % (p["stop"] * 1e-9))
+            d.write(":WAV:SWE:MOD 1")              # continuous, ONE WAY
+            d.write(":WAV:SWE:CYCL 1")
+            d.write(":TRIG:OUTP 3")                # Step -- or nothing is logged
+            d.write(":TRIG:OUTP:STEP %.9E" % (p["step"] * 1e-9))
+            if d.query(":TRIG:OUTP?").strip().lstrip("+") != "3":
+                raise RuntimeError(":TRIG:OUTP is not 3; no train and no log")
+
+            rp.setup_acquisition(decimation=8, coupling="DC", gain="LV")
+            rp.setup_channel(1, coupling="AC", gain="LV")   # detector is unipolar
+            rp.setup_channel(2, gain="HV")                  # 3.3 V trigger
+            table = rp.setup_am_generator(
+                carrier=p["carrier"], modulation=p["mod"],
+                amplitude=p["amp"], depth=1.0, channel=1)
+
+            def grab():
+                try:
+                    ch = rp.acquire_deep_fast(
+                        n_samples=n, decimation=8, channels=(1, 2),
+                        trigger="CH2_PE", trigger_level=1.0,
+                        preroll_samples=preroll, trigger_timeout=120.0)
+                    cap["det"], cap["trg"] = ch[0], ch[1]
+                except Exception as e:                       # noqa: BLE001
+                    cap["error"] = e
+
+            th = threading.Thread(target=grab, daemon=True)
+            th.start()
+            time.sleep(3.0)                        # let the capture arm first
+            d.write(":WAV:SWE 1")
+            t0 = time.time()
+            while time.time() - t0 < 30.0:
+                if (d.query(":WAV:SWE?").strip().lstrip("+") == "0"
+                        and time.time() - t0 > 2):
+                    break
+                time.sleep(0.1)
+            th.join(timeout=180.0)
+            if "error" in cap:
+                raise cap["error"]
+            wl = np.asarray(d.query_wavelength_log(scpi=True), dtype=float)
+        finally:
+            try:
+                d.write(":WAV:SWE 0")
+                d.write(":POW:STAT 0")
+                if before:
+                    for cmd, key in ((":WAV:SWE:STAR", "start"),
+                                     (":WAV:SWE:STOP", "stop"),
+                                     (":WAV:SWE:SPE", "speed"),
+                                     (":WAV:SWE:CYCL", "cycles"),
+                                     (":WAV:SWE:MOD", "mode"),
+                                     (":TRIG:OUTP", "trig"),
+                                     (":TRIG:OUTP:STEP", "trigstep")):
+                        try:
+                            d.write("%s %s" % (cmd, before[key].strip()))
+                        except Exception:                    # noqa: BLE001
+                            pass
+            except Exception:                                # noqa: BLE001
+                pass
+            d.close()
+            try:
+                for ch in (1, 2):
+                    rp.write("OUTPUT%d:STATE OFF" % ch)
+            except Exception:                                # noqa: BLE001
+                pass
+
+        det = np.asarray(cap["det"], dtype=float)
+        trg = np.asarray(cap["trg"], dtype=float)
+        lo, hi = np.percentile(trg, 1), np.percentile(trg, 99)
+        if hi - lo < 50:
+            raise RuntimeError(
+                "IN2 swings only %.1f counts -- nothing is arriving on the "
+                "trigger channel. Is the BNC in analog IN2 rather than the "
+                "external-trigger socket?" % (hi - lo))
+        # Unipolar in COUNTS, so reduce_sweep's 0.0 default would find no edges.
+        thr = float(0.5 * (lo + hi))
+        red = reduce_sweep(det, trg, fs, wl, f_ref=p["mod"], output_rate=5000.0,
+                           trigger_threshold=thr, trigger_polarity="rising",
+                           nominal_step=p["step"] / p["speed"])
+        dclip = int(np.count_nonzero((det >= 2047) | (det <= -2048)))
+        return dict(red=red, det=det, trg=trg, wl=wl, table=table,
+                    clipped=dclip,
+                    swing=float(np.percentile(det, 99) - np.percentile(det, 1)))
+
+    def _sweep_done(self, out):
+        self.sw_run.configure(state="normal")
+        if not isinstance(out, dict):
+            self.sw_status.set("failed -- see the Log tab")
+            return
+        red = out["red"]
+        self.st.reduction = red
+        self.st.result = red.result
+        self.st.wavelengths = out["wl"]
+        w, a = red.trace.dropna()
+        self.sw_plot.show(w * 1e9, a, xlabel="wavelength (nm)",
+                          ylabel="amplitude (counts)")
+        tag = "CONTROL (blocked)" if self.sw_blocked.get() else "beam"
+        self.sw_status.set(
+            "%s: %d points | IN1 swing %.0f counts%s | amplitude median "
+            "%.3f, max %.3f counts" % (
+                tag, w.size, out["swing"],
+                "  CLIPPED!" if out["clipped"] else "",
+                float(np.median(a)), float(a.max())))
+        self.log("linear sweep done (%s): drive %.6f MHz AM %.4f kHz; axis "
+                 "from %s" % (tag, out["table"].carrier / 1e6,
+                              out["table"].modulation / 1e3, red.table_source))
+        if out["clipped"]:
+            self.log("WARNING: %d IN1 samples at the ADC rail. Every amplitude "
+                     "above is derived from a flattened waveform. Reduce the "
+                     "laser power." % out["clipped"])
+
+    def sweep_save(self):
+        red = self.st.reduction
+        if red is None:
+            return messagebox.showinfo("Save", "Run a sweep first.")
+        tag = "blocked" if self.sw_blocked.get() else "beam"
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv", initialfile="linear_%s.csv" % tag,
+            filetypes=[("CSV", "*.csv")])
+        if not path:
+            return
+        write_trace_csv(path, red.trace.wavelength, red.trace.amplitude,
+                        metadata=red.metadata())
+        self.log("wrote %s" % path)
 
     def _build_log(self):
         f = ttk.Frame(self.nb, padding=10)
