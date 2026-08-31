@@ -21,6 +21,7 @@ import numpy as np
 from rp_lockin.constants import (ADC_COUNTS_PER_V_LV, ADC_COUNT_MAX,
                                  ADC_COUNT_MIN, BASE_SAMPLE_RATE)
 from rp_lockin.dsp import demodulate
+from rp_lockin.emulator import find_trigger_edges
 from rp_lockin.pipeline import reduce_sweep
 from rp_lockin.planning import recommended_tail, settling_points
 
@@ -135,10 +136,25 @@ def acquire(rp, n_samples, decimation=8, preroll=0, trigger="CH2_PE",
                               channels=(1, 2), trigger=trigger,
                               trigger_level=level, preroll_samples=preroll,
                               trigger_timeout=timeout)
-    return {"ch1": np.asarray(ch[0], dtype=float),
-            "ch2": np.asarray(ch[1], dtype=float),
-            "fs": BASE_SAMPLE_RATE / decimation, "decimation": decimation,
-            "preroll": preroll, "trigger": trigger, "t": time.time()}
+    c1 = np.asarray(ch[0], dtype=float)
+    c2 = np.asarray(ch[1], dtype=float)
+    fs = BASE_SAMPLE_RATE / decimation
+    # Where the sweep began, in this record's own time. Found once, here, so
+    # every later view can show time relative to it without re-scanning 33 M
+    # samples -- and so the number every view uses is the same number.
+    first_edge, n_edges = None, 0
+    try:
+        thr, lo, hi = trigger_threshold(c2)
+        if hi - lo > 50:                    # a trigger is actually present
+            edges = find_trigger_edges(c2, fs, threshold=thr,
+                                       polarity="rising")
+            if edges.size:
+                first_edge, n_edges = float(edges[0]), int(edges.size)
+    except Exception:                        # noqa: BLE001
+        pass
+    return {"ch1": c1, "ch2": c2, "fs": fs, "decimation": decimation,
+            "preroll": preroll, "trigger": trigger, "t": time.time(),
+            "first_edge": first_edge, "n_edges": n_edges}
 
 
 def acquire_async(rp, **kw):

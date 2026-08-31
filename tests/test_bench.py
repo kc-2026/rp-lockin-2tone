@@ -551,3 +551,71 @@ def test_the_drive_panel_shows_what_the_asg_will_actually_play(app):
     assert "1831.0547" in shown, f"the 2x harmonic should be shown: {shown}"
     assert "60 cycles" in shown or "(60" in shown
 
+
+# ------------------------------------------------ the time-axis convention
+# Display is relative to the SWEEP; the stored numbers stay relative to the
+# RECORD, because the wavelength mapping is built on those and this project
+# has been bitten before by an offset that looked entirely normal.
+
+
+def test_the_time_origin_is_the_first_edge_when_there_is_one(app):
+    app.ws.capture = {"ch1": np.zeros(8), "ch2": np.zeros(8), "fs": 1e6,
+                      "decimation": 8, "preroll": 0, "trigger": "CH2_PE",
+                      "t": 0.0, "first_edge": 0.02486, "n_edges": 5001}
+    t0, label = app._time_origin()
+    assert t0 == pytest.approx(0.02486)
+    assert "SWEEP" in label
+
+
+def test_it_falls_back_to_the_record_and_SAYS_so(app):
+    """A bare 'time (s)' would leave the convention ambiguous, which is how an
+    offset becomes invisible."""
+    app.ws.capture = {"ch1": np.zeros(8), "ch2": np.zeros(8), "fs": 1e6,
+                      "decimation": 8, "preroll": 0, "trigger": "NOW",
+                      "t": 0.0, "first_edge": None, "n_edges": 0}
+    t0, label = app._time_origin()
+    assert t0 == 0.0
+    assert "RECORD" in label and "no trigger" in label
+
+
+def test_the_reduction_wins_over_the_raw_capture(app):
+    """Once a reduction exists its first_edge is the authoritative one -- the
+    same number the wavelength axis was built from."""
+    app.ws.capture = {"ch1": np.zeros(8), "ch2": np.zeros(8), "fs": 1e6,
+                      "decimation": 8, "preroll": 0, "trigger": "CH2_PE",
+                      "t": 0.0, "first_edge": 0.01, "n_edges": 10}
+
+    class _Red:
+        first_edge = 0.02486
+        result = None
+        trace = None
+
+    app.ws.reduction = _Red()
+    t0, _label = app._time_origin()
+    assert t0 == pytest.approx(0.02486), "the reduction's edge must win"
+
+
+def test_the_stored_lockin_times_are_never_shifted(app):
+    """Only the picture moves. Shifting the data would put two conventions in
+    play, and the wavelength mapping depends on the record-relative one."""
+    class _R:
+        f_ref = 915527.34
+        fs_out = 5000.0
+        t = np.linspace(0.0113, 1.03, 100)
+
+        def amplitude(self, smooth=None):
+            return np.zeros(100)
+
+    r = _R()
+    before = r.t.copy()
+    app.ws.capture = {"ch1": np.zeros(8), "ch2": np.zeros(8), "fs": 1e6,
+                      "decimation": 8, "preroll": 0, "trigger": "CH2_PE",
+                      "t": 0.0, "first_edge": 0.02486, "n_edges": 5001}
+    app.ws.lockin = r
+    app.plot_what.set("lock-in (amplitude vs time)")
+    app.redraw()
+    np.testing.assert_array_equal(r.t, before)
+    # ...but the plot shows it shifted, so the pre-roll is negative
+    assert app.plot.x.min() < 0.0
+    assert app.plot.x.min() == pytest.approx(0.0113 - 0.02486)
+

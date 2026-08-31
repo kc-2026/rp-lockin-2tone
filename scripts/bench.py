@@ -351,6 +351,27 @@ class Bench:
         self.plot.clear()
         self.log("workspace cleared")
 
+    def _time_origin(self):
+        """Where the sweep began in this record, and how to label the axis.
+
+        Display only. The stored numbers stay referenced to the START OF THE
+        RECORD, because the wavelength mapping is built on that and this
+        project has been bitten more than once by an offset that looked
+        entirely normal. Shifting the PICTURE costs nothing; shifting the data
+        would put two conventions in play.
+
+        Sweep-relative is the more readable of the two: negative time is
+        obviously the pre-roll, 0 is the first trigger, and the points with no
+        wavelength explain themselves instead of looking like lost data.
+        """
+        cap = self.ws.capture or {}
+        edge = cap.get("first_edge")
+        if self.ws.reduction is not None:
+            edge = self.ws.reduction.first_edge
+        if edge is None:
+            return 0.0, "time from RECORD start (s) -- no trigger in this record"
+        return float(edge), "time from SWEEP start (s)"
+
     def redraw(self):
         what = self.plot_what.get()
         try:
@@ -365,21 +386,24 @@ class Bench:
                 if self.ws.lockin is None:
                     return self.log("no lock-in: run Demodulate first")
                 r = self.ws.lockin
-                self.plot.show(r.t, r.amplitude(), "time (s)", "amplitude (V)",
+                t0, label = self._time_origin()
+                self.plot.show(r.t - t0, r.amplitude(), label, "amplitude (V)",
                                yfmt=lambda v: eng(v, "V"))
             elif what.startswith("raw IN1"):
                 if not self.ws.capture:
                     return self.log("no capture")
                 c = self.ws.capture
-                t = np.arange(c["ch1"].size) / c["fs"]
-                self.plot.show(t, ops.volts(c["ch1"]), "time (s)", "IN1 (V)",
+                t0, label = self._time_origin()
+                t = np.arange(c["ch1"].size) / c["fs"] - t0
+                self.plot.show(t, ops.volts(c["ch1"]), label, "IN1 (V)",
                                yfmt=lambda v: eng(v, "V"))
             else:
                 if not self.ws.capture:
                     return self.log("no capture")
                 c = self.ws.capture
-                t = np.arange(c["ch2"].size) / c["fs"]
-                self.plot.show(t, c["ch2"], "time (s)", "IN2 (counts)",
+                t0, label = self._time_origin()
+                t = np.arange(c["ch2"].size) / c["fs"] - t0
+                self.plot.show(t, c["ch2"], label, "IN2 (counts)",
                                yfmt=lambda v: f"{v:.0f}")
         except Exception as exc:                         # noqa: BLE001
             self.log(f"plot failed: {exc}")
@@ -877,6 +901,11 @@ class Bench:
                      f"IN1 {ops.swing(c1) / 1817.7 * 1e3:.1f} mV "
                      f"({ops.swing(c1):.0f} counts), "
                      f"IN2 {ops.swing(c2):.0f} counts")
+            if cap.get("first_edge") is not None:
+                self.log(f"first trigger edge at "
+                         f"{cap['first_edge'] * 1e3:.3f} ms into the record "
+                         f"({cap['n_edges']} edges). Time views are plotted "
+                         f"relative to it, so 0 is the start of the sweep.")
             if ops.swing(c2) < 50:
                 self.log("WARNING: IN2 barely moves. Nothing is arriving on "
                          "the trigger channel -- is the BNC in the analog IN2 "
