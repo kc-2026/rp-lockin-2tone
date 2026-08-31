@@ -1510,7 +1510,7 @@ class BenchGui:
         c = ttk.Frame(f)
         c.grid(row=2, column=0, columnspan=6, sticky="w", pady=(10, 6))
         self.sw_blocked = tk.BooleanVar(value=False)
-        ttk.Checkbutton(c, text="CONTROL RUN -- beam blocked",
+        ttk.Checkbutton(c, text="CONTROL RUN -- close the shutter",
                         variable=self.sw_blocked).pack(side="left", padx=(0, 12))
         ttk.Button(c, text="Modulation ON",
                    command=self.sweep_mod_on).pack(side="left", padx=(0, 4))
@@ -1525,16 +1525,85 @@ class BenchGui:
         ttk.Label(c, textvariable=self.sw_mod_state,
                   font=("TkDefaultFont", 9, "bold")).pack(side="left", padx=12)
 
+        c2 = ttk.Frame(f)
+        c2.grid(row=3, column=0, columnspan=6, sticky="w", pady=(0, 6))
+        ttk.Label(c2, text="Light:").pack(side="left", padx=(0, 6))
+        ttk.Button(c2, text="Shutter CLOSE (block the light)",
+                   command=lambda: self.sweep_shutter(True)).pack(side="left")
+        ttk.Button(c2, text="Shutter OPEN",
+                   command=lambda: self.sweep_shutter(False)).pack(side="left",
+                                                                   padx=6)
+        self.sw_shutter_state = tk.StringVar(value="shutter: unknown")
+        ttk.Label(c2, textvariable=self.sw_shutter_state,
+                  font=("TkDefaultFont", 9, "bold")).pack(side="left", padx=12)
+        ttk.Button(c2, text="Read state",
+                   command=lambda: self.sweep_shutter(None)).pack(side="left")
+
         self.sw_status = tk.StringVar(value="idle")
         ttk.Label(f, textvariable=self.sw_status).grid(
-            row=3, column=0, columnspan=6, sticky="w")
+            row=4, column=0, columnspan=6, sticky="w")
 
         self.sw_plot = Plot(f, height=300)
-        self.sw_plot.grid(row=4, column=0, columnspan=6, sticky="nsew",
+        self.sw_plot.grid(row=5, column=0, columnspan=6, sticky="nsew",
                           pady=(8, 0))
-        f.rowconfigure(4, weight=1)
+        f.rowconfigure(5, weight=1)
         for col in range(6):
             f.columnconfigure(col, weight=1)
+
+    def sweep_shutter(self, close):
+        """Open, close, or just read the laser's shutter.
+
+        close=True closes it, False opens it, None only reads it back.
+
+        This is the honest way to block the light. Blocking it by hand and
+        remembering to do so is not: on 2026-08-28 a "control" run came back
+        with the same amplitude as the live run because the checkbox had been
+        ticked but the beam was never blocked, and nothing in the result could
+        have revealed that.
+
+        Opens its own short-lived connection, so it works whether or not a
+        sweep is running. Every write is read back -- a shutter command that
+        silently did nothing is exactly the failure this is meant to remove.
+        """
+        p = self._sweep_params()
+        if p is None:
+            return
+        if self.st.laser is not None:
+            return messagebox.showerror(
+                "Laser already connected",
+                "Disconnect on the Laser tab first -- this instrument is "
+                "unreliable with more than one connection.")
+        if close and not messagebox.askokcancel(
+                "Close the shutter",
+                "Close the laser's shutter?\n\nNo light will leave the "
+                "instrument until it is opened again."):
+            return
+        if close is False and not messagebox.askokcancel(
+                "Open the shutter",
+                "OPEN the laser's shutter?\n\nLight will reach whatever is "
+                "connected to the output fibre."):
+            return
+
+        def go():
+            d = TSL775.connect("lan", host=p["ip"], timeout=5.0)
+            try:
+                if close is not None:
+                    d.write(":POW:SHUT %d" % (1 if close else 0))
+                    time.sleep(0.5)
+                return d.query(":POW:SHUT?").strip().lstrip("+")
+            finally:
+                d.close()
+
+        def done(state):
+            if state == "1":
+                self.sw_shutter_state.set("shutter: CLOSED (no light)")
+            elif state == "0":
+                self.sw_shutter_state.set("shutter: OPEN (light out)")
+            else:
+                self.sw_shutter_state.set("shutter: ? (%s)" % state)
+            self.log("laser shutter read back as %s" % state)
+
+        self.submit("shutter", go, done)
 
     def _refresh_mod_state(self):
         on = 1 in self.st.outputs_on
@@ -1651,13 +1720,16 @@ class BenchGui:
                 p["step"], n_points, p["step"] / p["speed"] * 1e6,
                 p["mod"] / 1e3))
         if self.sw_blocked.get():
-            msg += "CONTROL RUN: the beam should be BLOCKED.\n\n"
+            msg += ("CONTROL RUN: the shutter will be CLOSED in software for "
+                    "this run and restored afterwards. You do not need to "
+                    "block the beam by hand.\n\n")
         if not messagebox.askokcancel("Run the sweep",
                                       msg + "Light goes somewhere. Continue?"):
             return self.log("sweep cancelled")
 
         self.sw_run.configure(state="disabled")
         self.sw_status.set("running...")
+        p["blocked"] = bool(self.sw_blocked.get())
         self.submit("linear sweep", lambda: self._sweep_job(rp, p),
                     self._sweep_done)
 
@@ -1686,6 +1758,27 @@ class BenchGui:
                 ("speed", ":WAV:SWE:SPE?"), ("cycles", ":WAV:SWE:CYCL?"),
                 ("mode", ":WAV:SWE:MOD?"), ("trig", ":TRIG:OUTP?"),
                 ("trigstep", ":TRIG:OUTP:STEP?"))}
+            shutter_before = d.query(":POW:SHUT?").strip().lstrip("+")
+            if shutter_before == "1" and not p.get("blocked"):
+                raise RuntimeError(
+                    "the laser's shutter is CLOSED, so this run would see no "
+                    "light at all -- a control run wearing the label of a real "
+                    "one, and nothing in the trace would show it. Press "
+                    "'Shutter OPEN', or tick CONTROL RUN if that is what you "
+                    "meant.")
+            if p.get("blocked"):
+                # A REAL control. The checkbox used to only label the output
+                # file, which meant a control run that forgot to block the beam
+                # was indistinguishable from a real one -- and on 2026-08-28 a
+                # "control" came back with the same 300 mV as the live run,
+                # which is exactly what that looks like.
+                d.write(":POW:SHUT 1")
+                time.sleep(0.5)
+                if d.query(":POW:SHUT?").strip().lstrip("+") != "1":
+                    raise RuntimeError(
+                        "asked for a CONTROL run but the shutter did not "
+                        "close; refusing rather than reporting a control that "
+                        "was not one")
             d.write(":POW:STAT 1")
             time.sleep(2.0)                        # laser ON before configuring
             d.write(":WAV:SWE 0")
@@ -1735,6 +1828,8 @@ class BenchGui:
             try:
                 d.write(":WAV:SWE 0")
                 d.write(":POW:STAT 0")
+                if p.get("blocked"):
+                    d.write(":POW:SHUT %s" % shutter_before)
                 if before:
                     for cmd, key in ((":WAV:SWE:STAR", "start"),
                                      (":WAV:SWE:STOP", "stop"),
@@ -1781,6 +1876,8 @@ class BenchGui:
                            nominal_step=p["step"] / p["speed"])
         return dict(red=red, det=det, trg=trg, wl=wl, table=table,
                     clipped=dclip, swing_counts=swing_counts,
+                    blocked=bool(p.get("blocked")),
+                    shutter_before=shutter_before,
                     swing_v=swing_counts / ADC_COUNTS_PER_V_LV)
 
     def _sweep_done(self, out):
@@ -1802,16 +1899,23 @@ class BenchGui:
                           ylabel="amplitude (V)",
                           xfmt=lambda v: "%.1f" % v,
                           yfmt=lambda v: _eng(v) + "V")
-        tag = "CONTROL (blocked)" if self.sw_blocked.get() else "beam"
+        tag = ("CONTROL (shutter CLOSED in software)" if out.get("blocked")
+               else "beam")
         self.sw_status.set(
             "%s: %d points | IN1 swing %s V (%.0f counts)%s | amplitude "
             "median %sV, max %sV" % (
                 tag, w.size, _eng(out["swing_v"]), out["swing_counts"],
                 "  CLIPPED!" if out["clipped"] else "",
                 _eng(float(np.median(a))), _eng(float(a.max()))))
-        self.log("linear sweep done (%s): drive %.6f MHz AM %.4f kHz; axis "
-                 "from %s" % (tag, out["table"].carrier / 1e6,
-                              out["table"].modulation / 1e3, red.table_source))
+        self.log("linear sweep done (%s): drive %.6f MHz AM %.4f kHz; "
+                 "shutter was %s at the start; axis from %s"
+                 % (tag, out["table"].carrier / 1e6,
+                    out["table"].modulation / 1e3,
+                    "CLOSED" if out.get("shutter_before") == "1" else "open",
+                    red.table_source))
+        if out.get("blocked"):
+            self.log("This is the PICKUP FLOOR, measured with no light. A real "
+                     "optical signal has to stand clear of it.")
         if out["clipped"]:
             self.log("WARNING: %d IN1 samples at the ADC rail. Every amplitude "
                      "above is derived from a flattened waveform. Reduce the "
