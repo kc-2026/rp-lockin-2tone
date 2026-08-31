@@ -3653,3 +3653,63 @@ no wavelength axis and no trigger to capture on.
    wavelength axis.
 4. Then P3 properly, and the two-tone measurement.
 
+---
+
+## 2026-08-28 (late) — Claude (Claude Code) — the AOM's own 2*f1, measured
+
+**The AOM produces a second harmonic at -17.5 dB, and it has the SAME
+wavelength shape as the fundamental.** Measured while testing the SHG path with
+no crystal in it.
+
+| Demodulated at | Amplitude | Shape |
+|---|---|---|
+| f1 = 915.5273 kHz | 180 mV | the linear trace |
+| 2*f1 = 1831.0547 kHz | **24 mV** | **the same trace, scaled** |
+
+24/180 = 13.3% = **-17.5 dB**.
+
+**Why the same shape is the confirmation, not a coincidence.** An AOM diffracts
+as sin^2 of its drive, and the drive is depth-1 AM, so the diffracted light is
+already distorted before it goes anywhere: it carries harmonics of f1. That
+harmonic rides on the SAME light, through the same fibre, onto the same
+detector, so its wavelength dependence is the fundamental's multiplied by a
+constant. A scaled copy is exactly what a distortion product looks like; a
+DIFFERENT shape would have meant something else was going on.
+
+**This is the SHG confound, now quantified.** Any second-harmonic experiment
+has to clear 13.3% of the fundamental's amplitude before it has said anything.
+
+### Two ways to separate real SHG from it, when the crystal arrives
+
+1. **POWER SCALING, and this is the good one.** The AOM's 2*f1 is a
+   linear-optics artefact -- the light is already modulated at 2*f1 before it
+   reaches any crystal -- so the detected amplitude scales as P^1. True SHG
+   scales as **P^2**. On log-log against laser power the AOM background has
+   slope 1 and SHG has slope 2. **This works with the crystal left in place**,
+   which crystal-in/crystal-out does not, and the laser's -5 to +13 dBm range
+   gives an 18 dB lever arm. Worth measuring the slope-1 baseline BEFORE the
+   crystal arrives, so the comparison is against data rather than theory.
+2. **The detector.** The AOM's harmonic is carried on 1550 nm light. SHG of
+   1550 is 775 nm, which the InGaAs PDA05CF2 cannot see at all (800-1700 nm).
+   A silicon detector behind a filter that blocks the fundamental does not
+   receive the confound in the first place -- only whatever fundamental leaks
+   through the filter carries it.
+
+### The trap that found this
+
+Demodulating at a typed "1831" kHz gave a clean SINE WAVE, which reads as a
+result. It was a beat: the ASG snaps the drive to its 15258.789 Hz grid, so the
+real second harmonic is **1831.0547 kHz** and 1831.0000 is **54.7 Hz** away. A
+lock-in referenced 54.7 Hz from its signal returns a 54.7 Hz beat, and
+`amplitude()` projects onto a common phase, which turns that into a sine across
+the trace. About 55 cycles in a 1 s sweep.
+
+**Fixed in the bench two ways.** The Demodulate panel has f1 / 2*f1 / 3*f1
+buttons that take the SNAPPED drive frequency, so the harmonic cannot be typed
+wrong; and the lock-in output is checked for sign changes after every
+demodulation, which names the beat and its frequency rather than leaving a sine
+on screen.
+
+**Next:** measure the 2*f1 amplitude against laser power now, and confirm the
+slope is 1. That is the baseline the crystal will have to beat.
+

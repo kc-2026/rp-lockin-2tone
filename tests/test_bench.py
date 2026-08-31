@@ -382,3 +382,77 @@ def test_shg_demodulates_at_twice_the_drive(app, monkeypatch):
     assert captured, "the sequence never started"
     assert captured["f_ref"] == pytest.approx(2 * captured["mod"])
 
+
+# ------------------------------------------------- harmonics and beat notes
+# From the bench: an SHG run demodulated at "1831" kHz produced a clean sine
+# wave. Twice 915.5273 kHz is 1831.0547, so f_ref was 54.7 Hz off, and a
+# lock-in demodulating 54.7 Hz from its signal returns a 54.7 Hz beat. After
+# amplitude() projects onto a common phase that is a sine across the trace: it
+# looks like a measurement, and it is a typo.
+
+
+def test_the_harmonic_button_uses_the_snapped_drive_not_the_typed_one(app):
+    app.v_carrier.set("80.0")
+    app.v_mod.set("915.5273")
+    app.fref_from_drive(2)
+    got = float(app.v_fref.get()) * 1e3
+
+    from rp_lockin.waveforms import make_am_table
+    exact = 2 * make_am_table(80e6, 915.5273e3).modulation
+    assert got == pytest.approx(exact, abs=1.0)
+    assert abs(got - 1831e3) > 50.0, \
+        "the round number is 54.7 Hz off, which is the whole problem"
+
+
+def test_the_first_harmonic_button_reproduces_the_drive(app):
+    app.v_mod.set("915.5273")
+    app.fref_from_drive(1)
+    from rp_lockin.waveforms import make_am_table
+    assert float(app.v_fref.get()) * 1e3 == pytest.approx(
+        make_am_table(80e6, 915.5273e3).modulation, abs=1.0)
+
+
+class _Beating:
+    """A lock-in output whose phase rotates, as an offset reference gives."""
+
+    def __init__(self, beat_hz, seconds=1.0, fs_out=5000.0, amp=0.024):
+        self.fs_out = fs_out
+        self.f_ref = 1831000.0
+        n = int(seconds * fs_out)
+        self.t = np.arange(n) / fs_out
+        self._a = amp * np.cos(2 * np.pi * beat_hz * self.t)
+
+    def amplitude(self, smooth=None):
+        return self._a
+
+
+class _Steady:
+    def __init__(self, seconds=1.0, fs_out=5000.0, amp=0.18):
+        self.fs_out = fs_out
+        self.f_ref = 915527.34
+        n = int(seconds * fs_out)
+        self.t = np.arange(n) / fs_out
+        self._a = np.full(n, amp)
+
+    def amplitude(self, smooth=None):
+        return self._a
+
+
+def test_a_beating_lockin_output_is_called_out(app):
+    """The sine has to be named as a beat, with the offset, or it reads as a
+    result. Nothing else in the trace distinguishes the two."""
+    lines = []
+    app.log = lambda m: lines.append(m)
+    app._warn_if_beating(_Beating(54.7))
+    hits = [m for m in lines if "BEAT" in m]
+    assert hits, lines
+    assert "54" in hits[0] or "55" in hits[0], f"name the offset: {hits[0]}"
+
+
+def test_a_steady_lockin_output_is_not_called_a_beat(app):
+    """It must not cry wolf on the measurement that is working."""
+    lines = []
+    app.log = lambda m: lines.append(m)
+    app._warn_if_beating(_Steady())
+    assert not any("BEAT" in m for m in lines), lines
+

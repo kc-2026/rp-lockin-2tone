@@ -805,9 +805,70 @@ class Bench:
                           "without touching hardware.",
                   foreground="#666", justify="left").grid(
             row=2, column=0, columnspan=3, sticky="w", pady=(4, 4))
+        h = ttk.Frame(f)
+        h.grid(row=3, column=0, columnspan=3, sticky="w")
+        ttk.Label(h, text="set from drive:").pack(side="left")
+        ttk.Button(h, text="f1", width=4,
+                   command=lambda: self.fref_from_drive(1)).pack(side="left",
+                                                                  padx=2)
+        ttk.Button(h, text="2 x f1", width=7,
+                   command=lambda: self.fref_from_drive(2)).pack(side="left")
+        ttk.Button(h, text="3 x f1", width=7,
+                   command=lambda: self.fref_from_drive(3)).pack(side="left",
+                                                                 padx=2)
+        ttk.Label(f, text="Type the harmonic in by hand and you will be a few\n"
+                          "tens of hertz out, because the ASG SNAPS the drive\n"
+                          "to its grid. The lock-in then beats at the offset\n"
+                          "and the trace comes out as a sine wave.",
+                  foreground="#a04000", justify="left").grid(
+            row=4, column=0, columnspan=3, sticky="w", pady=(4, 4))
         ttk.Button(f, text="Demodulate capture",
-                   command=self.demod_run).grid(row=3, column=0, columnspan=3,
+                   command=self.demod_run).grid(row=5, column=0, columnspan=3,
                                                 sticky="w")
+
+    def fref_from_drive(self, harmonic):
+        """Set f_ref to an exact harmonic of what the ASG is ACTUALLY playing.
+
+        Not of what is typed in the Drive box. Both frequencies are snapped to
+        the 15258.789 Hz grid, so 915.5273 kHz becomes 915.52734375 and its
+        second harmonic is 1831.0547 kHz, not 1831. Entering the round number
+        leaves f_ref 54.7 Hz off, and a lock-in demodulating 54.7 Hz away from
+        its signal returns a 54.7 Hz BEAT -- which, after amplitude() projects
+        onto a common phase, is a clean sine wave across the trace. It looks
+        like a measurement. It is a typo.
+        """
+        from rp_lockin.waveforms import make_am_table
+        try:
+            cfg = self._drive_cfg()
+        except ValueError as e:
+            return messagebox.showerror("Drive", f"Not a number: {e}")
+        table = make_am_table(cfg["carrier"], cfg["modulation"])
+        f = harmonic * table.modulation
+        self.v_fref.set(f"{f / 1e3:.6f}")
+        self.log(f"f_ref = {harmonic} x the SNAPPED drive "
+                 f"({table.modulation:.4f} Hz) = {f:.4f} Hz")
+
+    def _warn_if_beating(self, r):
+        """A lock-in output that oscillates is a frequency offset, not physics.
+
+        amplitude() projects X+jY onto one phase, so a reference that is off by
+        df makes the projection swing between +A and -A at df. Counting sign
+        changes recovers df, which is the number needed to fix it -- so say it
+        rather than leaving a sine on screen looking like a result.
+        """
+        a = r.amplitude()
+        if a.size < 32:
+            return
+        crossings = int(np.count_nonzero(np.diff(np.signbit(a))))
+        if crossings < 4:
+            return
+        duration = a.size / r.fs_out
+        beat = crossings / (2.0 * duration)
+        self.log(f"WARNING: the lock-in output changes sign {crossings} times "
+                 f"-- that is a BEAT at about {beat:.1f} Hz, not a signal. "
+                 f"f_ref is roughly {beat:.1f} Hz away from whatever is "
+                 f"actually there. Use the f1 / 2 x f1 buttons, which take the "
+                 f"SNAPPED drive frequency.")
 
     def demod_run(self):
         if not self.ws.capture:
@@ -830,6 +891,7 @@ class Bench:
             self.log(f"demodulated at {r.f_ref / 1e3:.4f} kHz: {a.size} points, "
                      f"median {np.median(a) * 1e3:.4f} mV, "
                      f"max {a.max() * 1e3:.4f} mV")
+            self._warn_if_beating(r)
             self.plot_what.set("lock-in (amplitude vs time)")
             self.redraw()
 
