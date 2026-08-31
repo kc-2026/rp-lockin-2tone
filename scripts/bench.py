@@ -429,7 +429,7 @@ class Bench:
         ttk.Button(b, text="Connect", command=self.board_connect).pack(side="left")
         ttk.Button(b, text="Disconnect",
                    command=self.board_disconnect).pack(side="left", padx=4)
-        ttk.Button(b, text="Apply front end",
+        ttk.Button(b, text="Configure",
                    command=self.board_front_end).pack(side="left")
 
     def board_connect(self):
@@ -465,7 +465,7 @@ class Bench:
         g1, c1 = [x.strip() for x in self.v_in1.get().split("/")]
         g2, c2 = [x.strip() for x in self.v_in2.get().split("/")]
         dec = int(self.v_dec.get())
-        self.submit(self.board, "front end",
+        self.submit(self.board, "configure front end",
                     lambda: ops.front_end(rp, c1, g1, c2, g2, dec),
                     lambda v: self.log(f"front end: IN1 {v['in1']}, "
                                        f"IN2 {v['in2']}, dec {v['decimation']}"))
