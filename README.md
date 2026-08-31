@@ -8,6 +8,23 @@ is exactly the moment it is needed.*
 
 Two-tone lock-in detection on a Red Pitaya SIGNALlab 250-12.
 
+## Running it
+
+The project lives at `C:\devp-lockin-2tone` on the bench PC, and everything
+runs from its **venv**, not the system Python:
+
+```
+run_gui.cmd                                   # the bench GUI, double-clickable
+.venv\Scripts\python.exe scripts\p4_linear_sweep.py --i-am-present
+.venv\Scripts\python.exe -m pytest -q
+```
+
+**Do not run from a copy on the Desktop.** An unzipped snapshot lived at
+`Desktopp-lockin-2tone-main` after the 2026-08-28 machine rebuild; it has no
+`.venv` and falls further behind every commit. Starting the GUI from it fails
+with `ModuleNotFoundError: No module named 'numpy'`, which names the
+interpreter but not the real problem, which is the folder.
+
 Two AOMs gate light — one at 5 MHz, one at 6 MHz — by amplitude modulating the
 80 MHz acoustic drive each AOM needs. **That 80 MHz is the AOM's requirement, not
 the DUT's; the DUT only ever sees light varying in brightness.** The DUT mixes the
