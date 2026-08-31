@@ -202,3 +202,29 @@ def test_sweep_info_reports_the_trigger_rate(app):
     info = app.v_sweepinfo.get()
     assert "5001 points" in info
     assert "200.0 us" in info
+
+
+def test_a_capture_always_takes_both_channels():
+    """Not a convenience, and deliberately not selectable.
+
+    reduce_sweep requires the detector and the trigger to come from the SAME
+    acquisition, because that is what puts them on one time base. A trigger
+    record from a different capture relates to the detector only by luck, and
+    would misplace every wavelength while still producing a clean-looking
+    trace.
+    """
+    import inspect
+    import _bench_ops as ops
+    src = inspect.getsource(ops.acquire)
+    assert "channels=(1, 2)" in src, "the capture must take both channels"
+    returns = inspect.getsource(ops.acquire).split("return")[-1]
+    assert "ch1" in returns and "ch2" in returns
+
+
+def test_the_armed_indicator_exists_and_starts_empty(app):
+    """Arming blocks for up to 120 s waiting for a trigger the LASER has to
+    produce, so the bench has to say out loud that it is waiting and what to
+    press next."""
+    assert hasattr(app, "h_armed")
+    assert app.h_armed.get() == ""
+

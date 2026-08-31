@@ -5,8 +5,7 @@ The bench: independent instrument panels that compose into a sweep.
     python scripts/bench.py
 
 Replaces the tabbed `bench_gui.py`, which is kept working alongside it until
-this one has earned the bench. Three things are different, and they are the
-whole point:
+this one has earned the bench. What is different, and why:
 
 GRANULARITY. Every panel does ONE thing to ONE instrument and works on its
 own. Arm a capture, fire a sweep by hand, read the log ten minutes later,
@@ -224,10 +223,13 @@ class Bench:
         self.h_out = tk.StringVar(value="OUT1 --")
         self.h_laser = tk.StringVar(value="laser --")
         self.h_sweep = tk.StringVar(value="sweep --")
+        self.h_armed = tk.StringVar(value="")
         bold = ("TkDefaultFont", 9, "bold")
         for var in (self.h_board, self.h_out, self.h_laser, self.h_sweep):
             ttk.Label(h, textvariable=var, font=bold).pack(side="left",
                                                            padx=(0, 18))
+        ttk.Label(h, textvariable=self.h_armed, font=bold,
+                  foreground="#a04000").pack(side="left", padx=(0, 18))
         ttk.Button(h, text="ALL OUTPUTS OFF",
                    command=self.all_off).pack(side="right")
         self.status = tk.StringVar(value="idle")
@@ -655,14 +657,23 @@ class Bench:
                      values=("CH2_PE", "CH1_PE", "EXT_PE", "NOW")).grid(
             row=2, column=1, sticky="w")
         fld(f, 3, "level", self.v_level, "V")
-        ttk.Label(f, text="Arms and BLOCKS until the trigger arrives.\n"
-                          "The laser is on its own worker, so you can\n"
-                          "press Sweep > Start while this waits.",
+        ttk.Label(f, text="Always captures IN1 AND IN2 together. Not\n"
+                          "optional: the wavelength axis is only valid if\n"
+                          "the detector and the trigger share one record,\n"
+                          "and one time base.",
                   foreground="#666", justify="left").grid(
-            row=4, column=0, columnspan=3, sticky="w", pady=(4, 4))
+            row=4, column=0, columnspan=3, sticky="w", pady=(4, 2))
+        ttk.Label(f, text="ORDER: press Capture FIRST -- it arms and waits --\n"
+                          "then Sweep > Start. The laser has its own worker,\n"
+                          "so it is not stuck behind the waiting capture.",
+                  foreground="#144", justify="left").grid(
+            row=5, column=0, columnspan=3, sticky="w", pady=(0, 4))
         b = ttk.Frame(f)
-        b.grid(row=5, column=0, columnspan=3, sticky="w")
-        ttk.Button(b, text="Capture", command=self.acquire_now).pack(side="left")
+        b.grid(row=6, column=0, columnspan=3, sticky="w")
+        ttk.Button(b, text="1. Capture (arm)",
+                   command=self.acquire_now).pack(side="left")
+        ttk.Button(b, text="2. Sweep > Start",
+                   command=self.sweep_start).pack(side="left", padx=4)
 
     def acquire_now(self):
         rp = self._need_board()
@@ -676,9 +687,14 @@ class Bench:
             return messagebox.showerror("Acquire", f"Not a number: {e}")
         plan = ops.capture_plan(secs, decimation=dec)
         trig = self.v_trig.get()
-        self.log(f"arming: {plan['n_samples']} samples @ "
+        self.log(f"arming: {plan['n_samples']} samples x2 channels @ "
                  f"{plan['fs'] / 1e6:.3f} MS/s, pre-roll "
                  f"{plan['preroll'] / plan['fs'] * 1e3:.2f} ms, trig {trig}")
+        if trig != "NOW":
+            self.h_armed.set("capture ARMED")
+            self.log(f">>> ARMED and waiting for {trig}. NOW press "
+                     f"Sweep > Start (or fire the trigger by hand). It gives "
+                     f"up after 120 s.")
         if plan["truncated"]:
             self.log("WARNING: record hit the DMA ceiling and was truncated; "
                      "the trace may run past the end of the laser's table.")
@@ -689,18 +705,25 @@ class Bench:
                                trigger=trig, level=level)
 
         def done(cap):
+            self.h_armed.set("")
             self.ws.capture = cap
             self.refresh_workspace()
             c1, c2 = cap["ch1"], cap["ch2"]
-            self.log(f"captured. IN1 swing {ops.swing(c1):.0f} counts "
-                     f"({ops.swing(c1) / 1817.7 * 1e3:.1f} mV), "
-                     f"IN2 swing {ops.swing(c2):.0f} counts")
+            self.log(f"captured {c1.size} samples on BOTH channels. "
+                     f"IN1 {ops.swing(c1) / 1817.7 * 1e3:.1f} mV "
+                     f"({ops.swing(c1):.0f} counts), "
+                     f"IN2 {ops.swing(c2):.0f} counts")
+            if ops.swing(c2) < 50:
+                self.log("WARNING: IN2 barely moves. Nothing is arriving on "
+                         "the trigger channel -- is the BNC in the analog IN2 "
+                         "socket rather than the external-trigger one?")
             if ops.clipped(c1):
                 self.log(f"WARNING: {ops.clipped(c1)} IN1 samples at the ADC "
                          f"rail. Amplitudes from a flattened waveform are "
                          f"wrong, not noisy. Reduce the light.")
 
-        self.submit(self.board, "capture", go, done)
+        self.submit(self.board, "capture", go, done,
+                    lambda _e: self.h_armed.set(""))
 
     # -- Demodulate ----------------------------------------------------------
 
