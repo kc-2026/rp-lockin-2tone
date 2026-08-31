@@ -10,7 +10,7 @@ Two-tone lock-in detection on a Red Pitaya SIGNALlab 250-12.
 
 ## Running it
 
-The project lives at `C:\devp-lockin-2tone` on the bench PC, and everything
+The project lives at `C:\dev\rp-lockin-2tone` on the bench PC, and everything
 runs from its **venv**, not the system Python:
 
 ```
@@ -20,7 +20,7 @@ run_gui.cmd                                   # the bench GUI, double-clickable
 ```
 
 **Do not run from a copy on the Desktop.** An unzipped snapshot lived at
-`Desktopp-lockin-2tone-main` after the 2026-08-28 machine rebuild; it has no
+`Desktop\rp-lockin-2tone-main` after the 2026-08-28 machine rebuild; it has no
 `.venv` and falls further behind every commit. Starting the GUI from it fails
 with `ModuleNotFoundError: No module named 'numpy'`, which names the
 interpreter but not the real problem, which is the folder.
