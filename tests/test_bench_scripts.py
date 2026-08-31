@@ -40,7 +40,11 @@ def load(name):
 
 
 ALL_SCRIPTS = ["_bench", "p2_trigger_check", "p3_drive_chain", "p4_detector",
-               "p5_first_measurement", "p6_robustness"]
+               "p5_first_measurement", "p6_robustness",
+               # Added 2026-08-28. p4_linear_sweep drives OUT1 into an
+               # amplifier and an AOM, so an import-time typo in it would be
+               # found with the hardware powered -- exactly what this pins.
+               "p4_linear_sweep", "full_sweep_test"]
 
 
 @pytest.mark.parametrize("name", ALL_SCRIPTS)
