@@ -34,6 +34,15 @@ from .waveforms import AsgTable, make_am_table
 __all__ = ["RedPitaya"]
 
 
+class TriggerCancelled(Exception):
+    """A wait for a trigger was abandoned on purpose.
+
+    Distinct from TimeoutError: a timeout means the trigger never came and
+    something is probably wrong, while this means somebody pressed Stop. They
+    should not read the same in a log.
+    """
+
+
 class RedPitaya:
     """
     Minimal SCPI client for a Red Pitaya running the stock OS.
@@ -146,7 +155,7 @@ class RedPitaya:
         return np.frombuffer(raw, dtype=">i2").astype(np.float64)
 
     def wait_until(self, query: str, expected: str, timeout: float = 10.0,
-                   what: str = "") -> None:
+                   what: str = "", should_stop=None) -> None:
         """
         Poll `query` until it returns `expected`, or raise on timeout.
 
@@ -162,6 +171,14 @@ class RedPitaya:
         deadline = time.monotonic() + timeout
         last = None
         while time.monotonic() < deadline:
+            # Checked between polls so a wait for a trigger that is never
+            # coming can be abandoned deliberately. Without it the only way out
+            # of a 120 s trigger wait is to wait 120 s, during which nothing
+            # else can talk to the board.
+            if should_stop is not None and should_stop():
+                raise TriggerCancelled(
+                    f"{what or query} was cancelled after "
+                    f"{timeout - (deadline - time.monotonic()):.1f} s")
             last = self.query(query)
             if last == expected:
                 return
@@ -465,7 +482,8 @@ class RedPitaya:
                           trigger: str = "NOW",
                           trigger_level: float = 0.1,
                           preroll_samples: int = 0,
-                          trigger_timeout: float = 30.0) -> list[np.ndarray]:
+                          trigger_timeout: float = 30.0,
+                          should_stop=None) -> list[np.ndarray]:
         """
         Deep capture, read back over the fast path. USE THIS, not
         acquire_deep_2ch.
@@ -574,7 +592,8 @@ class RedPitaya:
                 time.sleep(1.5 * preroll_samples * decimation / self.base_rate)
             self.write(f"ACQ:TRig {trigger}")
             self.wait_until("ACQ:TRig:STAT?", "TD", timeout=trigger_timeout,
-                            what=f"deep acquisition trigger ({trigger})")
+                            what=f"deep acquisition trigger ({trigger})",
+                            should_stop=should_stop)
             fill_timeout = 30.0 + 4 * n_samples * decimation / self.base_rate
             self.wait_until(f"ACQ:AXI:SOUR{channels[0]}:TRIG:FILL?", "1",
                             timeout=fill_timeout, what="deep memory fill")

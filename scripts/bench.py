@@ -168,6 +168,10 @@ class Bench:
         self.board.start()
         self.lasw.start()
         self._seq_running = False
+        # Set by Stop, read between trigger polls. An Event rather than a bool
+        # so the worker thread sees it the moment the UI thread sets it.
+        self._cancel = threading.Event()
+        self._armed_until = None
 
         root.title("rp-lockin-2tone -- bench")
         root.geometry("1280x860")
@@ -783,6 +787,7 @@ class Bench:
         self.v_secs = tk.StringVar(value="1.0")
         self.v_trig = tk.StringVar(value="CH2_PE")
         self.v_level = tk.StringVar(value="1.0")
+        self.v_wait = tk.StringVar(value="30")
         fld(f, 0, "decimation", self.v_dec)
         fld(f, 1, "cover", self.v_secs, "s")
         ttk.Label(f, text="trigger").grid(row=2, column=0, sticky="w")
@@ -795,6 +800,7 @@ class Bench:
                      values=("CH2_PE", "CH2_NE", "CH1_PE", "EXT_PE")).grid(
             row=2, column=1, sticky="w")
         fld(f, 3, "level", self.v_level, "V")
+        fld(f, 6, "wait up to", self.v_wait, "s")
         ttk.Label(f, text="Always captures IN1 AND IN2 together. Not\n"
                           "optional: the wavelength axis is only valid if\n"
                           "the detector and the trigger share one record,\n"
@@ -813,6 +819,82 @@ class Bench:
                    command=self.acquire_now).pack(side="left")
         ttk.Button(b, text="Snapshot (no trigger)",
                    command=self.acquire_snapshot).pack(side="left", padx=4)
+        self.b_stop = ttk.Button(b, text="STOP waiting",
+                                 command=self.acquire_stop, state="disabled")
+        self.b_stop.pack(side="left")
+
+    def _check_train(self, cap):
+        """Compare the recorded train against the sweep that was requested."""
+        try:
+            cfg = self._sweep_cfg()
+        except ValueError:
+            return
+        n_pts = int(round(abs(cfg["stop_nm"] - cfg["start_nm"])
+                          / cfg["step_nm"])) + 1
+        secs = (n_pts - 1) * (cfg["step_nm"] / cfg["speed_nm_s"])
+        r = ops.check_train(cap, secs, expected_points=n_pts)
+        if r.get("ok") is None:
+            return
+        self.log(f"trigger train: {r['n_edges']} pulses spanning "
+                 f"{r['span']:.4f} s (the Sweep panel asks for {secs:.4f} s "
+                 f"and {n_pts} points)")
+        if not r["ok"]:
+            self.log(
+                f"WARNING: the train is {r['ratio'] * 100:.1f}% of the "
+                f"requested duration. The laser almost certainly swept at "
+                f"about {r['implied_speed_factor']:.2f}x the speed this panel "
+                f"says, finished early, and then SAT at its end wavelength "
+                f"for the rest of the record. That parked stretch is smooth "
+                f"and slowly drifting, and next to the real sweep it reads as "
+                f"a change in the physics. Press Sweep > Configure to put the "
+                f"instrument and this panel back in step, then capture again.")
+        if r.get("points_ok") is False:
+            self.log(f"WARNING: {r['n_edges']} pulses against "
+                     f"{r['expected_points']} expected. The wavelength axis "
+                     f"needs one pulse per logged point.")
+
+    def _disarm_ui(self):
+        self._armed_until = None
+        self.h_armed.set("")
+        try:
+            self.b_stop.configure(state="disabled")
+        except tk.TclError:
+            pass
+
+    def _tick_armed(self):
+        """Count down in the header, so a wait never looks like a hang."""
+        if self._armed_until is None:
+            return
+        left = self._armed_until - time.time()
+        if left <= 0:
+            return self.h_armed.set("capture ARMED -- giving up...")
+        self.h_armed.set(f"capture ARMED -- waiting {left:.0f} s")
+        self.root.after(250, self._tick_armed)
+
+    def acquire_stop(self):
+        """Abandon a wait for a trigger that is not coming.
+
+        The flag is read between trigger polls, so this takes effect within one
+        SCPI round trip (~50 ms) rather than at the end of the timeout. The
+        board is disarmed on the way out by acquire_deep_fast's finally, the
+        same path a timeout takes.
+        """
+        if self._armed_until is None:
+            return self.log("nothing is waiting")
+        self._cancel.set()
+        self.h_armed.set("capture ARMED -- stopping...")
+        self.log("STOP pressed: abandoning the wait for a trigger.")
+
+    def _capture_failed(self, exc):
+        self._disarm_ui()
+        from rp_lockin.hardware import TriggerCancelled
+        if isinstance(exc, TriggerCancelled):
+            self.log("capture cancelled. The board was disarmed on the way "
+                     "out; nothing is left waiting.")
+        else:
+            self.log("capture did not trigger. Arm FIRST, then start the "
+                     "sweep -- a capture armed after the sweep has finished "
+                     "will wait for a trigger that has already been and gone.")
 
     def acquire_snapshot(self, seconds=0.02):
         """A short UNTRIGGERED look at both inputs, for alignment and levels.
@@ -855,6 +937,7 @@ class Bench:
             dec = int(self.v_dec.get())
             secs = float(self.v_secs.get())
             level = float(self.v_level.get())
+            wait = float(self.v_wait.get())
         except ValueError as e:
             return messagebox.showerror("Acquire", f"Not a number: {e}")
         plan = ops.capture_plan(secs, decimation=dec)
@@ -878,18 +961,22 @@ class Bench:
                  f"{plan['fs'] / 1e6:.3f} MS/s, pre-roll "
                  f"{plan['preroll'] / plan['fs'] * 1e3:.2f} ms, trig {trig}")
         if trig != "NOW":
-            self.h_armed.set("capture ARMED")
+            self._cancel.clear()
+            self._armed_until = time.time() + wait
+            self.b_stop.configure(state="normal")
+            self._tick_armed()
             self.log(f">>> ARMED and waiting for {trig}. NOW press "
                      f"Sweep > Start (or fire the trigger by hand). It gives "
-                     f"up after 120 s.")
+                     f"up after {wait:g} s, or press STOP waiting.")
 
         def go():
             return ops.acquire(rp, n_samples=plan["n_samples"],
                                decimation=dec, preroll=plan["preroll"],
-                               trigger=trig, level=level)
+                               trigger=trig, level=level, timeout=wait,
+                               should_stop=self._cancel.is_set)
 
         def done(cap):
-            self.h_armed.set("")
+            self._disarm_ui()
             had = self.ws.lockin is not None or self.ws.reduction is not None
             self.ws.set_capture(cap)
             if had:
@@ -906,6 +993,7 @@ class Bench:
                          f"{cap['first_edge'] * 1e3:.3f} ms into the record "
                          f"({cap['n_edges']} edges). Time views are plotted "
                          f"relative to it, so 0 is the start of the sweep.")
+                self._check_train(cap)
             if ops.swing(c2) < 50:
                 self.log("WARNING: IN2 barely moves. Nothing is arriving on "
                          "the trigger channel -- is the BNC in the analog IN2 "
@@ -915,8 +1003,7 @@ class Bench:
                          f"rail. Amplitudes from a flattened waveform are "
                          f"wrong, not noisy. Reduce the light.")
 
-        self.submit(self.board, "capture", go, done,
-                    lambda _e: self.h_armed.set(""))
+        self.submit(self.board, "capture", go, done, self._capture_failed)
 
     # -- Demodulate ----------------------------------------------------------
 

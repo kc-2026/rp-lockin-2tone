@@ -126,7 +126,7 @@ def smallest_decimation_for(seconds, output_rate=5000.0):
 
 
 def acquire(rp, n_samples, decimation=8, preroll=0, trigger="CH2_PE",
-            level=1.0, timeout=120.0):
+            level=1.0, timeout=30.0, should_stop=None):
     """One two-channel deep capture. Returns RAW COUNTS plus provenance.
 
     Counts, not volts: the rail belongs to the converter, so clipping has to be
@@ -135,26 +135,29 @@ def acquire(rp, n_samples, decimation=8, preroll=0, trigger="CH2_PE",
     ch = rp.acquire_deep_fast(n_samples=n_samples, decimation=decimation,
                               channels=(1, 2), trigger=trigger,
                               trigger_level=level, preroll_samples=preroll,
-                              trigger_timeout=timeout)
+                              trigger_timeout=timeout, should_stop=should_stop)
     c1 = np.asarray(ch[0], dtype=float)
     c2 = np.asarray(ch[1], dtype=float)
     fs = BASE_SAMPLE_RATE / decimation
     # Where the sweep began, in this record's own time. Found once, here, so
     # every later view can show time relative to it without re-scanning 33 M
     # samples -- and so the number every view uses is the same number.
-    first_edge, n_edges = None, 0
+    first_edge, last_edge, n_edges = None, None, 0
     try:
         thr, lo, hi = trigger_threshold(c2)
         if hi - lo > 50:                    # a trigger is actually present
             edges = find_trigger_edges(c2, fs, threshold=thr,
                                        polarity="rising")
             if edges.size:
-                first_edge, n_edges = float(edges[0]), int(edges.size)
+                first_edge = float(edges[0])
+                last_edge = float(edges[-1])
+                n_edges = int(edges.size)
     except Exception:                        # noqa: BLE001
         pass
     return {"ch1": c1, "ch2": c2, "fs": fs, "decimation": decimation,
             "preroll": preroll, "trigger": trigger, "t": time.time(),
-            "first_edge": first_edge, "n_edges": n_edges}
+            "first_edge": first_edge, "last_edge": last_edge,
+            "n_edges": n_edges}
 
 
 def acquire_async(rp, **kw):
@@ -175,6 +178,35 @@ def acquire_async(rp, **kw):
     th = threading.Thread(target=run, daemon=True)
     th.start()
     return th, out
+
+
+def check_train(capture, expected_seconds, expected_points=None,
+                tol=0.05):
+    """Did the trigger train last as long as the sweep that was asked for?
+
+    A sweep that finishes early leaves the laser PARKED at its end wavelength
+    for the rest of the record, and the trace then shows two quite different
+    regimes with a sharp boundary: real structure while it sweeps, then a
+    smooth slow drift while it sits. That reads as physics. It is a mismatch
+    between the speed the capture was sized for and the speed the instrument
+    actually ran at -- pressing Configure before or after changing the speed is
+    enough to do it.
+
+    Returns a dict, and `ok` False when the train is short.
+    """
+    fe, le, n = (capture.get("first_edge"), capture.get("last_edge"),
+                 capture.get("n_edges", 0))
+    if fe is None or le is None or n < 3:
+        return {"ok": None, "reason": "no usable trigger train"}
+    span = le - fe
+    ratio = span / expected_seconds if expected_seconds else float("nan")
+    out = {"ok": abs(ratio - 1.0) <= tol, "span": span, "n_edges": n,
+           "expected": expected_seconds, "ratio": ratio,
+           "implied_speed_factor": (1.0 / ratio) if ratio else float("nan")}
+    if expected_points:
+        out["expected_points"] = expected_points
+        out["points_ok"] = abs(n - expected_points) <= max(2, expected_points // 100)
+    return out
 
 
 def volts(counts, gain="LV"):

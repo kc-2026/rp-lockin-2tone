@@ -619,3 +619,124 @@ def test_the_stored_lockin_times_are_never_shifted(app):
     assert app.plot.x.min() < 0.0
     assert app.plot.x.min() == pytest.approx(0.0113 - 0.02486)
 
+
+# ------------------------------------------------------- the trigger train
+# From the bench: a trace showed real structure to about 500 ms and then a
+# smooth slow drift to 1.0 s, with a sharp boundary. That is not physics. The
+# sweep finished early and the laser SAT at its end wavelength for the rest of
+# the record, which is what a speed mismatch between the panel and the
+# instrument looks like.
+
+
+def test_a_short_train_is_caught_and_the_speed_factor_named():
+    import _bench_ops as ops
+    cap = {"first_edge": 0.0, "last_edge": 0.500, "n_edges": 2501}
+    r = ops.check_train(cap, 1.000, expected_points=5001)
+    assert r["ok"] is False
+    assert r["ratio"] == pytest.approx(0.5)
+    assert r["implied_speed_factor"] == pytest.approx(2.0)
+    assert r["points_ok"] is False
+
+
+def test_a_matching_train_passes():
+    import _bench_ops as ops
+    cap = {"first_edge": 0.0248, "last_edge": 1.0248, "n_edges": 5001}
+    r = ops.check_train(cap, 1.000, expected_points=5001)
+    assert r["ok"] is True
+    assert r["points_ok"] is True
+
+
+def test_no_train_is_reported_as_unknown_not_as_a_pass():
+    """Silence must not read as agreement."""
+    import _bench_ops as ops
+    r = ops.check_train({"first_edge": None, "last_edge": None, "n_edges": 0},
+                        1.0)
+    assert r["ok"] is None
+
+
+# ------------------------------------------------- abandoning a trigger wait
+# From the bench: a capture armed AFTER the sweep had finished sat there
+# waiting for a trigger that had already been and gone, and there was no way
+# out but to wait the full timeout -- during which nothing else could talk to
+# the board. The board itself was fine; the tool was not.
+
+
+class _StubBoard:
+    """Answers ACQ:TRig:STAT? with WAIT forever, like a board with no trigger."""
+
+    def __init__(self):
+        self.polls = 0
+
+    def query(self, _q):
+        self.polls += 1
+        return "WAIT"
+
+
+def test_the_trigger_wait_can_be_abandoned():
+    from rp_lockin.hardware import RedPitaya, TriggerCancelled
+    stub = _StubBoard()
+    stop = {"now": False}
+
+    def should_stop():
+        stop["now"] = stub.polls >= 3        # let a few polls happen first
+        return stop["now"]
+
+    with pytest.raises(TriggerCancelled):
+        RedPitaya.wait_until(stub, "ACQ:TRig:STAT?", "TD", timeout=60.0,
+                             should_stop=should_stop)
+    assert stub.polls < 20, "it should stop promptly, not run the timeout out"
+
+
+def test_cancelling_is_not_the_same_as_timing_out():
+    """A timeout means the trigger never came and something may be wrong. A
+    cancel means somebody pressed Stop. They must not read the same."""
+    from rp_lockin.hardware import RedPitaya, TriggerCancelled
+    assert not issubclass(TriggerCancelled, TimeoutError)
+
+    stub = _StubBoard()
+    with pytest.raises(TimeoutError):
+        RedPitaya.wait_until(stub, "ACQ:TRig:STAT?", "TD", timeout=0.05)
+
+
+def test_without_the_hook_nothing_changes():
+    """The hook is optional, so every existing caller behaves as before."""
+    from rp_lockin.hardware import RedPitaya
+    stub = _StubBoard()
+    with pytest.raises(TimeoutError):
+        RedPitaya.wait_until(stub, "ACQ:TRig:STAT?", "TD", timeout=0.05,
+                             should_stop=None)
+
+
+def test_the_bench_offers_a_stop_and_a_settable_wait(app):
+    assert hasattr(app, "acquire_stop")
+    assert hasattr(app, "b_stop")
+    assert float(app.v_wait.get()) <= 60, \
+        "a default a human will not sit through is the whole complaint"
+
+
+def test_stop_with_nothing_armed_says_so_rather_than_pretending(app):
+    lines = []
+    app.log = lambda m: lines.append(m)
+    app.acquire_stop()
+    assert any("nothing is waiting" in m for m in lines), lines
+
+
+def test_a_failed_capture_explains_the_ordering(app):
+    """The likeliest cause is arming after the sweep, so say it."""
+    lines = []
+    app.log = lambda m: lines.append(m)
+    app._capture_failed(TimeoutError("no trigger"))
+    joined = " ".join(lines)
+    assert "Arm FIRST" in joined
+    assert app.h_armed.get() == ""
+
+
+def test_a_cancelled_capture_reads_differently_from_a_failed_one(app):
+    from rp_lockin.hardware import TriggerCancelled
+    lines = []
+    app.log = lambda m: lines.append(m)
+    app._capture_failed(TriggerCancelled("stopped"))
+    joined = " ".join(lines)
+    assert "cancelled" in joined
+    assert "Arm FIRST" not in joined, "a deliberate stop is not a fault"
+
