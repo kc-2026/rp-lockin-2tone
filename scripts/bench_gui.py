@@ -1523,7 +1523,11 @@ class BenchGui:
         # from the amplifier does not move at all, because the RF drive is
         # untouched. That distinguishes them by how much they change, not by
         # whether something was remembered.
-        self.sw_ctrl_dbm = tk.StringVar(value="-10.0")
+        # -5 dBm is this unit's floor, read from the instrument itself
+        # (:POWer:LEVel? MIN). Asking for less is silently ignored -- the laser
+        # keeps its old setpoint and answers the query with it -- so the value
+        # is clamped to the reported range at run time rather than trusted.
+        self.sw_ctrl_dbm = tk.StringVar(value="-5.0")
         for r, (lbl, var, unit) in enumerate((
                 ("Laser IP", self.sw_ip, ""),
                 ("Start", self.sw_start, "nm"),
@@ -1838,16 +1842,38 @@ class BenchGui:
                 ("trigstep", ":TRIG:OUTP:STEP?"))}
             shutter_before = d.query(":POW:SHUT?").strip().lstrip("+")
             level_before = level
+            ctrl_note = ""
             if p.get("blocked"):
-                d.write(":POWer:LEVel %.3f" % p["ctrl_dbm"])
+                # Ask the instrument for its own limits. This unit reports
+                # -5 to +13 dBm, and a request below the floor is IGNORED
+                # rather than refused: the setpoint simply stays where it was
+                # and the query answers with the old value, which looks exactly
+                # like a control run that quietly did nothing.
+                pmin = float(d.query(":POWer:LEVel? MIN"))
+                pmax = float(d.query(":POWer:LEVel? MAX"))
+                want = min(max(p["ctrl_dbm"], pmin), pmax)
+                if abs(want - p["ctrl_dbm"]) > 1e-6:
+                    ctrl_note = ("asked for %.2f dBm, clamped to %.2f dBm "
+                                 "(instrument range %.2f to %.2f)"
+                                 % (p["ctrl_dbm"], want, pmin, pmax))
+                else:
+                    ctrl_note = "control power %.2f dBm" % want
+                d.write(":POWer:LEVel %.3f" % want)
                 time.sleep(0.5)
                 got = float(d.query(":POWer:LEVel?"))
-                if abs(got - p["ctrl_dbm"]) > 0.2:
+                if abs(got - want) > 0.2:
                     raise RuntimeError(
                         "asked for a CONTROL run at %.2f dBm but the laser "
-                        "reads back %.2f dBm; refusing rather than reporting a "
-                        "control that was not one"
-                        % (p["ctrl_dbm"], got))
+                        "reads back %.2f dBm (its range is %.2f to %.2f); "
+                        "refusing rather than reporting a control that was "
+                        "not one" % (want, got, pmin, pmax))
+                if level_before - got < 3.0:
+                    raise RuntimeError(
+                        "a control run needs a real power drop, and this is "
+                        "only %.1f dB (%.2f -> %.2f dBm). The instrument floor "
+                        "is %.2f dBm. Raise the laser setpoint first so there "
+                        "is something to drop from."
+                        % (level_before - got, level_before, got, pmin))
                 level = got
             # NOT a refusal. This guard used to raise here, and it was
             # wrong: the instrument OPENS the shutter by itself when a sweep
@@ -1973,7 +1999,8 @@ class BenchGui:
                     blocked=bool(p.get("blocked")),
                     shutter_before=shutter_before,
                     shutter_during=shutter_during,
-                    laser_dbm=level,
+                    laser_dbm=level, laser_dbm_before=level_before,
+                    ctrl_note=ctrl_note,
                     swing_v=swing_counts / ADC_COUNTS_PER_V_LV)
 
     def _sweep_failed(self, _exc):
@@ -2022,10 +2049,12 @@ class BenchGui:
                     {"0": "OPEN", "1": "CLOSED"}.get(out.get("shutter_during"),
                                                      "unread")))
         if out.get("blocked"):
-            self.log("CONTROL RUN at reduced power. Compare its amplitude with "
-                     "the full-power run: an OPTICAL signal falls by the power "
-                     "ratio, electrical pickup does not move at all, because "
-                     "the RF drive was identical in both.")
+            drop = out.get("laser_dbm_before", 0.0) - out.get("laser_dbm", 0.0)
+            self.log("CONTROL RUN: %s -- a %.1f dB drop, so an OPTICAL signal "
+                     "should fall to %.1f%% of the full-power run. Electrical "
+                     "pickup will not move at all, because the RF drive was "
+                     "identical in both."
+                     % (out.get("ctrl_note", ""), drop, 100 * 10 ** (-drop / 10)))
         if out["clipped"]:
             self.log("WARNING: %d IN1 samples at the ADC rail. Every amplitude "
                      "above is derived from a flattened waveform. Reduce the "
