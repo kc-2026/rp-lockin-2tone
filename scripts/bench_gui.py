@@ -1543,9 +1543,26 @@ class BenchGui:
 
         c = ttk.Frame(f)
         c.grid(row=2, column=0, columnspan=6, sticky="w", pady=(10, 6))
+        # Two controls, answering two different questions. Neither is
+        # "do not sweep": the sweep is not what creates the signal, the
+        # modulated light is, so not sweeping would remove the wavelength axis
+        # and leave the amplitude exactly where it was.
+        #
+        #   low power  -- is the signal OPTICAL? Light falls by the power
+        #                 ratio; pickup from the amplifier does not move,
+        #                 because the RF drive is untouched.
+        #   no drive   -- does the signal come from OUR DRIVE at all? OUT1 is
+        #                 disabled, so there is no 915 kHz anywhere in the
+        #                 system. Anything left is ambient or another
+        #                 instrument.
         self.sw_blocked = tk.BooleanVar(value=False)
-        ttk.Checkbutton(c, text="CONTROL RUN -- drop the laser power",
-                        variable=self.sw_blocked).pack(side="left", padx=(0, 12))
+        self.sw_ctrl_mode = tk.StringVar(value="low power")
+        ttk.Checkbutton(c, text="CONTROL RUN:",
+                        variable=self.sw_blocked).pack(side="left")
+        ttk.Combobox(c, textvariable=self.sw_ctrl_mode, width=12,
+                     state="readonly",
+                     values=("low power", "no drive")).pack(side="left",
+                                                            padx=(2, 12))
         ttk.Button(c, text="Modulation ON",
                    command=self.sweep_mod_on).pack(side="left", padx=(0, 4))
         ttk.Button(c, text="Modulation OFF",
@@ -1793,9 +1810,14 @@ class BenchGui:
                 p["step"], n_points, p["step"] / p["speed"] * 1e6,
                 p["mod"] / 1e3))
         if self.sw_blocked.get():
-            msg += ("CONTROL RUN: the shutter will be CLOSED in software for "
-                    "this run and restored afterwards. You do not need to "
-                    "block the beam by hand.\n\n")
+            if self.sw_ctrl_mode.get() == "no drive":
+                msg += ("CONTROL RUN (no drive): OUT1 stays OFF, so there is "
+                        "no modulation anywhere. Tests whether the signal "
+                        "comes from our drive at all.\n\n")
+            else:
+                msg += ("CONTROL RUN (low power): the laser drops to the "
+                        "control setpoint and is restored afterwards. Tests "
+                        "whether the signal is OPTICAL.\n\n")
         if not messagebox.askokcancel("Run the sweep",
                                       msg + "Light goes somewhere. Continue?"):
             return self.log("sweep cancelled")
@@ -1803,6 +1825,7 @@ class BenchGui:
         self.sw_run.configure(state="disabled")
         self.sw_status.set("running...")
         p["blocked"] = bool(self.sw_blocked.get())
+        p["ctrl_mode"] = self.sw_ctrl_mode.get()
         self.submit("linear sweep", lambda: self._sweep_job(rp, p),
                     self._sweep_done, self._sweep_failed)
 
@@ -1843,7 +1866,11 @@ class BenchGui:
             shutter_before = d.query(":POW:SHUT?").strip().lstrip("+")
             level_before = level
             ctrl_note = ""
-            if p.get("blocked"):
+            if p.get("blocked") and p.get("ctrl_mode") == "no drive":
+                ctrl_note = ("no drive: OUT1 disabled, so there is no "
+                             "%.4f kHz anywhere in the system"
+                             % (p["mod"] / 1e3))
+            if p.get("blocked") and p.get("ctrl_mode") == "low power":
                 # Ask the instrument for its own limits. This unit reports
                 # -5 to +13 dBm, and a request below the floor is IGNORED
                 # rather than refused: the setpoint simply stays where it was
@@ -1913,6 +1940,11 @@ class BenchGui:
             table = rp.setup_am_generator(
                 carrier=p["carrier"], modulation=p["mod"],
                 amplitude=p["amp"], depth=1.0, channel=1)
+            if p.get("blocked") and p.get("ctrl_mode") == "no drive":
+                # Built the table so the reported frequencies are the same,
+                # then disarm: identical configuration, no signal.
+                for _ch in (1, 2):
+                    rp.write("OUTPUT%d:STATE OFF" % _ch)
 
             def grab():
                 try:
@@ -2000,7 +2032,7 @@ class BenchGui:
                     shutter_before=shutter_before,
                     shutter_during=shutter_during,
                     laser_dbm=level, laser_dbm_before=level_before,
-                    ctrl_note=ctrl_note,
+                    ctrl_note=ctrl_note, ctrl_mode=p.get("ctrl_mode"),
                     swing_v=swing_counts / ADC_COUNTS_PER_V_LV)
 
     def _sweep_failed(self, _exc):
@@ -2048,7 +2080,12 @@ class BenchGui:
                  % (out.get("laser_dbm", float("nan")),
                     {"0": "OPEN", "1": "CLOSED"}.get(out.get("shutter_during"),
                                                      "unread")))
-        if out.get("blocked"):
+        if out.get("blocked") and out.get("ctrl_mode") == "no drive":
+            self.log("CONTROL RUN (no drive): %s. Whatever amplitude appears "
+                     "here did NOT come from OUT1 -- it is ambient, another "
+                     "instrument, or the demodulator's own noise floor."
+                     % out.get("ctrl_note", ""))
+        elif out.get("blocked"):
             drop = out.get("laser_dbm_before", 0.0) - out.get("laser_dbm", 0.0)
             self.log("CONTROL RUN: %s -- a %.1f dB drop, so an OPTICAL signal "
                      "should fall to %.1f%% of the full-power run. Electrical "
