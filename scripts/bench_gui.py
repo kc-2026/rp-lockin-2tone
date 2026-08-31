@@ -74,7 +74,9 @@ from rp_lockin import (  # noqa: E402
     write_raw_npz,
     write_trace_csv,
 )
-from rp_lockin.constants import BASE_SAMPLE_RATE  # noqa: E402
+from rp_lockin.constants import (BASE_SAMPLE_RATE,  # noqa: E402
+                                 ADC_COUNTS_PER_V_LV, ADC_COUNT_MAX,
+                                 ADC_COUNT_MIN)
 from rp_lockin.hardware import RedPitaya  # noqa: E402
 from rp_lockin.santec import SantecTSL  # noqa: E402
 # Sweep control. santec.py can read the log and set the
@@ -134,14 +136,20 @@ class Plot(tk.Canvas):
         self.on_cursor = on_cursor
         self._limits = (0.0, 1.0, 0.0, 1.0)
         self._readout = ""
+        # Per-axis tick formatters. _eng is right for volts and seconds, and
+        # wrong for a wavelength axis: it renders 1500 nm as "1.5k", which is
+        # unreadable when every tick differs in the third digit.
+        self.xfmt = None
+        self.yfmt = None
         self.bind("<Configure>", lambda _e: self._draw())
         self.bind("<Motion>", self._hover)
         self.bind("<Leave>", lambda _e: self._clear_readout())
 
-    def show(self, x, y, xlabel="", ylabel=""):
+    def show(self, x, y, xlabel="", ylabel="", xfmt=None, yfmt=None):
         self.x = np.asarray(x, dtype=float).ravel()
         self.y = np.asarray(y, dtype=float).ravel()
         self.xlabel, self.ylabel = xlabel, ylabel
+        self.xfmt, self.yfmt = xfmt, yfmt
         self._draw()
 
     def clear(self):
@@ -188,11 +196,11 @@ class Plot(tk.Canvas):
             gy = y1 - frac * (y1 - y0)
             self.create_line(x0, gy, x1, gy, fill="#ececec")
             self.create_text(x0 - 6, gy, anchor="e", font=("TkDefaultFont", 7),
-                             text=_eng(ymin + frac * (ymax - ymin)))
+                             text=(self.yfmt or _eng)(ymin + frac * (ymax - ymin)))
             gx = x0 + frac * (x1 - x0)
             self.create_line(gx, y0, gx, y1, fill="#ececec")
             self.create_text(gx, y1 + 6, anchor="n", font=("TkDefaultFont", 7),
-                             text=_eng(xmin + frac * (xmax - xmin)))
+                             text=(self.xfmt or _eng)(xmin + frac * (xmax - xmin)))
 
         coords = []
         for px, lo, hi in self._reduce(int(x1 - x0)):
@@ -241,7 +249,8 @@ class Plot(tk.Canvas):
         i = int(np.clip(np.searchsorted(self.x, xv), 0, self.y.size - 1))
         if self.on_cursor:
             self.on_cursor(i)
-        readout = f"x={_eng(self.x[i])}   y={_eng(self.y[i])}"
+        readout = (f"x={(self.xfmt or _eng)(self.x[i])}   "
+                   f"y={(self.yfmt or _eng)(self.y[i])}")
         if readout != self._readout:
             self._readout = readout
             self._draw()
@@ -1671,8 +1680,18 @@ class BenchGui:
             except Exception:                                # noqa: BLE001
                 pass
 
-        det = np.asarray(cap["det"], dtype=float)
+        det_counts = np.asarray(cap["det"], dtype=float)
         trg = np.asarray(cap["trg"], dtype=float)
+        # Clipping has to be judged in COUNTS, before scaling -- the rail is a
+        # property of the converter, not of the volts it represents.
+        dclip = int(np.count_nonzero((det_counts >= ADC_COUNT_MAX)
+                                     | (det_counts <= ADC_COUNT_MIN)))
+        swing_counts = float(np.percentile(det_counts, 99)
+                             - np.percentile(det_counts, 1))
+        # IN1 is on LV, so this is the scale that applies. Everything derived
+        # below -- amplitude, the plot, the CSV -- is then in VOLTS rather than
+        # raw converter counts, which mean nothing outside this program.
+        det = det_counts / ADC_COUNTS_PER_V_LV
         lo, hi = np.percentile(trg, 1), np.percentile(trg, 99)
         if hi - lo < 50:
             raise RuntimeError(
@@ -1684,10 +1703,9 @@ class BenchGui:
         red = reduce_sweep(det, trg, fs, wl, f_ref=p["mod"], output_rate=5000.0,
                            trigger_threshold=thr, trigger_polarity="rising",
                            nominal_step=p["step"] / p["speed"])
-        dclip = int(np.count_nonzero((det >= 2047) | (det <= -2048)))
         return dict(red=red, det=det, trg=trg, wl=wl, table=table,
-                    clipped=dclip,
-                    swing=float(np.percentile(det, 99) - np.percentile(det, 1)))
+                    clipped=dclip, swing_counts=swing_counts,
+                    swing_v=swing_counts / ADC_COUNTS_PER_V_LV)
 
     def _sweep_done(self, out):
         self.sw_run.configure(state="normal")
@@ -1700,14 +1718,16 @@ class BenchGui:
         self.st.wavelengths = out["wl"]
         w, a = red.trace.dropna()
         self.sw_plot.show(w * 1e9, a, xlabel="wavelength (nm)",
-                          ylabel="amplitude (counts)")
+                          ylabel="amplitude (V)",
+                          xfmt=lambda v: "%.1f" % v,
+                          yfmt=lambda v: _eng(v) + "V")
         tag = "CONTROL (blocked)" if self.sw_blocked.get() else "beam"
         self.sw_status.set(
-            "%s: %d points | IN1 swing %.0f counts%s | amplitude median "
-            "%.3f, max %.3f counts" % (
-                tag, w.size, out["swing"],
+            "%s: %d points | IN1 swing %s V (%.0f counts)%s | amplitude "
+            "median %sV, max %sV" % (
+                tag, w.size, _eng(out["swing_v"]), out["swing_counts"],
                 "  CLIPPED!" if out["clipped"] else "",
-                float(np.median(a)), float(a.max())))
+                _eng(float(np.median(a))), _eng(float(a.max()))))
         self.log("linear sweep done (%s): drive %.6f MHz AM %.4f kHz; axis "
                  "from %s" % (tag, out["table"].carrier / 1e6,
                               out["table"].modulation / 1e3, red.table_source))

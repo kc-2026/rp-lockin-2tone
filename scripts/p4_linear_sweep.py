@@ -65,6 +65,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from _bench import (add_common_args, check_helper, require_consent,  # noqa: E402
                     Results, session)
 from rp_lockin.pipeline import reduce_sweep                   # noqa: E402
+from rp_lockin.constants import (ADC_COUNTS_PER_V_LV,        # noqa: E402
+                                 ADC_COUNT_MAX, ADC_COUNT_MIN)
 from rp_lockin.planning import recommended_tail, settling_points  # noqa: E402
 from rp_lockin.output import write_trace_csv, write_raw_npz   # noqa: E402
 from tsl775 import TSL775                                     # noqa: E402
@@ -224,8 +226,12 @@ def main():
         d.close()
         # session() disarms both outputs on every exit path, including this one.
 
-    det = np.asarray(captured["det"], dtype=float)
+    det_counts = np.asarray(captured["det"], dtype=float)
     trg = np.asarray(captured["trg"], dtype=float)
+    # Clipping is judged in COUNTS -- the rail belongs to the converter. Then
+    # scale to VOLTS, so amplitude, the plot and the CSV are all in volts
+    # rather than raw counts, which mean nothing outside this program.
+    det = det_counts / ADC_COUNTS_PER_V_LV
 
     lo, hi = np.percentile(trg, 1), np.percentile(trg, 99)
     if hi - lo < 50:
@@ -233,9 +239,11 @@ def main():
                          f"trigger channel. Is the BNC in analog IN2?")
     thr = float(0.5 * (lo + hi))
 
-    dlo, dhi = np.percentile(det, 1), np.percentile(det, 99)
-    res.add("P4L.1 IN1 swing (counts)", f"{dhi - dlo:.1f}")
-    clipped = int(np.count_nonzero((det >= 2047) | (det <= -2048)))
+    dlo, dhi = np.percentile(det_counts, 1), np.percentile(det_counts, 99)
+    res.add("P4L.1 IN1 swing", f"{(dhi - dlo) / ADC_COUNTS_PER_V_LV * 1e3:.2f} "
+                               f"mV ({dhi - dlo:.0f} counts)")
+    clipped = int(np.count_nonzero((det_counts >= ADC_COUNT_MAX)
+                                   | (det_counts <= ADC_COUNT_MIN)))
     if clipped:
         res.fail("P4L.1 IN1 clipping", f"{clipped} samples at the rail -- "
                                        f"reduce the laser power")
@@ -247,15 +255,15 @@ def main():
                        nominal_step=TRIG_STEP_NM / SPEED_NM_S)
     w, a = red.trace.dropna()
     res.add("P4L.2 points with a wavelength", w.size)
-    res.add("P4L.2 amplitude median (counts)", f"{np.median(a):.4f}")
-    res.add("P4L.2 amplitude min/max (counts)", f"{a.min():.4f} / {a.max():.4f}")
+    res.add("P4L.2 amplitude median", f"{np.median(a) * 1e6:.3f} uV")
+    res.add("P4L.2 amplitude min/max", f"{a.min() * 1e6:.3f} / {a.max() * 1e6:.3f} uV")
     res.add("P4L.3 wavelength axis from", red.table_source)
     print("\n" + red.describe())
 
     tag = "blocked" if args.blocked else "beam"
     write_trace_csv(f"{args.out}_{tag}.csv", red.trace.wavelength,
                     red.trace.amplitude, metadata=red.metadata())
-    write_raw_npz(f"{args.out}_{tag}.npz", detector=det, trigger=trg,
+    write_raw_npz(f"{args.out}_{tag}.npz", detector=det_counts, trigger=trg,
                   wavelengths=wl, edges=red.edges)
     print(f"wrote {args.out}_{tag}.csv / .npz")
 
