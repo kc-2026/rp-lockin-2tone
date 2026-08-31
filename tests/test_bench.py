@@ -456,3 +456,98 @@ def test_a_steady_lockin_output_is_not_called_a_beat(app):
     app._warn_if_beating(_Steady())
     assert not any("BEAT" in m for m in lines), lines
 
+
+# ------------------------------------------------ discrete instrument settings
+
+def test_sweep_speeds_are_the_instrument_s_discrete_set(app):
+    """The TSL-775's speeds are a selection, not a range (manual p.87), so a
+    free-text box could only ever produce a refusal from the instrument."""
+    import _bench_ops as ops
+    assert ops.SWEEP_SPEEDS_NM_S == (0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0,
+                                     100.0, 200.0)
+    assert float(app.v_speed.get()) in ops.SWEEP_SPEEDS_NM_S
+
+
+def test_the_sweep_mode_defaults_to_one_way(app):
+    """Two-way overwrites the log with the return pass, so a round trip comes
+    back holding only the descending half."""
+    import _bench_ops as ops
+    cfg = app._sweep_cfg()
+    assert cfg["mode"] == 1
+    assert ops.SWEEP_MODES[1] == "continuous, one way"
+    assert "overwritten" in ops.SWEEP_MODES[3]
+
+
+# --------------------------------------------------------- the memory ceiling
+
+def test_a_one_second_sweep_needs_decimation_eight():
+    """Lower decimation is FASTER sampling and so a SHORTER record for the same
+    memory. The region is 33554432 samples per channel however it is filled."""
+    import _bench_ops as ops
+    assert ops.smallest_decimation_for(1.0) == 8
+    assert ops.capture_plan(1.0, decimation=4)["truncated"]
+    assert not ops.capture_plan(1.0, decimation=8)["truncated"]
+
+
+def test_capture_plan_reports_what_a_decimation_can_hold():
+    import _bench_ops as ops
+    assert ops.capture_plan(0.001, decimation=8)["max_sweep_s"] > 1.0
+    assert ops.capture_plan(0.001, decimation=4)["max_sweep_s"] < 1.0
+
+
+def test_a_sweep_too_long_for_memory_is_refused_not_truncated(app, monkeypatch):
+    """A record that stops part way through still maps onto the FULL wavelength
+    table, and a half sweep wearing a full axis looks like a measurement."""
+    shown = []
+    monkeypatch.setattr(app._need_board.__self__.__class__, "_need_board",
+                        lambda self: object())
+    import bench as bench_mod
+    monkeypatch.setattr(bench_mod.messagebox, "showerror",
+                        lambda t, m, **k: shown.append(m))
+    app.v_dec.set("4")
+    app.v_secs.set("1.0")
+    app.acquire_now()
+    assert shown, "a sweep that cannot fit must be refused"
+    assert "decimation" in shown[0].lower()
+    assert app.ws.capture is None
+
+
+# ------------------------------------------------------------ trigger choices
+
+def test_now_is_not_a_trigger_choice(app):
+    """An untriggered record has no time origin and can never carry a
+    wavelength axis, so it must not sit where a triggered one belongs."""
+    import tkinter.ttk as ttk_
+    values = []
+
+    def walk(w):
+        for child in w.winfo_children():
+            if isinstance(child, ttk_.Combobox):
+                values.extend(str(v) for v in child.cget("values"))
+            walk(child)
+
+    walk(app.root)
+    trigger_values = [v for v in values if v.endswith("_PE") or v.endswith("_NE")]
+    assert "CH2_PE" in trigger_values
+    assert "NOW" not in values, "NOW must not be offered as a trigger"
+
+
+def test_a_snapshot_is_still_available_for_alignment(app):
+    """Removing NOW from the dropdown must not remove the ability to look at
+    the inputs without a sweep -- that is how an AOM gets aligned."""
+    assert hasattr(app, "acquire_snapshot")
+
+
+# -------------------------------------------------------------- the snap view
+
+def test_the_drive_panel_shows_what_the_asg_will_actually_play(app):
+    """What is typed and what is generated differ by up to half a grid step,
+    and that difference is what made a hand-typed second harmonic 54.7 Hz out."""
+    app.v_carrier.set("80.0")
+    app.v_mod.set("915.5273")
+    app._update_snap()
+    shown = app.v_snap.get()
+    assert "915.5273" in shown
+    assert "1831.0547" in shown, f"the 2x harmonic should be shown: {shown}"
+    assert "60 cycles" in shown or "(60" in shown
+

@@ -27,6 +27,19 @@ from rp_lockin.planning import recommended_tail, settling_points
 ASG_GRID = BASE_SAMPLE_RATE / 16384
 DMA_SAMPLE_CEILING = 33554432          # per channel, the reserved region
 
+# TSL-775 sweep speeds are a DISCRETE selection, not a continuous setting
+# (manual p.87). Anything else is rejected by the instrument. The usable
+# wavelength range also depends on the speed, so :WAV:SWE:RANG:MIN?/MAX? are
+# worth re-reading after changing it.
+SWEEP_SPEEDS_NM_S = (0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0)
+
+# :WAVelength:SWEep:MODe. Two-way is a trap for logging: one round trip counts
+# as two cycles and the return pass OVERWRITES the log, so a two-way run comes
+# back with only the descending half.
+SWEEP_MODES = {0: "step, one way", 1: "continuous, one way",
+               2: "step, two way (log is overwritten)",
+               3: "continuous, two way (log is overwritten)"}
+
 
 # ----------------------------------------------------------------- the board
 
@@ -86,10 +99,29 @@ def capture_plan(seconds, decimation=8, output_rate=5000.0, preroll_factor=1.1):
     tail = recommended_tail(output_rate, fs=fs)
     preroll = int(t_settle * preroll_factor * fs)
     n = int(np.ceil((preroll / fs + seconds + tail) * fs))
+    # What a full region could cover at this decimation, once pre-roll and
+    # tail are paid for. Truncating instead would silently return a record
+    # that stops part way through the sweep, and a half sweep mapped onto a
+    # full wavelength table looks like a measurement.
+    max_sweep = DMA_SAMPLE_CEILING / fs - preroll / fs - tail
     return {"fs": fs, "n_samples": min(n, DMA_SAMPLE_CEILING),
             "preroll": preroll, "settling_s": t_settle, "tail_s": tail,
-            "decimation": decimation,
+            "decimation": decimation, "max_sweep_s": max_sweep,
             "truncated": n > DMA_SAMPLE_CEILING}
+
+
+def smallest_decimation_for(seconds, output_rate=5000.0):
+    """The lowest decimation whose region can still hold `seconds` of sweep.
+
+    Lower decimation is faster sampling and so a shorter record for the same
+    memory: the reserved region is 33554432 samples per channel however it is
+    filled. At decimation 8 that is 1.03 s of sweep; at 4 it is 0.50 s, which
+    cannot hold a 1 s sweep at all.
+    """
+    for d in (1, 2, 4, 8, 16, 32, 64):
+        if capture_plan(seconds, decimation=d, output_rate=output_rate)["max_sweep_s"] >= seconds:
+            return d
+    return None
 
 
 def acquire(rp, n_samples, decimation=8, preroll=0, trigger="CH2_PE",

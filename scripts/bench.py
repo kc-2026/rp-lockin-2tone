@@ -480,16 +480,41 @@ class Bench:
         fld(f, 0, "carrier", self.v_carrier, "MHz")
         fld(f, 1, "modulation", self.v_mod, "kHz")
         fld(f, 2, "amplitude", self.v_amp, "V")
-        ttk.Label(f, text="Both snap to the 15258.789 Hz ASG grid.\n"
-                          "915.527 kHz = 60 steps, 94 kHz clear of the\n"
-                          "504.868 kHz switcher family. Avoid 1007.080.",
+        # What the ASG will ACTUALLY play. Both frequencies are snapped to the
+        # 15258.789 Hz grid, and the difference is what made a hand-typed
+        # second harmonic 54.7 Hz wrong.
+        self.v_snap = tk.StringVar(value="")
+        ttk.Label(f, textvariable=self.v_snap, foreground="#144",
+                  justify="left").grid(row=3, column=0, columnspan=3,
+                                       sticky="w", pady=(2, 2))
+        for v in (self.v_carrier, self.v_mod):
+            v.trace_add("write", lambda *_a: self._update_snap())
+        self._update_snap()
+        ttk.Label(f, text="915.527 kHz = 60 grid steps, 94 kHz clear of\n"
+                          "the 504.868 kHz switcher family. Avoid 1007.080.",
                   foreground="#666", justify="left").grid(
-            row=3, column=0, columnspan=3, sticky="w", pady=(4, 4))
+            row=4, column=0, columnspan=3, sticky="w", pady=(2, 4))
         b = ttk.Frame(f)
-        b.grid(row=4, column=0, columnspan=3, sticky="w")
+        b.grid(row=5, column=0, columnspan=3, sticky="w")
         ttk.Button(b, text="Drive ON", command=self.drive_on).pack(side="left")
         ttk.Button(b, text="Drive OFF",
                    command=self.all_off).pack(side="left", padx=4)
+
+    def _update_snap(self):
+        """Show what the ASG will really play, beside what was typed."""
+        from rp_lockin.waveforms import make_am_table
+        try:
+            carrier = float(self.v_carrier.get()) * 1e6
+            mod = float(self.v_mod.get()) * 1e3
+            t = make_am_table(carrier, mod)
+        except (ValueError, ZeroDivisionError, AssertionError):
+            return self.v_snap.set("")
+        except Exception:                            # noqa: BLE001
+            return self.v_snap.set("")
+        self.v_snap.set(
+            f"ACTUAL: carrier {t.carrier / 1e6:.6f} MHz ({t.carrier_cycles} "
+            f"cycles)\n            mod {t.modulation / 1e3:.4f} kHz "
+            f"({t.mod_cycles} cycles), 2x = {2 * t.modulation / 1e3:.4f} kHz")
 
     def _drive_cfg(self):
         return dict(carrier=float(self.v_carrier.get()) * 1e6,
@@ -624,15 +649,29 @@ class Bench:
         self.v_stop = tk.StringVar(value="1600")
         self.v_speed = tk.StringVar(value="100")
         self.v_step = tk.StringVar(value="0.02")
+        self.v_mode = tk.StringVar(value="continuous, one way")
         fld(f, 0, "start", self.v_start, "nm")
         fld(f, 1, "stop", self.v_stop, "nm")
-        fld(f, 2, "speed", self.v_speed, "nm/s")
+        # Discrete, not continuous (manual p.87). Anything else is rejected by
+        # the instrument, so a free-text box could only ever produce a refusal.
+        ttk.Label(f, text="speed").grid(row=2, column=0, sticky="w")
+        ttk.Combobox(f, textvariable=self.v_speed, width=10, state="readonly",
+                     values=tuple(("%g" % v) for v in ops.SWEEP_SPEEDS_NM_S)
+                     ).grid(row=2, column=1, sticky="w")
+        ttk.Label(f, text="nm/s").grid(row=2, column=2, sticky="w")
         fld(f, 3, "trigger step", self.v_step, "nm")
+        # Two-way is a trap: the return pass overwrites the log, so the run
+        # comes back with only the descending half.
+        ttk.Label(f, text="mode").grid(row=4, column=0, sticky="w")
+        ttk.Combobox(f, textvariable=self.v_mode, width=28, state="readonly",
+                     values=tuple(ops.SWEEP_MODES.values())).grid(
+            row=4, column=1, columnspan=2, sticky="w")
         self.v_sweepinfo = tk.StringVar(value="")
-        ttk.Label(f, textvariable=self.v_sweepinfo, foreground="#666").grid(
-            row=4, column=0, columnspan=3, sticky="w", pady=(4, 4))
+        ttk.Label(f, textvariable=self.v_sweepinfo, foreground="#666",
+                  justify="left").grid(row=5, column=0, columnspan=3,
+                                       sticky="w", pady=(4, 4))
         b = ttk.Frame(f)
-        b.grid(row=5, column=0, columnspan=3, sticky="w")
+        b.grid(row=6, column=0, columnspan=3, sticky="w")
         ttk.Button(b, text="Configure",
                    command=self.sweep_configure).pack(side="left")
         ttk.Button(b, text="Start",
@@ -645,19 +684,25 @@ class Bench:
             v.trace_add("write", lambda *_a: self._update_sweep_info())
 
     def _sweep_cfg(self):
+        mode = next((k for k, v in ops.SWEEP_MODES.items()
+                     if v == self.v_mode.get()), 1)
         return dict(start_nm=float(self.v_start.get()),
                     stop_nm=float(self.v_stop.get()),
                     speed_nm_s=float(self.v_speed.get()),
-                    step_nm=float(self.v_step.get()))
+                    step_nm=float(self.v_step.get()), mode=mode)
 
     def _update_sweep_info(self):
         try:
             c = self._sweep_cfg()
             n = int(round(abs(c["stop_nm"] - c["start_nm"]) / c["step_nm"])) + 1
             dt = c["step_nm"] / c["speed_nm_s"]
-            self.v_sweepinfo.set(f"{n} points, {dt * 1e6:.1f} us apart "
-                                 f"({1 / dt / 1e3:.2f} kHz), "
-                                 f"{(n - 1) * dt:.3f} s")
+            secs = (n - 1) * dt
+            need = ops.smallest_decimation_for(secs)
+            info = (f"{n} points, {dt * 1e6:.1f} us apart "
+                    f"({1 / dt / 1e3:.2f} kHz), {secs:.3f} s")
+            if need is not None:
+                info += f"\nneeds decimation {need} or higher to fit in memory"
+            self.v_sweepinfo.set(info)
         except (ValueError, ZeroDivisionError):
             self.v_sweepinfo.set("")
 
@@ -717,8 +762,13 @@ class Bench:
         fld(f, 0, "decimation", self.v_dec)
         fld(f, 1, "cover", self.v_secs, "s")
         ttk.Label(f, text="trigger").grid(row=2, column=0, sticky="w")
+        # PE is POSITIVE EDGE (NE negative), so CH2_PE means "when analog
+        # channel 2 crosses the level going up". NOW is gone from this list:
+        # it captures immediately and produces a record with no time origin,
+        # which cannot carry a wavelength axis. The Snapshot button below is
+        # the deliberate way to take one.
         ttk.Combobox(f, textvariable=self.v_trig, width=10, state="readonly",
-                     values=("CH2_PE", "CH1_PE", "EXT_PE", "NOW")).grid(
+                     values=("CH2_PE", "CH2_NE", "CH1_PE", "EXT_PE")).grid(
             row=2, column=1, sticky="w")
         fld(f, 3, "level", self.v_level, "V")
         ttk.Label(f, text="Always captures IN1 AND IN2 together. Not\n"
@@ -737,6 +787,41 @@ class Bench:
         b.grid(row=6, column=0, columnspan=3, sticky="w")
         ttk.Button(b, text="Capture (arms and waits)",
                    command=self.acquire_now).pack(side="left")
+        ttk.Button(b, text="Snapshot (no trigger)",
+                   command=self.acquire_snapshot).pack(side="left", padx=4)
+
+    def acquire_snapshot(self, seconds=0.02):
+        """A short UNTRIGGERED look at both inputs, for alignment and levels.
+
+        Kept apart from Capture rather than offered as a trigger choice: this
+        record has no time origin, so it can never carry a wavelength axis, and
+        an untriggered record sitting in the workspace where a triggered one
+        belongs is the kind of thing that gets mapped by accident.
+        """
+        rp = self._need_board()
+        if not rp:
+            return
+        try:
+            dec = int(self.v_dec.get())
+        except ValueError as e:
+            return messagebox.showerror("Acquire", f"Not a number: {e}")
+        n = int(seconds * ops.BASE_SAMPLE_RATE / dec)
+
+        def done(cap):
+            self.ws.set_capture(cap)
+            self.refresh_workspace()
+            c1, c2 = cap["ch1"], cap["ch2"]
+            self.log(f"snapshot {seconds * 1e3:.0f} ms, UNTRIGGERED: "
+                     f"IN1 {ops.swing(c1) / 1817.7 * 1e3:.1f} mV, "
+                     f"IN2 {ops.swing(c2):.0f} counts. No time origin, so "
+                     f"this one cannot be mapped to wavelength.")
+            self.plot_what.set("raw IN1 (volts vs time)")
+            self.redraw()
+
+        self.submit(self.board, "snapshot",
+                    lambda: ops.acquire(rp, n_samples=n, decimation=dec,
+                                        preroll=0, trigger="NOW", timeout=10.0),
+                    done)
 
     def acquire_now(self):
         rp = self._need_board()
@@ -749,6 +834,21 @@ class Bench:
         except ValueError as e:
             return messagebox.showerror("Acquire", f"Not a number: {e}")
         plan = ops.capture_plan(secs, decimation=dec)
+        if plan["truncated"]:
+            need = ops.smallest_decimation_for(secs)
+            return messagebox.showerror(
+                "Not enough capture memory",
+                f"{secs:.3f} s does not fit at decimation {dec}.\n\n"
+                f"The reserved region is {ops.DMA_SAMPLE_CEILING} samples per "
+                f"channel however it is filled, so a LOWER decimation is a "
+                f"SHORTER record: at {dec} the most sweep it can hold is "
+                f"{plan['max_sweep_s'] * 1e3:.0f} ms once pre-roll and tail "
+                f"are paid for.\n\n"
+                + (f"Use decimation {need} or higher."
+                   if need else "No decimation up to 64 is enough.")
+                + "\n\nRefusing rather than truncating: a record that stops "
+                  "part way through the sweep still maps onto the full "
+                  "wavelength table and looks like a measurement.")
         trig = self.v_trig.get()
         self.log(f"arming: {plan['n_samples']} samples x2 channels @ "
                  f"{plan['fs'] / 1e6:.3f} MS/s, pre-roll "
@@ -758,9 +858,6 @@ class Bench:
             self.log(f">>> ARMED and waiting for {trig}. NOW press "
                      f"Sweep > Start (or fire the trigger by hand). It gives "
                      f"up after 120 s.")
-        if plan["truncated"]:
-            self.log("WARNING: record hit the DMA ceiling and was truncated; "
-                     "the trace may run past the end of the laser's table.")
 
         def go():
             return ops.acquire(rp, n_samples=plan["n_samples"],
@@ -927,6 +1024,15 @@ class Bench:
             self.ws.set_reduction(red)
             self.refresh_workspace()
             self.log(red.describe())
+            t = red.trace
+            if t.n_outside:
+                self.log(f"{t.n_outside} point(s) carry no wavelength: "
+                         f"{t.n_before} BEFORE the sweep began and "
+                         f"{t.n_after} after it ended. Both are expected -- "
+                         f"the record deliberately extends past the sweep at "
+                         f"each end, and no wavelength exists out there. They "
+                         f"are NaN rather than guessed, and the CSV drops "
+                         f"them. Nothing inside the sweep is lost.")
             self.plot_what.set("trace (amplitude vs wavelength)")
             self.redraw()
 
