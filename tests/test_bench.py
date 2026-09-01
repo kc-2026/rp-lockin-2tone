@@ -761,19 +761,41 @@ def test_exactly_one_megahertz_is_reachable(app):
 
 
 def test_the_exact_table_gets_the_carrier_right_too(app):
-    """Both frequencies are integer multiples of the SAME play rate, so
-    hitting one exactly is only useful if the other lands as well."""
+    """Both frequencies are multiples of the SAME play rate, so hitting one
+    exactly is only useful if the other lands somewhere sane too."""
     from rp_lockin.waveforms import make_am_table_exact
     t = make_am_table_exact(80e6, 1e6)
-    assert t.carrier == pytest.approx(80e6, abs=1e-3)
     assert t.modulation == pytest.approx(1e6, abs=1e-6)
-    assert t.carrier_cycles == 5280 and t.mod_cycles == 66
-    assert t.play_freq == pytest.approx(1e6 / 66, rel=1e-12)
+    assert t.carrier == pytest.approx(80e6, abs=1e-3)
+    assert t.carrier_cycles == 6400 and t.mod_cycles == 80
+    assert t.play_freq == 12500.0
+
+
+def test_the_play_rate_is_a_whole_number_of_hertz():
+    """MEASURED on the board: SOUR:FREQ:FIX rounds to 1 Hz. 15151.5152 comes
+    back as 15151, which would put a '1 MHz' modulation on 999966 Hz -- a
+    34 Hz beat, and the trace would look like a slow oscillation."""
+    from rp_lockin.waveforms import make_am_table_exact
+    for mod in (1e6, 500e3, 1.5e6, 2e6):
+        t = make_am_table_exact(80e6, mod)
+        assert float(t.play_freq).is_integer(),             f"{t.play_freq} would be rounded by the board"
+        assert t.mod_cycles * t.play_freq == pytest.approx(mod, abs=1e-6)
+
+
+def test_a_frequency_with_no_usable_divisor_is_refused():
+    """999983 Hz is prime, so the only play rates dividing it are 1 Hz and
+    itself; neither leaves a workable number of cycles."""
+    from rp_lockin.waveforms import make_am_table_exact, plan_exact_am
+    assert plan_exact_am(80e6, 999983.0) is None
+    with pytest.raises(ValueError):
+        make_am_table_exact(80e6, 999983.0)
 
 
 def test_the_play_rate_never_exceeds_one_entry_per_clock(app):
-    """Above fs/16384 the table would have to advance more than one entry per
-    DAC clock, which it cannot."""
+    """The table is ALWAYS 16384 entries, traversed at play_rate x 16384
+    samples per second. Above fs/16384 that exceeds the DAC. It is also why a
+    table cannot hold one modulation period and be played at 1 MHz: that would
+    need 16.384 GS/s."""
     from rp_lockin.waveforms import make_am_table_exact
     for mod in (1e6, 1.5e6, 2e6):
         t = make_am_table_exact(80e6, mod)
@@ -790,10 +812,17 @@ def test_an_unreachable_pair_falls_back_to_the_grid_and_says_so(app):
     app._settle_actual()
     assert float(app.v_real.get()) == pytest.approx(915.527344, abs=1e-4)
 
+    # 999.983 kHz is prime in hertz, so no play rate divides it usefully.
+    app.v_real.set("999.983")
+    app._settle_actual()
+    assert float(app.v_real.get()) != pytest.approx(999.983, abs=1e-4)
+    assert any("cannot be generated exactly" in m for m in lines), lines
+
+    # ...but 915.4 kHz IS reachable, and must be left alone. The unreachable
+    # set is "no usable divisor", not "not a round number".
     app.v_real.set("915.4")
     app._settle_actual()
-    assert float(app.v_real.get()) == pytest.approx(915.527344, abs=1e-4)
-    assert any("cannot be generated exactly" in m for m in lines), lines
+    assert float(app.v_real.get()) == pytest.approx(915.4, abs=1e-4)
 
 
 def test_the_drive_and_f1_both_follow_the_generated_value(app):

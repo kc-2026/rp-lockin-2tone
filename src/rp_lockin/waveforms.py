@@ -180,61 +180,75 @@ class GridTwoTonePlan:
 
 
 def plan_exact_am(carrier: float, modulation: float,
-                  fs: float = BASE_SAMPLE_RATE,
-                  max_cycles: int = 4000) -> tuple[int, int, float] | None:
-    """Cycle counts and a PLAY RATE that reproduce both frequencies exactly.
+                  fs: float = BASE_SAMPLE_RATE) -> tuple[int, int, int] | None:
+    """Cycle counts and an INTEGER play rate that reproduce the modulation
+    exactly, putting the carrier as close as the same rate allows.
 
     The fs/16384 "grid" is not a property of the hardware. It is what you get
     by leaving the play rate at its default, where the table advances exactly
-    one entry per DAC clock. `SOUR:FREQ:FIX` sets that rate, so the real
-    constraint is only this:
+    one entry per DAC clock. `SOUR:FREQ:FIX` sets that rate, so:
 
-        carrier    = carrier_cycles x play_rate
         modulation = mod_cycles     x play_rate
+        carrier    = carrier_cycles x play_rate
 
-    Both cycle counts are integers because the table has to hold whole cycles
-    to wrap without a discontinuity -- but the play rate they multiply is free.
-    Pick it to suit the frequencies and both come out exact.
+    Two hard limits decide what is reachable, and both were MEASURED rather
+    than assumed:
 
-    So 80.000000 MHz with 1.000000 MHz modulation IS available: 5280 and 66
-    cycles at 15151.5152 Hz. The default grid cannot express it only because
-    15258.789 Hz happens not to divide 1 MHz.
+    1. THE BOARD ROUNDS THE PLAY RATE TO 1 Hz. Asked for 15151.5152 it reports
+       back 15151. So the play rate is an integer, and the modulation has to be
+       an integer multiple of one -- which means an integer number of hertz
+       with a divisor in range. 1.000000 MHz is 80 cycles at 12500 Hz. A prime
+       like 999983 Hz has no usable divisor and cannot be hit at all.
 
-    THE COST. At any rate other than fs/16384 the table no longer advances one
-    entry per clock, so the generator repeats or skips entries -- ordinary DDS
-    behaviour, and the source of DDS spurs. Below the default rate the effect
-    is a slightly slower traversal; it is not free, but it is how every direct
-    digital synthesiser works.
+       This is why the rate cannot simply be modulation/n_m: that gives
+       15151.5152 for 1 MHz, the board stores 15151, and the output lands on
+       999966 Hz -- a 34 Hz error, which a lock-in returns as a 34 Hz beat.
 
-    Returns (carrier_cycles, mod_cycles, play_rate), or None when no integer
-    pair fits under `max_cycles` -- which happens whenever the two frequencies
-    are not in a simple ratio.
+    2. THE TABLE IS ALWAYS 16384 ENTRIES and is traversed at
+       play_rate x 16384 samples per second, which cannot exceed the DAC's
+       250 MS/s. So play_rate <= 15258 Hz, and the table must therefore hold at
+       least modulation/15258 cycles of the modulation -- 66 of them for 1 MHz.
+       One period per table would need a 16.384 GS/s converter.
+
+    The CARRIER is placed on the nearest multiple of the same rate, off by at
+    most half a step. That is deliberate: the 1550AOM-1's acoustic passband is
+    megahertz wide, so a few kHz on 80 MHz is beneath its notice, and insisting
+    on both exactly would rule out most modulations for no benefit.
+
+    Returns (carrier_cycles, mod_cycles, play_rate_hz), or None.
     """
     if modulation <= 0 or carrier <= modulation:
         return None
-    # play_rate = modulation / mod_cycles must not exceed the default, or the
-    # table would have to advance more than one entry per DAC clock.
-    lowest = int(np.ceil(modulation * ASG_BUFFER_MAX / fs))
-    for n_m in range(max(lowest, 1), max_cycles):
-        ratio = carrier * n_m / modulation
-        n_c = int(round(ratio))
-        if abs(ratio - n_c) > 1e-9:
+    m = int(round(modulation))
+    if abs(m - modulation) > 1e-6:          # not a whole number of hertz
+        return None
+    f_max = int(fs // ASG_BUFFER_MAX)       # 15258 Hz at 250 MS/s
+    for play in range(f_max, 0, -1):
+        if m % play:                        # play rate must divide it exactly
             continue
-        if n_c + n_m >= ASG_BUFFER_MAX // 2:        # upper sideband past Nyquist
-            break
-        return n_c, n_m, modulation / n_m
+        n_m = m // play
+        n_c = int(round(carrier / play))
+        if n_c <= n_m:
+            continue
+        if n_c + n_m >= ASG_BUFFER_MAX // 2:    # upper sideband past Nyquist
+            continue
+        return n_c, n_m, play
     return None
 
 
 def make_am_table_exact(carrier: float, modulation: float,
                         fs: float = BASE_SAMPLE_RATE,
                         depth: float = 1.0) -> AsgTable:
-    """An AM table that plays BOTH frequencies exactly, or raises.
+    """An AM table whose MODULATION comes out exact, or raises.
 
     Same table construction as `make_am_table`; the difference is entirely in
-    the play rate, which is chosen to fit rather than assumed. Use this when
-    the exact number matters and `make_am_table` when staying on the default
-    grid matters -- the grid path is the one Phase 1 verified.
+    the play rate, which is chosen to fit rather than assumed. The carrier
+    lands on the nearest multiple of that rate -- see plan_exact_am for why
+    that is the right trade here.
+
+    Use this when the modulation frequency matters and `make_am_table` when
+    staying on the default grid matters; the grid path is the one Phase 1
+    verified.
     """
     if not 0 < depth <= 1.0:
         raise ValueError("depth must be in (0, 1]")
@@ -252,8 +266,9 @@ def make_am_table_exact(carrier: float, modulation: float,
     env = 1.0 + depth * np.cos(2 * np.pi * n_m * k / ASG_BUFFER_MAX)
     wave = env * np.cos(2 * np.pi * n_c * k / ASG_BUFFER_MAX)
     wave = wave / np.max(np.abs(wave))
-    return AsgTable(samples=wave, play_freq=play, carrier=n_c * play,
-                    modulation=n_m * play, carrier_cycles=n_c, mod_cycles=n_m)
+    return AsgTable(samples=wave, play_freq=float(play),
+                    carrier=n_c * float(play), modulation=n_m * float(play),
+                    carrier_cycles=n_c, mod_cycles=n_m)
 
 
 def plan_two_tone_grid(difference: float = 1e6, f1: float = 5e6,
