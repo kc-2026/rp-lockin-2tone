@@ -204,7 +204,20 @@ def check_train(capture, expected_seconds, expected_points=None,
     actually ran at -- pressing Configure before or after changing the speed is
     enough to do it.
 
-    Returns a dict, and `ok` False when the train is short.
+    Returns a dict, `ok` False when the train is short, and `fault` naming
+    WHICH failure it is -- the two look identical in the span alone and need
+    opposite fixes:
+
+      * "short_range"  the INTERVAL is right and there are too few pulses. The
+        sweep ran at the requested speed and step over less wavelength than
+        asked, because it began somewhere other than the start. Park it first.
+      * "fast_sweep"   the interval is SHORT and the count is right. The
+        instrument really did sweep faster than the panel says.
+
+    Measured 2026-09-01: 4048 pulses spanning 0.8094 s against 5001 over
+    1.0000 s. Both ratios were 0.8094 and the interval was 200.00 us against
+    200.00 us expected -- a short range, diagnosed at the time as a fast sweep
+    because only the span was looked at.
     """
     fe, le, n = (capture.get("first_edge"), capture.get("last_edge"),
                  capture.get("n_edges", 0))
@@ -218,6 +231,20 @@ def check_train(capture, expected_seconds, expected_points=None,
     if expected_points:
         out["expected_points"] = expected_points
         out["points_ok"] = abs(n - expected_points) <= max(2, expected_points // 100)
+        # The interval is what separates the two faults. Compare measured
+        # against requested; a sweep that merely ran fast compresses it, one
+        # that covered less ground does not touch it.
+        want_dt = expected_seconds / (expected_points - 1)
+        got_dt = span / (n - 1) if n > 1 else float("nan")
+        out["interval"] = got_dt
+        out["expected_interval"] = want_dt
+        out["interval_ratio"] = got_dt / want_dt if want_dt else float("nan")
+        if not out["ok"]:
+            interval_right = abs(out["interval_ratio"] - 1.0) <= tol
+            out["fault"] = "short_range" if interval_right else "fast_sweep"
+            if out["fault"] == "short_range":
+                # How much wavelength it actually covered, as a fraction.
+                out["range_fraction"] = (n - 1) / (expected_points - 1)
     return out
 
 
@@ -421,9 +448,47 @@ def restore_sweep(laser, before):
     return failed
 
 
-def start_sweep(laser):
+def park_at_sweep_start(laser, tolerance=1e-12, timeout=60.0):
+    """Put the laser AT the sweep's start wavelength before it is told to go.
+
+    `:WAV:SWE 1` from the wrong wavelength neither refuses nor waits -- it
+    begins sweeping from wherever the laser happens to be. Speed and trigger
+    step stay correct, so the train that comes back is right in every respect
+    except its LENGTH, and a short train mapped onto a full-length log puts
+    every wavelength in the result out by a smoothly varying amount. There is
+    nothing in the trace to give it away.
+
+    Measured 2026-09-01: left parked at 1600 nm by the previous run, a
+    1500 -> 1600 nm sweep emitted 4048 of the expected 5001 pulses at exactly
+    200.00 us spacing. The sweep really ran 1519.04 -> 1600 nm.
+
+    The start wavelength is read from the INSTRUMENT, not from the panel, so
+    this cannot disagree with what is about to be swept. Returns what it did.
+    """
+    start = float(laser.query(":WAV:SWE:STAR?"))
+    now = float(laser.query(":WAV?"))
+    if abs(now - start) <= tolerance:
+        return {"moved": False, "start_m": start, "from_m": now,
+                "arrived_m": now, "waited_s": 0.0}
+    t0 = time.time()
+    # set_wavelength_m polls the read-back until it matches AND has stopped
+    # changing, and raises if it never converges -- so a laser that will not
+    # go there fails here rather than sweeping the wrong range.
+    arrived = laser.set_wavelength_m(start, tolerance=tolerance,
+                                     timeout=timeout)
+    return {"moved": True, "start_m": start, "from_m": now,
+            "arrived_m": arrived, "waited_s": time.time() - t0}
+
+
+def start_sweep(laser, park=True):
+    """Start the sweep, having first made sure the laser is at its start.
+
+    `park=False` exists only for a caller that has already parked; it is not
+    a way to skip the wait.
+    """
+    parked = park_at_sweep_start(laser) if park else None
     laser.write(":WAV:SWE 1")
-    return True
+    return {"parked": parked}
 
 
 def stop_sweep(laser):

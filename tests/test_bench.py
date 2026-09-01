@@ -1185,3 +1185,126 @@ def test_all_seven_settings_are_verified_not_just_the_trigger():
         bad = ops.check_sweep_config(want, held)
         assert bad and key in bad[0], f"{key} was not checked"
 
+
+# ------------------------------------------ the sweep that started elsewhere
+# From the bench, 2026-09-01, the run after the step-mode fix:
+#
+#   trigger train: 4048 pulses spanning 0.8094 s
+#   (the Sweep panel asks for 1.0000 s and 5001 points)
+#
+# Both ratios are 0.8094 and the pulse INTERVAL is 200.00 us against 200.00 us
+# expected. The speed and the step were exactly right; the sweep simply
+# covered 80.96 nm instead of 100. The laser had been left parked at 1600 nm
+# by the previous run and :WAV:SWE 1 began sweeping from wherever it had got
+# to on its way back -- 1519.04 nm.
+#
+# The bench called this a 1.24x fast sweep, because it compared spans and
+# never looked at the interval. The two faults need opposite fixes.
+
+
+class _ParkLaser:
+    """A laser that remembers where it is and records the order of events."""
+
+    def __init__(self, at_m=1.6e-6, start_m=1.5e-6):
+        self.at = at_m
+        self.start = start_m
+        self.events = []
+
+    def query(self, cmd):
+        if cmd == ":WAV:SWE:STAR?":
+            return f"{self.start:.9E}"
+        if cmd in (":WAV?", ":WAVelength?"):
+            return f"{self.at:.9E}"
+        return "+0"
+
+    def write(self, cmd):
+        self.events.append(cmd)
+
+    def set_wavelength_m(self, wavelength, tolerance=1e-12, timeout=30.0):
+        self.events.append(f"GOTO {wavelength:.9E}")
+        self.at = wavelength
+        return wavelength
+
+
+def test_the_real_bench_numbers_read_as_a_short_range():
+    import _bench_ops as ops
+    cap = {"first_edge": 4e-6, "last_edge": 4e-6 + 0.8094, "n_edges": 4048}
+    r = ops.check_train(cap, 1.0, expected_points=5001)
+    assert r["ok"] is False
+    assert r["fault"] == "short_range"
+    assert r["interval_ratio"] == pytest.approx(1.0, abs=1e-3)
+    assert r["range_fraction"] == pytest.approx(0.8094, abs=1e-3)
+
+
+def test_a_genuinely_fast_sweep_is_still_called_one():
+    """Same short span, but the full pulse count -- so the pulses really are
+    closer together and the instrument really did run fast."""
+    import _bench_ops as ops
+    cap = {"first_edge": 0.0, "last_edge": 0.8094, "n_edges": 5001}
+    r = ops.check_train(cap, 1.0, expected_points=5001)
+    assert r["ok"] is False
+    assert r["fault"] == "fast_sweep"
+    assert r["interval_ratio"] == pytest.approx(0.8094, abs=1e-3)
+
+
+def test_a_good_train_carries_no_fault():
+    import _bench_ops as ops
+    cap = {"first_edge": 0.0, "last_edge": 1.0, "n_edges": 5001}
+    r = ops.check_train(cap, 1.0, expected_points=5001)
+    assert r["ok"] is True
+    assert "fault" not in r
+
+
+def test_parking_does_nothing_when_the_laser_is_already_there():
+    import _bench_ops as ops
+    d = _ParkLaser(at_m=1.5e-6, start_m=1.5e-6)
+    p = ops.park_at_sweep_start(d)
+    assert p["moved"] is False
+    assert d.events == []
+
+
+def test_parking_moves_the_laser_to_the_start_and_waits():
+    import _bench_ops as ops
+    d = _ParkLaser(at_m=1.6e-6, start_m=1.5e-6)
+    p = ops.park_at_sweep_start(d)
+    assert p["moved"] is True
+    assert p["from_m"] == pytest.approx(1.6e-6)
+    assert p["arrived_m"] == pytest.approx(1.5e-6)
+    assert len(d.events) == 1 and d.events[0].startswith("GOTO")
+    assert float(d.events[0].split()[1]) == pytest.approx(1.5e-6)
+
+
+def test_the_start_wavelength_comes_from_the_instrument_not_the_panel():
+    """If it came from the panel, a panel that disagreed with the laser would
+    park at one wavelength and sweep from another."""
+    import _bench_ops as ops
+    d = _ParkLaser(at_m=1.6e-6, start_m=1.52e-6)
+    p = ops.park_at_sweep_start(d)
+    assert p["start_m"] == pytest.approx(1.52e-6)
+
+
+def test_the_sweep_is_not_started_until_the_laser_is_parked():
+    """The whole point. Starting first and parking after would sweep the
+    wrong range at the right speed -- which is what happened on the bench."""
+    import _bench_ops as ops
+    d = _ParkLaser(at_m=1.6e-6, start_m=1.5e-6)
+    ops.start_sweep(d)
+    assert ":WAV:SWE 1" in d.events
+    goto = next(i for i, e in enumerate(d.events) if e.startswith("GOTO"))
+    assert goto < d.events.index(":WAV:SWE 1")
+
+
+def test_a_laser_that_will_not_reach_the_start_fails_rather_than_sweeping():
+    """set_wavelength_m raises when the read-back never converges. That must
+    propagate: a sweep from the wrong place is worse than no sweep."""
+    import _bench_ops as ops
+
+    class Stuck(_ParkLaser):
+        def set_wavelength_m(self, wavelength, tolerance=1e-12, timeout=30.0):
+            raise RuntimeError("never got there")
+
+    d = Stuck(at_m=1.6e-6, start_m=1.5e-6)
+    with pytest.raises(RuntimeError):
+        ops.start_sweep(d)
+    assert ":WAV:SWE 1" not in d.events
+

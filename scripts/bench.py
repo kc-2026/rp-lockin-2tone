@@ -925,8 +925,18 @@ class Bench:
                       "an error, so this drifts silently between runs.")
             return ops.start_sweep(d)
 
-        self.submit(self.lasw, "start sweep", go,
-                    lambda _v: self.log("sweep started"))
+        def started(v):
+            p = (v or {}).get("parked")
+            if p and p["moved"]:
+                self.log(f"parked at the start first: "
+                         f"{p['from_m'] * 1e9:.4f} -> "
+                         f"{p['arrived_m'] * 1e9:.4f} nm, "
+                         f"{p['waited_s']:.2f} s. Starting from the wrong "
+                         f"wavelength sweeps a SHORT range at the right speed, "
+                         f"which looks like a normal trace.")
+            self.log("sweep started")
+
+        self.submit(self.lasw, "start sweep", go, started)
 
     def sweep_stop(self):
         d = self._need_laser()
@@ -1012,15 +1022,33 @@ class Bench:
                  f"{r['span']:.4f} s (the Sweep panel asks for {secs:.4f} s "
                  f"and {n_pts} points)")
         if not r["ok"]:
-            self.log(
-                f"WARNING: the train is {r['ratio'] * 100:.1f}% of the "
-                f"requested duration. The laser almost certainly swept at "
-                f"about {r['implied_speed_factor']:.2f}x the speed this panel "
-                f"says, finished early, and then SAT at its end wavelength "
-                f"for the rest of the record. That parked stretch is smooth "
-                f"and slowly drifting, and next to the real sweep it reads as "
-                f"a change in the physics. Press Sweep > Configure to put the "
-                f"instrument and this panel back in step, then capture again.")
+            fault = r.get("fault")
+            if fault == "short_range":
+                covered = r["range_fraction"] * abs(cfg["stop_nm"]
+                                                    - cfg["start_nm"])
+                self.log(
+                    f"WARNING: the pulse SPACING is right "
+                    f"({r['interval'] * 1e6:.2f} us against "
+                    f"{r['expected_interval'] * 1e6:.2f} us expected) but "
+                    f"there are only {r['n_edges']} of them. The laser swept "
+                    f"at the requested speed over about {covered:.2f} nm "
+                    f"instead of {abs(cfg['stop_nm'] - cfg['start_nm']):.2f} "
+                    f"nm -- it began somewhere other than {cfg['start_nm']:g} "
+                    f"nm. Sweep > Start now parks it at the start first and "
+                    f"waits, so simply capturing again should fix this.")
+            else:
+                self.log(
+                    f"WARNING: the train is {r['ratio'] * 100:.1f}% of the "
+                    f"requested duration AND the pulses are "
+                    f"{r['interval'] * 1e6:.2f} us apart against "
+                    f"{r['expected_interval'] * 1e6:.2f} us expected, so the "
+                    f"instrument really did sweep at about "
+                    f"{r['implied_speed_factor']:.2f}x the speed this panel "
+                    f"says. It then SAT at its end wavelength for the rest of "
+                    f"the record; that parked stretch is smooth and slowly "
+                    f"drifting and reads as a change in the physics. Press "
+                    f"Sweep > Configure to put the instrument and this panel "
+                    f"back in step, then capture again.")
         if r.get("points_ok") is False:
             self.log(f"WARNING: {r['n_edges']} pulses against "
                      f"{r['expected_points']} expected. The wavelength axis "
@@ -1563,7 +1591,14 @@ class Bench:
                 note(f"capture armed ({plan['n_samples']} samples)")
                 time.sleep(2.0)
                 with self.lasw.lock:
-                    ops.start_sweep(d)
+                    # Parks at the start wavelength first and waits for it --
+                    # see ops.park_at_sweep_start. Without that the sweep
+                    # begins wherever the laser was left and covers a short
+                    # range at the right speed.
+                    p = ops.start_sweep(d)["parked"]
+                    if p and p["moved"]:
+                        note(f"parked at start {p['arrived_m'] * 1e9:.4f} nm "
+                             f"in {p['waited_s']:.2f} s")
                     note("sweep started")
                     w = ops.wait_for_sweep(d)
                     note(f"sweep done in {w['elapsed']:.2f} s; shutter read "
