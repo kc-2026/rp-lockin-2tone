@@ -1,35 +1,3 @@
-def test_any_whole_hertz_modulation_is_reachable():
-    """The fs/16384 grid was never a hardware limit -- it is what you get by
-    leaving the play rate at its default. SOUR:FREQ:FIX is settable (1 MHz and
-    5 MHz both accepted, measured) and quantised to 1 Hz, so mod_cycles can be
-    1 and any whole number of hertz is exact.
-
-    999983 Hz is prime and used to be refused. It is not special."""
-    from rp_lockin.waveforms import make_am_table_exact
-    for mod in (999983.0, 1234567.0, 915527.0, 991821.0, 1e6):
-        t = make_am_table_exact(80e6, mod)
-        assert t.modulation == pytest.approx(mod, abs=1e-6), mod
-
-
-def test_a_fractional_hertz_modulation_is_refused():
-    """The play rate is quantised to 1 Hz, so a modulation that is not a whole
-    number of hertz has no exact table."""
-    from rp_lockin.waveforms import make_am_table_exact, plan_exact_am
-    assert plan_exact_am(80e6, 915527.34375) is None
-    with pytest.raises(ValueError):
-        make_am_table_exact(80e6, 915527.34375)
-
-
-def test_the_carrier_lands_close_enough_for_the_aom():
-    """It is placed on the nearest multiple of the play rate. The 1550AOM-1's
-    acoustic passband is megahertz wide, so a few hundred kHz is beneath its
-    notice -- and insisting on exact would rule out most modulations."""
-    from rp_lockin.waveforms import make_am_table_exact
-    for mod in (1e6, 999983.0, 915527.0, 1234567.0):
-        t = make_am_table_exact(80e6, mod)
-        assert abs(t.carrier - 80e6) < 0.5e6, mod
-
-
 """
 The panel bench: that it builds, and that its pieces really are independent.
 
@@ -139,7 +107,8 @@ def test_volts_uses_the_right_scale_per_range():
 
 def test_every_panel_builds(app):
     assert app.rp is None and app.laser is None
-    for name in ("v_host", "v_carrier", "v_mod", "v_amp", "v_ip", "v_dbm",
+    for name in ("v_host", "v_carrier", "v_mod", "v_amp",
+                 "v_carrier2", "v_mod2", "v_amp2", "v_ip", "v_dbm",
                  "v_start", "v_stop", "v_speed", "v_step", "v_dec", "v_secs",
                  "v_trig", "v_fref", "v_orate", "v_seq"):
         assert hasattr(app, name), f"panel field {name} missing"
@@ -406,9 +375,9 @@ def test_shg_demodulates_at_twice_the_drive(app, monkeypatch):
     monkeypatch.setattr(app, "_need_board", lambda: object())
     monkeypatch.setattr(app, "_need_laser", lambda: object())
     monkeypatch.setattr(app.__class__, "_seq_thread",
-                        lambda self, name, rp, d, drive, sweep, f_ref, *a:
-                        captured.update(name=name, f_ref=f_ref,
-                                        mod=drive["modulation"]))
+                        lambda self, name, rp, d, drive, drive2, sweep, f_ref,
+                        *a: captured.update(name=name, f_ref=f_ref,
+                                            mod=drive["modulation"]))
     app.v_seq.set("SHG (demodulate at 2*f1)")
     app.seq_run()
     assert captured, "the sequence never started"
@@ -879,3 +848,198 @@ def test_the_drive_and_f1_both_follow_the_generated_value(app):
     assert float(app.v_fref.get()) == pytest.approx(1000.0, abs=1e-3)
     app.fref_from_drive(2)
     assert float(app.v_fref.get()) == pytest.approx(2000.0, abs=1e-3)
+
+
+def test_any_whole_hertz_modulation_is_reachable():
+    """The fs/16384 grid was never a hardware limit -- it is what you get by
+    leaving the play rate at its default. SOUR:FREQ:FIX is settable (1 MHz and
+    5 MHz both accepted, measured) and quantised to 1 Hz, so mod_cycles can be
+    1 and any whole number of hertz is exact.
+
+    999983 Hz is prime and used to be refused. It is not special."""
+    from rp_lockin.waveforms import make_am_table_exact
+    for mod in (999983.0, 1234567.0, 915527.0, 991821.0, 1e6):
+        t = make_am_table_exact(80e6, mod)
+        assert t.modulation == pytest.approx(mod, abs=1e-6), mod
+
+
+def test_a_fractional_hertz_modulation_is_refused():
+    """The play rate is quantised to 1 Hz, so a modulation that is not a whole
+    number of hertz has no exact table."""
+    from rp_lockin.waveforms import make_am_table_exact, plan_exact_am
+    assert plan_exact_am(80e6, 915527.34375) is None
+    with pytest.raises(ValueError):
+        make_am_table_exact(80e6, 915527.34375)
+
+
+def test_the_carrier_lands_close_enough_for_the_aom():
+    """It is placed on the nearest multiple of the play rate. The 1550AOM-1's
+    acoustic passband is megahertz wide, so a few hundred kHz is beneath its
+    notice -- and insisting on exact would rule out most modulations."""
+    from rp_lockin.waveforms import make_am_table_exact
+    for mod in (1e6, 999983.0, 915527.0, 1234567.0):
+        t = make_am_table_exact(80e6, mod)
+        assert abs(t.carrier - 80e6) < 0.5e6, mod
+
+
+# ------------------------------------------------------------- SFG / OUT2
+# Sum-frequency generation goes as I1 x I2, so the nonlinearity appears at
+# f1 + f2 and |f1 - f2| and nowhere else. f1 and f2 themselves are LINEAR:
+# light at either reaches the detector whether or not anything mixes. That is
+# the whole reason the second channel exists, and it is what these pin.
+
+
+def test_the_second_drive_channel_exists_and_is_independent(app):
+    """Two beams, two AOMs, two modulation frequencies. Sharing one set of
+    boxes would make it impossible to set f1 and f2 to different values, which
+    is the only thing SFG needs from the generator."""
+    assert set(app.drv) == {1, 2}
+    app.v_carrier.set("80.0")
+    app.v_mod.set("915")
+    app.v_mod2.set("1225")
+    assert app._drive_cfg(1)["modulation"] == pytest.approx(915e3)
+    assert app._drive_cfg(2)["modulation"] == pytest.approx(1225e3)
+    assert app.drv[1]["mod"] is not app.drv[2]["mod"]
+
+
+def test_the_channel_one_aliases_still_point_at_channel_one(app):
+    """Everything written before OUT2 existed goes through v_mod and friends.
+    If the aliases drifted to channel 2, the f1 button and every sequence
+    would quietly demodulate the wrong beam."""
+    app.v_mod.set("777")
+    assert app.drv[1]["mod"].get() == "777"
+    assert app._drive_cfg()["modulation"] == pytest.approx(777e3)
+    app.v_mod2.set("888")
+    assert app._drive_cfg()["modulation"] == pytest.approx(777e3)
+
+
+def test_all_four_sfg_frequencies_clear_the_switcher(bench_module):
+    """504.868 kHz and its multiples are off limits, and SFG puts FOUR
+    frequencies on the table rather than two: a product landing on a switcher
+    harmonic reads as a strong, clean, steady optical signal.
+
+    A round 1000 kHz second tone fails this -- it sits 9.7 kHz from the second
+    harmonic -- which is why the default is not a round number."""
+    f1 = bench_module.DEFAULT_MOD_HZ
+    f2 = bench_module.DEFAULT_MOD2_HZ
+    spur = bench_module.SWITCHER_HZ
+    for name, f in (("f1", f1), ("f2", f2), ("f1+f2", f1 + f2),
+                    ("|f1-f2|", abs(f1 - f2))):
+        gap = abs(f - round(f / spur) * spur)
+        assert gap > bench_module.SWITCHER_GUARD_HZ, \
+            f"{name} = {f} Hz is only {gap} Hz from a switcher harmonic"
+
+
+def test_both_default_tones_are_exactly_generatable(bench_module):
+    """A frequency the ASG cannot hit exactly comes back as a beat, and with
+    two tones the SUM carries both errors."""
+    from rp_lockin.waveforms import make_am_table_exact
+    for f in (bench_module.DEFAULT_MOD_HZ, bench_module.DEFAULT_MOD2_HZ):
+        t = make_am_table_exact(80e6, f)
+        assert t.modulation == pytest.approx(f, abs=1e-6)
+        assert abs(t.carrier - 80e6) < 0.5e6
+
+
+def test_the_sfg_buttons_use_the_generated_tones_not_the_typed_ones(app):
+    """Same failure as the harmonic buttons, doubled: the sum of two typed
+    numbers is not the sum of two generated ones, and the error shows up as a
+    beat across the trace rather than as an error."""
+    app.v_carrier.set("80.0")
+    app.v_carrier2.set("80.0")
+    app.v_mod.set("915")
+    app.v_mod2.set("1225")
+
+    app.fref_from_sfg("f2")
+    assert float(app.v_fref.get()) == pytest.approx(1225.0, abs=1e-3)
+    app.fref_from_sfg("sum")
+    assert float(app.v_fref.get()) == pytest.approx(2140.0, abs=1e-3)
+    app.fref_from_sfg("diff")
+    assert float(app.v_fref.get()) == pytest.approx(310.0, abs=1e-3)
+
+
+def test_two_identical_tones_have_no_difference_product(app):
+    """|f1 - f2| is DC, which is not a lock-in frequency. Setting f_ref to
+    zero would return the mean of the record and look like a huge signal."""
+    app.v_mod.set("915")
+    app.v_mod2.set("915")
+    before = app.v_fref.get()
+    app.fref_from_sfg("diff")
+    assert app.v_fref.get() == before, "f_ref was set to DC"
+
+
+def test_the_sfg_sequence_is_offered(app):
+    import tkinter.ttk as ttk_
+    found = []
+
+    def walk(widget):
+        for child in widget.winfo_children():
+            if isinstance(child, ttk_.Combobox):
+                found.extend(child.cget("values"))
+            walk(child)
+
+    walk(app.root)
+    assert any("SFG" in str(v) for v in found), f"no SFG option in {found}"
+
+
+def test_the_sfg_sequence_demodulates_at_the_sum(app, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(app, "_need_board", lambda: object())
+    monkeypatch.setattr(app, "_need_laser", lambda: object())
+    monkeypatch.setattr(app.__class__, "_seq_thread",
+                        lambda self, name, rp, d, drive, drive2, sweep, f_ref,
+                        *a: captured.update(f_ref=f_ref,
+                                            f1=drive["modulation"],
+                                            f2=drive2["modulation"]))
+    app.v_mod.set("915")
+    app.v_mod2.set("1225")
+    app.v_seq.set("SFG (two tones, demodulate at f1+f2)")
+    app.seq_run()
+    assert captured, "the sequence never started"
+    assert captured["f_ref"] == pytest.approx(captured["f1"] + captured["f2"],
+                                              abs=1.0)
+
+
+def test_the_sfg_sequence_refuses_one_frequency_for_both_tones(app,
+                                                              monkeypatch):
+    """Two tones at the same frequency have no sum or difference product to
+    find. Running anyway would demodulate at 2*f1, which is SHG, and report
+    it as SFG."""
+    started = []
+    monkeypatch.setattr(app, "_need_board", lambda: object())
+    monkeypatch.setattr(app, "_need_laser", lambda: object())
+    monkeypatch.setattr(app.__class__, "_seq_thread",
+                        lambda *a, **k: started.append(True))
+    app.v_mod.set("915")
+    app.v_mod2.set("915")
+    app.v_seq.set("SFG (two tones, demodulate at f1+f2)")
+    app.seq_run()
+    assert not started
+
+
+def test_one_output_can_be_disarmed_without_the_other():
+    """Setting SFG up one beam at a time needs this. A per-channel button that
+    disarmed both would make it impossible to check f2 alone against f1."""
+    import _bench_ops as ops
+
+    class FakeRP:
+        def __init__(self):
+            self.sent = []
+
+        def write(self, cmd):
+            self.sent.append(cmd)
+
+    rp = FakeRP()
+    ops.drive_off(rp, 2)
+    assert rp.sent == ["OUTPUT2:STATE OFF"]
+
+    rp = FakeRP()
+    ops.drive_off(rp)
+    assert rp.sent == ["OUTPUT1:STATE OFF", "OUTPUT2:STATE OFF"], \
+        "the default must still be BOTH -- every cleanup path relies on it"
+
+
+def test_the_header_reports_both_outputs(app):
+    """SFG leaves two outputs live. A header watching only OUT1 would read
+    'off' with light on the bench."""
+    assert "OUT1" in app.h_out.get() and "OUT2" in app.h_out.get()
+

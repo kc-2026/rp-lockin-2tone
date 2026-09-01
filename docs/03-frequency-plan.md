@@ -159,6 +159,51 @@ the supply apart from a steady tone from the DUT.
 915 kHz is the bench default for that reason. The Drive panel warns whenever
 the chosen frequency comes within 20 kHz of the family.
 
+### Two tones, for SFG
+
+Sum-frequency generation needs both beams modulated, at f1 and f2, and its
+signature is the **product**: light out goes as I1 x I2, so a chi(2) mixer puts
+components at **f1 + f2** and **|f1 - f2|** that neither beam alone can
+produce. f1 and f2 themselves are linear — light at either reaches the detector
+whether anything mixes or not — so they are the controls, not the measurement.
+
+That means **four** frequencies have to clear the switching supply, not two.
+Picking f1 and f2 clear of it and stopping there is the easy mistake: a product
+landing on a harmonic reads as a strong, clean, steady optical signal in exactly
+the place the real signal is expected.
+
+The bench defaults, and why:
+
+| | Frequency | Gap to nearest 504.868 kHz harmonic |
+|---|---:|---:|
+| f1 | 915 kHz | 94.7 kHz |
+| f2 | **1225 kHz** | 215.3 kHz |
+| f1 + f2 | 2140 kHz | 120.5 kHz |
+| \|f1 - f2\| | 310 kHz | 194.9 kHz |
+
+A round 1000 kHz was the obvious second tone and is the wrong one — it sits
+9.7 kHz from the second harmonic. 1225 kHz is the nearest round-ish number that
+keeps all four clear with margin.
+
+Both tables are exact and both carriers land close to 80 MHz:
+
+| | mod cycles | carrier cycles | play rate | carrier |
+|---|---:|---:|---:|---:|
+| f1 | 12 | 1049 | 76 250 Hz | 79.9862 MHz |
+| f2 | 10 | 653 | 122 500 Hz | 79.9925 MHz |
+
+The two channels do **not** share a table, a play rate or a carrier here, and
+they do not need to: SFG detects an amplitude product, so the relative phase of
+the two 80 MHz acoustic drives is irrelevant. (The old two-tone plan shared a
+buffer for exactly this reason — there the difference-frequency phase was the
+measurement. It is not, here.)
+
+`scripts/bench.py` has one Drive panel per output and an SFG row in the
+Demodulate panel that sets f_ref from what the ASGs will **generate**, never
+from the two typed numbers: the sum of two requests is not the sum of two
+outputs, and the error comes back as a beat across the trace rather than as an
+error.
+
 ### What still stands from the 2026-08-12 plan
 
 `plan_two_tone_grid()` — carrier 80.001831 MHz, f1 5.004883 MHz, f2

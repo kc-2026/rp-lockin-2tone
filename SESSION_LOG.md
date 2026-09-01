@@ -3796,3 +3796,87 @@ on the fs/16384 grid) is still built on the superseded model. It is not wrong --
 those frequencies do work -- but it is now needlessly constrained, and
 `docs/03-frequency-plan.md` should say so.
 
+---
+
+## 2026-09-01 — Claude (Claude Code) — a second drive channel, and the SFG frequencies
+
+**Goal:** SFG needs two modulated beams, not one. Give the bench a second drive
+output and a way to demodulate the product.
+
+**Did:**
+
+* **`scripts/bench.py` has two Drive panels**, OUT1 (f1) and OUT2 (f2), built
+  from one `_build_drive()` so there is no second implementation to drift. Each
+  has its own carrier, modulation, amplitude, generated-frequency readout and
+  `OUTn ON` / `OUTn OFF` buttons, plus an `ALL OFF` panic button in both.
+  `self.drv[1]` / `self.drv[2]` hold the vars; `v_carrier`/`v_mod`/`v_amp`/
+  `v_snap` remain aliases for channel 1 so every existing caller, button and
+  test still points at the beam it always did.
+* **Per-channel disarm.** `ops.drive_off(rp, channel=None)` — one output, or
+  both when the channel is omitted. The default is still BOTH, because every
+  cleanup path (`on_close`, the sequence `finally`, `all_off`) relies on it and
+  one that only disarmed the channel it knew about would leave light on the
+  bench. Setting SFG up one beam at a time needs the per-channel form.
+* **An SFG row in the Demodulate panel**: `f2`, `f1+f2`, `|f1-f2|`, alongside
+  the existing `f1` / `2 x f1` / `3 x f1`. All six build f_ref from what the
+  ASGs will **generate**, resolved through `_resolve()`, never from the typed
+  numbers.
+* **An `SFG (two tones, demodulate at f1+f2)` sequence.** Drives both outputs,
+  sweeps, and demodulates at the sum. It refuses outright if f1 and f2 are set
+  to the same frequency.
+* **The header polls BOTH outputs** (`OUT1 ON  OUT2 off`). It watched only OUT1
+  before, which with two channels live would have read "off" with light on the
+  bench.
+* `docs/03-frequency-plan.md` gained a "Two tones, for SFG" section.
+* 321 offline tests pass (was 311). Twelve new ones cover the channel split,
+  the alias direction, the four-frequency spur rule, the buttons, the sequence,
+  the refusal, and the both-channels default of `drive_off`.
+
+**Learned:**
+
+* **SFG puts FOUR frequencies on the table, not two.** Output goes as I1 x I2,
+  so the nonlinearity appears at **f1 + f2** and **|f1 - f2|**; f1 and f2
+  themselves are linear and are the controls. Clearing only the two driven
+  tones of the switching supply is the easy mistake — a *product* landing on a
+  504.868 kHz harmonic reads as a strong, clean, steady optical signal in
+  exactly the place the real signal is expected.
+* **f2 = 1225 kHz, and the round number is the wrong one.** 1000 kHz sits
+  9.7 kHz from the switcher's second harmonic. With f1 = 915 kHz:
+
+  | | Frequency | Gap to nearest harmonic |
+  |---|---:|---:|
+  | f1 | 915 kHz | 94.7 kHz |
+  | f2 | 1225 kHz | 215.3 kHz |
+  | f1+f2 | 2140 kHz | 120.5 kHz |
+  | \|f1-f2\| | 310 kHz | 194.9 kHz |
+
+  Both tables are exact (f1: 12 mod / 1049 carrier cycles at 76 250 Hz; f2: 10
+  and 653 at 122 500 Hz) and both carriers land within 14 kHz of 80 MHz.
+* **The two channels need not share a buffer, a play rate or a carrier.** SFG
+  detects an amplitude product, so the relative phase of the two 80 MHz
+  acoustic drives is irrelevant. Rule 4 of the old frequency plan ("both
+  channels must use the same buffer length") existed because the
+  difference-frequency PHASE was the measurement there. It is not, here.
+
+**Broke / still broken:**
+
+* Nothing broken. `_seq_thread` gained a `drive2` positional argument, so the
+  one test that monkeypatched its signature was updated with it.
+* **The dates on the recent session-log headings are wrong.** Everything headed
+  `2026-08-28 (...)` was committed on **2026-09-01** per `git log`, and there
+  are 2026-08-31 commits with no matching heading at all. I have not rewritten
+  them — I cannot tell which day each piece of work actually happened — but a
+  future agent should not trust those headings as a timeline. This entry uses
+  the machine's date.
+
+**Next:**
+
+* **None of this has been run against the board.** The panels build and the
+  frequencies are checked, but no second AOM, amplifier or beam is connected —
+  there is one ZHL-1-2W+ in use and a second that has never been wired. Before
+  an SFG run: connect the second amplifier and AOM, confirm OUT2 reaches it,
+  and take a one-beam control at f2 alone before believing anything at f1+f2.
+* `plan_two_tone_grid` still uses the superseded fs/16384 model. Works, but
+  needlessly constrained.
+* The laser needs a front-panel LAN reapply after a dropout, roughly hourly.
+

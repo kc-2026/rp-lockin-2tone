@@ -67,6 +67,21 @@ from tsl775 import TSL775                                   # noqa: E402
 # 500 kHz is 4.9 kHz from the fundamental.
 DEFAULT_MOD_HZ = 915000.0
 
+# The second tone, for SFG. Sum-frequency generation goes as I1 x I2, so the
+# nonlinearity shows up at f1 + f2 and at |f1 - f2| -- the intermodulation this
+# whole design was built around. That means FOUR frequencies have to stay clear
+# of the switching supply, not the two being driven:
+#
+#   f1        915 kHz     94.7 kHz clear
+#   f2       1225 kHz    215.3 kHz clear
+#   f1 + f2  2140 kHz    120.5 kHz clear
+#   |f1 - f2| 310 kHz    194.9 kHz clear
+#
+# and both carriers land within 14 kHz of 80 MHz, which the AOMs need. A round
+# 1000 kHz was the obvious second tone and is the wrong one: it sits 9.7 kHz
+# from the switcher's second harmonic.
+DEFAULT_MOD2_HZ = 1225000.0
+
 # The board's switching supply, measured 2026-08-12. Its harmonics appear in
 # the input at ~32 uV, which is 9x the noise floor -- and a lock-in cannot tell
 # a steady tone from the supply apart from a steady tone from the DUT.
@@ -201,7 +216,8 @@ class Bench:
         self._build_workspace(right)
         self._build_log()
 
-        for build in (self._panel_board, self._panel_drive, self._panel_laser,
+        for build in (self._panel_board, self._panel_drive,
+                      self._panel_drive2, self._panel_laser,
                       self._panel_sweep, self._panel_acquire,
                       self._panel_demod, self._panel_map, self._panel_export,
                       self._panel_sequences):
@@ -255,14 +271,19 @@ class Bench:
         try:
             if self.rp is not None and not self.board.busy:
                 def go():
-                    return ops.drive_state(self.rp, 1)
+                    # BOTH, always. SFG leaves two outputs live and a header
+                    # that only watched OUT1 would say "off" with light on
+                    # the bench.
+                    return (ops.drive_state(self.rp, 1),
+                            ops.drive_state(self.rp, 2))
 
-                self.submit(self.board, "poll OUT1", go,
-                            lambda on: self.h_out.set(
-                                f"OUT1 {'ON' if on else 'off'}"),
+                self.submit(self.board, "poll outputs", go,
+                            lambda st: self.h_out.set(
+                                f"OUT1 {'ON' if st[0] else 'off'}  "
+                                f"OUT2 {'ON' if st[1] else 'off'}"),
                             lambda _e: None)
             elif self.rp is None:
-                self.h_out.set("OUT1 --")
+                self.h_out.set("OUT1 --  OUT2 --")
             if self.laser is not None and not self.lasw.busy:
                 def go2():
                     return ops.laser_state(self.laser)
@@ -290,7 +311,7 @@ class Bench:
         h = ttk.Frame(self.root, padding=(8, 6))
         h.pack(fill="x")
         self.h_board = tk.StringVar(value="board --")
-        self.h_out = tk.StringVar(value="OUT1 --")
+        self.h_out = tk.StringVar(value="OUT1 --  OUT2 --")
         self.h_laser = tk.StringVar(value="laser --")
         self.h_sweep = tk.StringVar(value="sweep --")
         self.h_armed = tk.StringVar(value="")
@@ -513,11 +534,35 @@ class Bench:
     # -- Drive ---------------------------------------------------------------
 
     def _panel_drive(self, parent):
-        f = self._panel(parent, "Drive (OUT1)")
-        self.v_carrier = tk.StringVar(value="80.0")
-        self.v_mod = tk.StringVar(value=f"{DEFAULT_MOD_HZ / 1e3:.6f}")
-        self.v_amp = tk.StringVar(value="1.0")
-        fld(f, 0, "carrier", self.v_carrier, "MHz")
+        """OUT1 -- beam 1. The aliases keep every existing caller working."""
+        self.drv = {}
+        self._build_drive(parent, 1, DEFAULT_MOD_HZ, "Drive (OUT1) -- f1")
+        d = self.drv[1]
+        self.v_carrier, self.v_mod = d["carrier"], d["mod"]
+        self.v_amp, self.v_snap = d["amp"], d["snap"]
+
+    def _panel_drive2(self, parent):
+        """OUT2 -- beam 2, the second tone. Only SFG needs it.
+
+        Identical hardware and identical code; the only thing that differs is
+        the default modulation, chosen so that f1, f2, f1+f2 and |f1-f2| are
+        all clear of the switching supply. See DEFAULT_MOD2_HZ.
+        """
+        self._build_drive(parent, 2, DEFAULT_MOD2_HZ,
+                          "Drive (OUT2) -- f2, for SFG")
+        d = self.drv[2]
+        self.v_carrier2, self.v_mod2 = d["carrier"], d["mod"]
+        self.v_amp2, self.v_snap2 = d["amp"], d["snap"]
+
+    def _build_drive(self, parent, ch, default_mod, title):
+        f = self._panel(parent, title)
+        d = self.drv[ch] = {
+            "carrier": tk.StringVar(value="80.0"),
+            "mod": tk.StringVar(value=f"{default_mod / 1e3:.6f}"),
+            "amp": tk.StringVar(value="1.0"),
+            "snap": tk.StringVar(value=""),
+        }
+        fld(f, 0, "carrier", d["carrier"], "MHz")
         # ONE box. There used to be a second showing what the ASG would snap
         # to, back when frequencies had to sit on the fs/16384 grid. That grid
         # turned out to be an artefact of leaving the play rate at its default
@@ -525,20 +570,19 @@ class Bench:
         # the two boxes agreed for every sane input. The readout below still
         # reports what will actually be generated, because "any whole hertz"
         # is not "anything".
-        e_mod = fld(f, 1, "modulation", self.v_mod, "kHz", width=14)
-        e_mod.bind("<FocusOut>", lambda _e: self._settle_mod())
-        e_mod.bind("<Return>", lambda _e: self._settle_mod())
-        fld(f, 2, "amplitude", self.v_amp, "V")
-        self.v_snap = tk.StringVar(value="")
+        e_mod = fld(f, 1, "modulation", d["mod"], "kHz", width=14)
+        e_mod.bind("<FocusOut>", lambda _e: self._settle_mod(ch))
+        e_mod.bind("<Return>", lambda _e: self._settle_mod(ch))
+        fld(f, 2, "amplitude", d["amp"], "V")
         # wraplength, or a long readout pushes the whole rail wider and the
         # entry boxes march off to the right.
-        ttk.Label(f, textvariable=self.v_snap, foreground="#144",
+        ttk.Label(f, textvariable=d["snap"], foreground="#144",
                   justify="left", wraplength=300).grid(
             row=3, column=0, columnspan=3, sticky="w", pady=(2, 2))
         self._snapping = False
-        self.v_carrier.trace_add("write", lambda *_a: self._update_snap())
-        self.v_mod.trace_add("write", lambda *_a: self._update_snap())
-        self._update_snap()
+        d["carrier"].trace_add("write", lambda *_a: self._update_snap(ch))
+        d["mod"].trace_add("write", lambda *_a: self._update_snap(ch))
+        self._update_snap(ch)
         ttk.Label(f, text="The table holds a whole number of cycles of both "
                           "and is played at a rate that makes them come out "
                           "right, so any WHOLE NUMBER OF HERTZ is exact -- the "
@@ -547,22 +591,29 @@ class Bench:
                           "carrier. Avoid multiples of 504.868 kHz.",
                   foreground="#666", justify="left", wraplength=300).grid(
             row=4, column=0, columnspan=3, sticky="w", pady=(2, 4))
-        b = ttk.Frame(f)
-        b.grid(row=5, column=0, columnspan=3, sticky="w")
-        ttk.Button(b, text="Drive ON", command=self.drive_on).pack(side="left")
-        ttk.Button(b, text="Drive OFF",
-                   command=self.all_off).pack(side="left", padx=4)
+        bar = ttk.Frame(f)
+        bar.grid(row=5, column=0, columnspan=3, sticky="w")
+        # Per-channel, not all_off: turning OUT2 off has to leave OUT1 driving
+        # or SFG cannot be set up one beam at a time. The header shows both.
+        ttk.Button(bar, text=f"OUT{ch} ON",
+                   command=lambda: self.drive_on(ch)).pack(side="left")
+        ttk.Button(bar, text=f"OUT{ch} OFF",
+                   command=lambda: self.drive_off_one(ch)).pack(side="left",
+                                                                padx=4)
+        ttk.Button(bar, text="ALL OFF",
+                   command=self.all_off).pack(side="left", padx=12)
 
-    def _settle_mod(self):
+    def _settle_mod(self, ch=1):
         """Move the box to what will actually be generated, once editing ends.
 
         Only ever changes anything when the request cannot be met exactly: a
         fractional hertz, or a frequency whose carrier ratio will not fit the
         table. Both are reported rather than corrected silently.
         """
+        d = self.drv[ch]
         try:
-            carrier = float(self.v_carrier.get()) * 1e6
-            asked = float(self.v_mod.get()) * 1e3
+            carrier = float(d["carrier"].get()) * 1e6
+            asked = float(d["mod"].get()) * 1e3
             t, _mode = self._resolve(carrier, asked)
         except Exception:                            # noqa: BLE001
             return
@@ -574,10 +625,10 @@ class Bench:
                      f"has to be a whole number of hertz.")
             self._snapping = True
             try:
-                self.v_mod.set(f"{t.modulation / 1e3:.6f}")
+                d["mod"].set(f"{t.modulation / 1e3:.6f}")
             finally:
                 self._snapping = False
-            self._update_snap()
+            self._update_snap(ch)
 
     def _resolve(self, carrier, mod):
         """The table that will really be played, and how it was reached.
@@ -593,14 +644,15 @@ class Bench:
         except ValueError:
             return make_am_table(carrier, mod), "grid"
 
-    def _update_snap(self):
+    def _update_snap(self, ch=1):
         """Show what the ASG will really play, beside what was typed."""
+        d = self.drv[ch]
         try:
-            carrier = float(self.v_carrier.get()) * 1e6
-            asked = float(self.v_mod.get()) * 1e3
+            carrier = float(d["carrier"].get()) * 1e6
+            asked = float(d["mod"].get()) * 1e3
             t, mode = self._resolve(carrier, asked)
         except Exception:                            # noqa: BLE001
-            return self.v_snap.set("")
+            return d["snap"].set("")
         note = "" if abs(t.modulation - asked) <= 0.5 else \
             f"  (nearest reachable to {asked / 1e3:.4f})"
         # Every frequency is reachable now, so nothing stops you landing on a
@@ -617,7 +669,7 @@ class Bench:
                f"{t.carrier_cycles} carrier cycles in the table, played at"
                if mode == "exact"
                else "fallback, on the default fs/16384 grid, play rate")
-        self.v_snap.set(
+        d["snap"].set(
             f"generates: carrier {t.carrier / 1e6:.6f} MHz "
             f"({t.carrier_cycles} cyc), mod {t.modulation / 1e3:.4f} kHz "
             f"({t.mod_cycles} cyc){note}. {how} "
@@ -625,24 +677,33 @@ class Bench:
             f"3x = {3 * t.modulation / 1e3:.4f} kHz."
             f"  spur gap {gap / 1e3:.1f} kHz.{warn}")
 
-    def _drive_cfg(self):
+    def _drive_cfg(self, ch=1):
         # _resolve() turns this into the table that will really be played, and
         # Drive ON, the f1 button and the sequences all go through it -- so
         # they cannot disagree about what is on the wire.
-        return dict(carrier=float(self.v_carrier.get()) * 1e6,
-                    modulation=float(self.v_mod.get()) * 1e3,
-                    amplitude=float(self.v_amp.get()))
+        d = self.drv[ch]
+        return dict(carrier=float(d["carrier"].get()) * 1e6,
+                    modulation=float(d["mod"].get()) * 1e3,
+                    amplitude=float(d["amp"].get()))
 
-    def drive_on(self):
+    def drive_off_one(self, ch):
+        rp = self.rp
+        if rp is None:
+            return self.log("no board connected")
+        self.submit(self.board, f"OUT{ch} off",
+                    lambda: ops.drive_off(rp, ch),
+                    lambda _v: self.log(f"OUT{ch} disarmed"))
+
+    def drive_on(self, ch=1):
         rp = self._need_board()
         if not rp:
             return
         try:
-            cfg = self._drive_cfg()
+            cfg = self._drive_cfg(ch)
         except ValueError as e:
             return messagebox.showerror("Drive", f"Not a number: {e}")
         if not messagebox.askokcancel(
-                "Enable OUT1",
+                f"Enable OUT{ch}",
                 f"Carrier      {cfg['carrier'] / 1e6:.6f} MHz\n"
                 f"Modulation   {cfg['modulation'] / 1e3:.4f} kHz (AM, depth 1)\n"
                 f"Amplitude    {cfg['amplitude']} V\n\n"
@@ -651,11 +712,12 @@ class Bench:
             return self.log("drive enable cancelled")
 
         def done(table):
-            self.log(f"OUT1 ON: carrier {table.carrier / 1e6:.6f} MHz, "
-                     f"modulation {table.modulation / 1e3:.4f} kHz "
-                     f"(snapped), {cfg['amplitude']} V")
+            self.log(f"OUT{ch} ON: carrier {table.carrier / 1e6:.6f} MHz, "
+                     f"modulation {table.modulation / 1e3:.4f} kHz, "
+                     f"{cfg['amplitude']} V")
 
-        self.submit(self.board, "drive on", lambda: ops.drive_on(rp, **cfg), done)
+        self.submit(self.board, f"drive OUT{ch} on",
+                    lambda: ops.drive_on(rp, channel=ch, **cfg), done)
 
     def all_off(self):
         rp = self.rp
@@ -1113,14 +1175,29 @@ class Bench:
         ttk.Button(h, text="3 x f1", width=7,
                    command=lambda: self.fref_from_drive(3)).pack(side="left",
                                                                  padx=2)
-        ttk.Label(f, text="Type the harmonic in by hand and you will be a few\n"
-                          "tens of hertz out, because the ASG SNAPS the drive\n"
-                          "to its grid. The lock-in then beats at the offset\n"
-                          "and the trace comes out as a sine wave.",
+        s = ttk.Frame(f)
+        s.grid(row=4, column=0, columnspan=3, sticky="w", pady=(2, 0))
+        # SFG output goes as I1 x I2, so the nonlinearity lands on the SUM and
+        # the DIFFERENCE and nowhere else. f2 on its own is the linear control:
+        # a real SFG signal is absent there.
+        ttk.Label(s, text="SFG:").pack(side="left")
+        ttk.Button(s, text="f2", width=4,
+                   command=lambda: self.fref_from_sfg("f2")).pack(side="left",
+                                                                  padx=2)
+        ttk.Button(s, text="f1+f2", width=7,
+                   command=lambda: self.fref_from_sfg("sum")).pack(side="left")
+        ttk.Button(s, text="|f1-f2|", width=8,
+                   command=lambda: self.fref_from_sfg("diff")).pack(side="left",
+                                                                    padx=2)
+        ttk.Label(f, text="Use the buttons. Typing a harmonic or a sum by hand\n"
+                          "leaves f_ref tens of hertz out whenever the drive\n"
+                          "was not reachable exactly, and a lock-in that is df\n"
+                          "away from its signal returns a df BEAT -- a clean\n"
+                          "sine across the trace that looks like a result.",
                   foreground="#a04000", justify="left", wraplength=300).grid(
-            row=4, column=0, columnspan=3, sticky="w", pady=(4, 4))
+            row=5, column=0, columnspan=3, sticky="w", pady=(4, 4))
         ttk.Button(f, text="Demodulate capture",
-                   command=self.demod_run).grid(row=5, column=0, columnspan=3,
+                   command=self.demod_run).grid(row=6, column=0, columnspan=3,
                                                 sticky="w")
 
     def fref_from_drive(self, harmonic):
@@ -1143,6 +1220,37 @@ class Bench:
         self.v_fref.set(f"{f / 1e3:.6f}")
         self.log(f"f_ref = {harmonic} x the generated drive "
                  f"({table.modulation:.4f} Hz) = {f:.4f} Hz")
+
+    def fref_from_sfg(self, kind):
+        """Set f_ref to an SFG signature built from what BOTH ASGs will play.
+
+        Same reason as fref_from_drive: the sum of two typed numbers is not the
+        sum of two generated ones, and the error shows up as a beat rather than
+        as an error. "f2" is here as the linear control -- light at f2 reaches
+        the detector whether or not anything mixes, so a response there does
+        not distinguish SFG from leakage; the sum and the difference do.
+        """
+        try:
+            c1, c2 = self._drive_cfg(1), self._drive_cfg(2)
+        except ValueError as e:
+            return messagebox.showerror("Drive", f"Not a number: {e}")
+        t1, _m1 = self._resolve(c1["carrier"], c1["modulation"])
+        t2, _m2 = self._resolve(c2["carrier"], c2["modulation"])
+        f1, f2 = t1.modulation, t2.modulation
+        f = {"f2": f2, "sum": f1 + f2, "diff": abs(f1 - f2)}[kind]
+        label = {"f2": "f2", "sum": "f1 + f2", "diff": "|f1 - f2|"}[kind]
+        if f <= 0:
+            return messagebox.showerror(
+                "SFG", "f1 and f2 are the same, so |f1 - f2| is DC and there "
+                       "is no difference product to demodulate. Separate them.")
+        self.v_fref.set(f"{f / 1e3:.6f}")
+        self.log(f"f_ref = {label} = {f / 1e3:.4f} kHz, from the generated "
+                 f"drives (f1 {f1 / 1e3:.4f}, f2 {f2 / 1e3:.4f} kHz)")
+        k = max(1, round(f / SWITCHER_HZ))
+        gap = abs(f - k * SWITCHER_HZ)
+        if gap < SWITCHER_GUARD_HZ:
+            self.log(f"WARNING: that is {gap / 1e3:.1f} kHz from "
+                     f"{k} x 504.868 kHz (switching supply). Move f1 or f2.")
 
     def _warn_if_beating(self, r):
         """A lock-in output that oscillates is a frequency offset, not physics.
@@ -1290,6 +1398,7 @@ class Bench:
         ttk.Combobox(f, textvariable=self.v_seq, width=26, state="readonly",
                      values=("linear sweep",
                              "SHG (demodulate at 2*f1)",
+                             "SFG (two tones, demodulate at f1+f2)",
                              "control: no drive",
                              "control: low power")).grid(row=1, column=0,
                                                          sticky="w")
@@ -1308,7 +1417,8 @@ class Bench:
             return messagebox.showinfo("Sequence", "One is already running.")
         name = self.v_seq.get()
         try:
-            drive = self._drive_cfg()
+            drive = self._drive_cfg(1)
+            drive2 = self._drive_cfg(2)
             sweep = self._sweep_cfg()
             f_ref = float(self.v_fref.get()) * 1e3
             orate = float(self.v_orate.get())
@@ -1317,15 +1427,32 @@ class Bench:
         except ValueError as e:
             return messagebox.showerror("Sequence", f"Not a number: {e}")
 
+        two_tone = name.startswith("SFG")
         if name.startswith("SHG"):
             # A chi(2) crystal is a SQUARE law, so light modulated at f1 comes
             # back with a component at 2*f1. Demodulating there isolates the
             # nonlinearity from any linear leakage, exactly as |f2-f1| does in
             # the two-tone scheme.
-            f_ref = 2.0 * drive["modulation"]
+            t1, _m = self._resolve(drive["carrier"], drive["modulation"])
+            f_ref = 2.0 * t1.modulation
+        elif two_tone:
+            # SFG output goes as I1 x I2, so it appears at f1 + f2. Built from
+            # what the ASGs will GENERATE, never from the two typed numbers --
+            # a few hertz of error here comes back as a beat, not as an error.
+            t1, _m1 = self._resolve(drive["carrier"], drive["modulation"])
+            t2, _m2 = self._resolve(drive2["carrier"], drive2["modulation"])
+            if abs(t1.modulation - t2.modulation) < 1.0:
+                return messagebox.showerror(
+                    "SFG", "f1 and f2 are the same frequency. Two tones at one "
+                           "frequency have no sum or difference product to "
+                           "find; set OUT2 to something else.")
+            f_ref = t1.modulation + t2.modulation
         detail = (f"OUT1 {drive['carrier'] / 1e6:.6f} MHz AM "
                   f"{drive['modulation'] / 1e3:.4f} kHz @ {drive['amplitude']} V\n"
-                  f"Laser {sweep['start_nm']}-{sweep['stop_nm']} nm at "
+                  + (f"OUT2 {drive2['carrier'] / 1e6:.6f} MHz AM "
+                     f"{drive2['modulation'] / 1e3:.4f} kHz @ "
+                     f"{drive2['amplitude']} V\n" if two_tone else "")
+                  + f"Laser {sweep['start_nm']}-{sweep['stop_nm']} nm at "
                   f"{sweep['speed_nm_s']} nm/s\n"
                   f"Demodulate at {f_ref / 1e3:.4f} kHz\n\n")
         if name.startswith("SHG"):
@@ -1333,8 +1460,13 @@ class Bench:
                        "NOTE the AOM makes 2*f1 by itself -- depth-1 AM on a\n"
                        "sin^2 device -- so a signal here does NOT prove SHG\n"
                        "until a crystal-out run is compared against it.\n\n")
+        if two_tone:
+            detail += ("SFG: BOTH outputs drive, at f1 and f2, and the\n"
+                       "lock-in sits on f1+f2 where only a product of the\n"
+                       "two can appear. Check |f1-f2| on the same capture;\n"
+                       "both should move together.\n\n")
         if name == "control: no drive":
-            detail += "CONTROL: OUT1 stays OFF. Tests whether the signal comes "\
+            detail += "CONTROL: BOTH outputs stay OFF. Tests whether the signal comes "\
                       "from our drive at all.\n\n"
         elif name == "control: low power":
             detail += (f"CONTROL: laser drops to {ctrl_dbm:+.1f} dBm and is "
@@ -1347,12 +1479,13 @@ class Bench:
         self.v_seqstat.set("running...")
         th = threading.Thread(
             target=self._seq_thread,
-            args=(name, rp, d, drive, sweep, f_ref, orate, dec, ctrl_dbm),
+            args=(name, rp, d, drive, drive2, sweep, f_ref, orate, dec,
+                  ctrl_dbm),
             daemon=True)
         th.start()
 
-    def _seq_thread(self, name, rp, d, drive, sweep, f_ref, orate, dec,
-                    ctrl_dbm):
+    def _seq_thread(self, name, rp, d, drive, drive2, sweep, f_ref, orate,
+                    dec, ctrl_dbm):
         """Runs the ops in order, taking each instrument's lock as it goes.
 
         The locks are what let this share the instruments with the status poll
@@ -1381,10 +1514,15 @@ class Bench:
                 ops.front_end(rp, c1, g1, c2, g2, dec)
                 if name == "control: no drive":
                     ops.drive_off(rp)
-                    note("OUT1 left OFF (control)")
+                    note("both outputs left OFF (control)")
                 else:
-                    tbl = ops.drive_on(rp, **drive)
+                    tbl = ops.drive_on(rp, channel=1, **drive)
                     note(f"OUT1 ON at {tbl.modulation / 1e3:.4f} kHz")
+                    if name.startswith("SFG"):
+                        t2 = ops.drive_on(rp, channel=2, **drive2)
+                        note(f"OUT2 ON at {t2.modulation / 1e3:.4f} kHz; "
+                             f"demodulating the sum, "
+                             f"{(tbl.modulation + t2.modulation) / 1e3:.4f} kHz")
 
             n_pts = int(round(abs(sweep["stop_nm"] - sweep["start_nm"])
                               / sweep["step_nm"])) + 1
@@ -1425,6 +1563,13 @@ class Bench:
                 self.log(f"[{name}] DONE: median {np.median(a) * 1e3:.4f} mV, "
                          f"max {a.max() * 1e3:.4f} mV, axis from "
                          f"{red.table_source}")
+                if name.startswith("SFG"):
+                    self.log(f"[{name}] demodulated at "
+                             f"{f_ref / 1e3:.4f} kHz = f1 + f2. Re-run the "
+                             f"Demodulate panel on this same capture at f1, "
+                             f"f2 and |f1-f2|: f1 and f2 are LINEAR and carry "
+                             f"leakage, the sum and the difference are the "
+                             f"only places a product can be.")
                 if name.startswith("SHG"):
                     self.log(f"[{name}] demodulated at "
                              f"{f_ref / 1e3:.4f} kHz = 2 x the drive. Run this "

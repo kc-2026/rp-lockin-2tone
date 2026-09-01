@@ -65,19 +65,29 @@ def front_end(rp, in1_coupling="AC", in1_gain="LV",
 
 def drive_on(rp, carrier, modulation, amplitude, depth=1.0, channel=1,
              exact=True):
-    """Enable an AM output. Returns the table, whose frequencies are SNAPPED.
+    """Enable an AM output. Returns the table that is REALLY being played.
 
-    Both frequencies land on the fs/16384 grid because that is the only way the
-    16384-entry table wraps without a discontinuity. What comes back is what is
-    actually being generated; what was asked for is not.
+    With `exact` the play rate is chosen so both frequencies come out on the
+    nose, which any whole number of hertz can. Without it the table falls back
+    to the default fs/16384 grid and the frequencies are snapped. Either way
+    what comes back is what is on the wire; what was asked for is not.
+
+    `channel` is 1 or 2. SFG drives both at once, at different modulation
+    frequencies, and they are independent from here down.
     """
     return rp.setup_am_generator(carrier=carrier, modulation=modulation,
                                  amplitude=amplitude, depth=depth,
                                  channel=channel, exact=exact)
 
 
-def drive_off(rp):
-    for ch in (1, 2):
+def drive_off(rp, channel=None):
+    """Disarm one output, or both when `channel` is None.
+
+    Both is the default because that is what every cleanup path wants, and a
+    cleanup path that only disarmed the channel it happened to know about
+    would leave light on the bench.
+    """
+    for ch in ((1, 2) if channel is None else (int(channel),)):
         rp.write(f"OUTPUT{ch}:STATE OFF")
     return True
 
