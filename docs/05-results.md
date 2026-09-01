@@ -309,3 +309,116 @@ cost of decimation was measured directly (see below) and **decimation 8** was
 adopted, which fits a full 1 s two-channel capture in the existing 128 MiB
 region for 1.1 dB. H6.2–H6.5 and H7.1 all ran that way. The speculation above
 about the 62.5 MHz fold is therefore moot, and was never tested.
+
+
+---
+
+## Measured 2026-09-01
+
+### The generator's frequency error scales with `mod_cycles`
+
+The output is `mod_cycles x play_rate`, so a play-rate error is multiplied by
+the cycle count and lands on the modulation — the frequency the lock-in must
+match.
+
+| Plan | mod_cycles | play rate | observed lock-in offset |
+|---|---:|---:|---:|
+| 915 kHz, old planner | 12 | 76 250 Hz | **~0.69 Hz** |
+| 915 kHz, new planner | 1 | 915 000 Hz | none visible |
+| 1 MHz | 1 | 1 000 000 Hz | none visible |
+
+The 0.69 Hz was recovered from the trace shape: a constant R of 134 mV with the
+phase winding 0.69 turns over a 1 s record reproduces the observed projected
+amplitude of -79.9 to +134.0 mV against the measured -76.3 to +133.8 mV.
+
+**The magnitude is not explained.** A 32-bit DDS accumulator at 250 MS/s
+realises 76 250 Hz to within 0.0015 Hz, which is 0.018 Hz after x12 — nearly
+40x short. See Q31.
+
+### Trigger train, a clean 1 s sweep
+
+| | |
+|---|---|
+| Pulses | 5001, against 5001 logged rows |
+| Step | 199.9962 us measured, 200.0000 us nominal |
+| Clock ratio, laser against board | 0.999980937 — **-19.06 ppm** |
+| Edges off a uniform grid | 46.2 us rms — the error the measured-edge axis removes |
+| Points carrying a wavelength | 5000 of 5097; the other 97 are pre-roll (68) and tail (29) |
+| Wavelength span recovered | 1500.0038 to 1599.9884 nm |
+
+### A sweep started before the laser reached its start
+
+| | |
+|---|---|
+| Pulses | 4048 against 5001 expected |
+| Interval | **200.00 us — exactly correct** |
+| Span | 0.8094 s against 1.0000 s |
+| Wavelength actually covered | 80.96 nm of the 100 nm requested, i.e. 1519.04 -> 1600 nm |
+
+Both ratios are 0.8094 and the interval is untouched, which is what separates a
+short RANGE from a fast SWEEP. A fast sweep compresses the interval and keeps
+the count.
+
+### A sweep left in step mode
+
+Configured for 100 nm/s, the instrument covered 28 nm in roughly ten minutes —
+about 2000x slow, consistent with dwelling at each of 5001 points.
+
+### SFG frequency plan
+
+Sum-frequency generation goes as I1 x I2, so four frequencies must clear the
+504.868 kHz switching-supply family, not the two being driven.
+
+| | Frequency | Gap to nearest harmonic |
+|---|---:|---:|
+| f1 | 915 kHz | 94.7 kHz |
+| f2 | 1225 kHz | 215.3 kHz |
+| f1 + f2 | 2140 kHz | 120.5 kHz |
+| \|f1 - f2\| | 310 kHz | 194.9 kHz |
+
+A round 1000 kHz second tone fails: 9.7 kHz from the second harmonic.
+
+### PDA100A2 gain against bandwidth (datasheet, Hi-Z)
+
+For the SHG product near 775 nm. Bandwidth collapses as gain rises, so the
+detection frequency and the gain setting must be chosen together. The last
+column folds the detector's NEP (scaled to ~0.5 A/W at 775 nm) with the board's
+own 3.57 uV over the 4763 Hz noise gain.
+
+| Gain | Bandwidth | Transimpedance | Detectable optical amplitude |
+|---:|---:|---:|---:|
+| 0 dB | 11 MHz | 1.51e3 V/A | 8.6 nW |
+| 10 dB | 1.4 MHz | 4.75e3 | 1.6 nW |
+| 20 dB | 800 kHz | 1.5e4 | 0.58 nW |
+| **30 dB** | **260 kHz** | **4.75e4** | **0.32 nW** |
+| 40 dB | 90 kHz | 1.51e5 | 0.27 nW |
+| 50-70 dB | 28 / 9 / 3 kHz | — | worse |
+
+30 dB is the knee: the first setting where the detector's own noise dominates
+the board's, so more gain buys almost nothing while costing 3x the bandwidth.
+
+At 30 dB the Red Pitaya's LV range clips at 42 uW of optical power on the
+detector and the detector itself saturates at 421 uW — so ambient light on a
+75.4 mm^2 window is a real hazard.
+
+### The laser's LAN connection slots leak
+
+Two connect-and-close cycles on port 10001 took it from accepting to silently
+dropping SYNs, with nothing else on the network talking to the instrument.
+Every closed port on the same host kept answering RST normally throughout, so
+this is not a firewall. Port 5000 was already in that state. A front-panel LAN
+reset did not recover it; a power cycle with the control PC quiet did. See Q33.
+
+### The two amplitude estimators, against the measured noise floor
+
+sigma = 3.57 uV per trace point. `R` is biased high and the bias does not
+average away; the projection is unbiased and can go negative.
+
+| true signal | SNR | mean R | error | mean amplitude() |
+|---:|---:|---:|---:|---:|
+| 0 uV | 0 | 4.48 uV | +1.25 sigma | 0.00 uV |
+| 3.57 uV | 1 | 5.53 uV | +0.55 sigma | 3.58 uV |
+| 10.7 uV | 3 | 11.32 uV | +0.17 sigma | 10.71 uV |
+| 17.9 uV | 5 | 18.21 uV | +0.10 sigma | 17.85 uV |
+| 107 uV | 30 | 107.16 uV | +0.02 sigma | 107.10 uV |
+

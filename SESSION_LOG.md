@@ -17,30 +17,57 @@ Template:
 
 ---
 
-## HANDOFF / STATUS — updated 2026-08-28, read this first
+## HANDOFF / STATUS — updated 2026-09-01, read this first
 
-**Both blockers from the 2026-08-26 handoff are GONE.** The board answers, the
-laser answers, and the whole environment has been rebuilt on a new control PC.
-Phase 0 and Phase 1 remain complete; the end-to-end pipeline exists and is
-checked against known truth. Phase 2 is still gated on a planning session.
+**There are no blockers.** The board works, the laser works, and the instrument
+runs end to end: drive on, capture armed, laser sweeps, 5001 trigger pulses on
+IN2, demodulate at f1, wavelength axis from the measured edges, CSV out. Real
+optical amplitude-against-wavelength traces exist.
 
-**The live task is the first real two-instrument measurement.** What stands in
-the way is no longer access — it is two wiring/units issues, both found on
-2026-08-28 and both written up below.
+**What Phase 2 has left is physics, not instrumentation.**
+
+| | |
+|---|---|
+| **No crystal yet** | Nothing SHG or SFG has ever been looked for. This is the experiment; everything else is the instrument |
+| **Second beam path not wired** | The second ZHL-1-2W+ and second AOM exist but are not connected, so nothing two-tone has been driven. U2 stays open |
+| **TSL-770 never contacted** | Half the deliverable — the 11 in the 11 x 5000 map. Parked at Kevin's request |
+| **PDA100A2 not installed** | The silicon detector that separates real SHG from the AOM's own second harmonic (Q30), because silicon cannot see 1550 at all |
+
+**The working tool is `scripts/bench.py`.** Panel GUI, independent operations
+that compose into a sweep. `bench_gui.py` is the older tabbed one, kept for its
+Simulate path. Both go through `scripts/_bench_ops.py`.
+
+### The four rules this bench runs by
+
+1. **One laser connection, held for the whole session.** A connection attempt
+   is a consumable: two connect-and-close cycles took a port from accepting to
+   silently dropping SYNs, and only a power cycle recovered it. Never retry a
+   failed connect — power cycle with the PC quiet. Q33.
+2. **Wait between Configure and Start.** The laser must reach its start
+   wavelength on its own. A sweep started early covers a shorter range at
+   exactly the right speed and step, so the trace looks entirely normal.
+   Driving it there with `:WAV` is NOT a fix — it stops the sweep emitting any
+   trigger train at all (Q32, and the change that did it was reverted).
+3. **Use the f1 / f2 / f1+f2 / |f1-f2| buttons, never a typed harmonic.** They
+   build f_ref from what the ASG will generate.
+4. **A negative amplitude is the estimator, not the signal.** `amplitude()`
+   projects onto one phase and is unbiased; `R` is biased +1.25 sigma. A sign
+   change means the phase rotated past 90 degrees. Plot **lock-in R** — flat R
+   under a swinging amplitude is phase, not physics.
 
 ### Where to look
 
 | Want | Go to |
 |---|---|
 | What each doc is for | `docs/00-index.md` |
+| What is connected, and what is not | `docs/08-phase2-hardware.md` section 1 |
+| What to do next | `docs/09-phase2-plan.md` |
 | The deliverable path, in code | `src/rp_lockin/pipeline.py` |
 | Any measured number | `docs/05-results.md` |
-| What the board does, and the traps it sets | `docs/04-hardware-reference.md` |
-| Phase 1, step by step | `docs/07-phase1-loopback.md` |
-| Phase 2: risks U1–U12, steps P1–P6 | `docs/08-phase2-hardware.md` |
+| Board and instrument traps | `docs/04-hardware-reference.md` |
 | Anything undecided | `docs/10-open-questions.md` |
 | Agent ground rules and traps | `CLAUDE.md` |
-| **The TSL-775 laser, in full** | **`TSL775_HANDOFF.md` — see "BLOCKER 2" below** |
+| **The TSL-775 laser, in full** | **`TSL775_HANDOFF.md`** |
 
 ---
 
@@ -3879,4 +3906,77 @@ output and a way to demodulate the product.
 * `plan_two_tone_grid` still uses the superseded fs/16384 model. Works, but
   needlessly constrained.
 * The laser needs a front-panel LAN reapply after a dropout, roughly hourly.
+
+---
+
+## 2026-09-01 — Claude (Claude Code) — SFG support, three silent-failure bugs, and a documentation sweep
+
+**Goal:** add the second drive channel for SFG; then whatever the bench threw up.
+
+**Did:**
+
+* **A second Drive panel (OUT2) and SFG demodulation.** One `_build_drive()`
+  builds both channels; `ops.drive_off(rp, channel)` disarms one or both; the
+  header polls both outputs. The Demodulate panel gained **f2**, **f1+f2** and
+  **|f1-f2|**, and there is an `SFG (two tones, demodulate at f1+f2)` sequence.
+  f2 = **1225 kHz**, not a round 1000 kHz, because SFG puts FOUR frequencies on
+  the table and 1000 kHz sits 9.7 kHz from the switcher's second harmonic.
+* **`configure_sweep` now verifies all seven settings**, not just `:TRIG:OUTP`,
+  and polls `:WAV:SWE?` instead of sleeping 0.5 s.
+* **`check_train` separates a short RANGE from a fast SWEEP** — it compared
+  spans and never looked at the pulse interval.
+* **A sub-hertz beat detector, plus `lock-in R` and `lock-in phase` views.**
+* **`plan_exact_am` prefers the fewest modulation cycles** the carrier
+  tolerance allows.
+* **Documentation swept current**: `08-phase2-hardware.md` and
+  `09-phase2-plan.md` rewritten, `00-index.md`, `10-open-questions.md` and
+  `CLAUDE.md` updated. Q31–Q35 raised.
+* 339 offline tests pass, up from 311.
+
+**Learned — three bugs, all of which produced believable wrong answers:**
+
+1. **A sweep silently reverted to step mode between run 1 and run 2.** The
+   laser accepts writes it is not in a state to honour and reports nothing;
+   `configure_sweep` slept a fixed 0.5 s after `:WAV:SWE 0` and verified one of
+   seven settings. From cold every write lands, so the first run always worked.
+   Step mode ran ~2000x slow — measured, 28 nm in ten minutes against a
+   configured 100 nm/s.
+2. **A sweep started before the laser reached its start wavelength** covered
+   80.96 nm instead of 100, at *exactly* the right speed and step: 4048 pulses
+   at 200.00 us against 5001 expected. The bench called it a 1.24x fast sweep
+   because it compared spans and never checked the interval.
+3. **`mod_cycles` multiplies the generator's frequency error.** 915 kHz planned
+   as 12 cycles at 76250 Hz demodulated ~0.69 Hz off and drew a smooth arch
+   from -76 mV through zero to +134 mV across the sweep. 1 MHz, at 1 cycle,
+   was clean. R was flat at 134 mV throughout — the arch was `A*cos(phase)`.
+
+**Two process lessons, both expensive:**
+
+* **A test fake must not be richer than the real object.** `park_at_sweep_start`
+  called `set_wavelength_m`, which is on `SantecTSL`; the bench uses `TSL775`,
+  which has no setters. The suite was green because the fake had been modelled
+  on the wrong driver. Fixed, and a test now asserts the fakes' surface does not
+  exceed `TSL775`'s. The same fault then bit `_Beating`/`_Steady`.
+* **A connection to the laser is a consumable.** Probing port 10001 twice took
+  it from accepting to dropping SYNs. I did that while diagnosing, and later
+  connected while Kevin's bench held the session. Neither was necessary.
+
+**Broke / still broken:**
+
+* **The park-at-start change was reverted** (`61088d0`). Writing `:WAV` moved
+  the laser correctly and then `:WAV:SWE 1` produced no trigger train at all,
+  twice. Q32. The short-range fault it was meant to fix is real and now only
+  worked around by waiting between Configure and Start.
+* **Q31 is unexplained.** The `mod_cycles` multiplier is arithmetic, but a
+  32-bit DDS accumulator predicts 0.018 Hz where 0.69 Hz was observed. The
+  bench reads nothing back from the ASG — `SOUR1:FREQ:FIX?` would settle it.
+
+**Next:**
+
+* The crystal. Until it exists this is a transmission measurement.
+* Wire the second amplifier and AOM; then P5.1 before P5.2.
+* Read `SOUR1:FREQ:FIX?` back and measure the phase slope of a long loopback
+  capture — two cheap checks that would close Q31.
+* A single-instance lock on the bench: one instrument with one connection slot
+  and a GUI that can be launched twice is a trap still open.
 

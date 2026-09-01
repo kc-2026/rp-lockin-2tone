@@ -183,16 +183,18 @@ planning, DUT emulator, test suite. No hardware. *Complete.*
 receive path, trigger digitisation, and long captures, using only cables from
 the board to itself. Detailed in `07-phase1-loopback.md`.
 ***COMPLETE — 2026-08-14.*** Every loopback test passed, except H6.1 and
-H5.2/H5.3 which were deliberately skipped and recorded as such. 233 offline
-tests pass. A plain-language status of every step is at the top of
-`SESSION_LOG.md`.
+H5.2/H5.3 which were deliberately skipped and recorded as such. A plain-language
+status of every step is at the top of `SESSION_LOG.md`. (The offline suite keeps
+growing — check `SESSION_LOG.md` rather than trusting a count quoted here.)
 
 **Phase 2 — hardware in the loop.** Everything loopback cannot reach: real
 drive levels through the amplifier chain, the AOMs, the DUT, the photodetector,
-the laser trigger. Requires a dedicated planning session with the human before
-anything is connected. **Not started, and the gate is deliberate.**
-What that session needs, and what is still missing, is written up in
-`08-phase2-hardware.md`. The session's *output* goes in `09-phase2-plan.md`.
+the laser trigger. The planning gate was **discharged 2026-08-28**.
+***UNDER WAY.*** The instrument runs end to end and real optical sweeps exist;
+what is left is physics waiting on hardware — there is no crystal yet, the
+second beam path is not wired, and the stepping laser has never been contacted.
+What is connected is in `08-phase2-hardware.md`; what to do next is in
+`09-phase2-plan.md`.
 
 **Phase 3 — usability.** A GUI or equivalent, if wanted. Deferred.
 

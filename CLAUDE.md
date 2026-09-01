@@ -9,10 +9,10 @@ but is not watching continuously.
 1. This file.
 2. `docs/01-overview.md` — what is being built and why.
 3. **`SESSION_LOG.md` — its "HANDOFF / STATUS" block at the very top.**
-   That is the current state, the live blockers (there are two, and as of
-   2026-08-26 both are hardware access rather than software), what is ready to
-   run, and the judgement calls not to relitigate. Read it before touching
-   anything.
+   That is the current state, what is ready to run, and the judgement calls not
+   to relitigate. **There are no blockers as of 2026-09-01** — the board and
+   the laser both work and the instrument runs end to end. What is left is
+   physics waiting on hardware. Read it before touching anything.
 4. Whatever doc covers the area you are about to touch.
 
 **At the end of every session, append to `SESSION_LOG.md`.** Multiple sessions
@@ -130,10 +130,13 @@ This distinction matters more than usual here.
 | `hardware.py` — `acquire_deep_2ch` | **The SCPI read is broken.** Arming is fine; the read returns garbage. Use `acquire_deep_fast`. |
 | `scripts/rp_fastread.py` | **Runs ON THE BOARD**, not the control PC. The one deliberate exception to "everything runs on the PC". |
 | `wavelength.py` | **Offline-tested, never run against a real laser.** Maps a trace onto wavelength, measures the laser/board clock ratio, and guards the off-by-one trigger. Contains NO serial code. |
-| `santec.py` | **Written from the TSL-770/775 manuals. STILL NEVER RUN AGAINST A LASER** — the working laser code on 2026-08-28 was `tsl775.py`, not this. Has both serial and LAN transports; **LAN is the only path that works.** Bare-CR delimiter and little-endian payloads — both the opposite of `hardware.py`. Every setter reads back. |
+| `santec.py` | Written from the TSL-770/775 manuals. **The bench does not use it — `scripts/tsl775.py` does**, and that is the code with hardware hours on it. Its transport and command strings are sound (a one-off `SantecTSL.over_lan` session on 2026-09-01 answered `*IDN?` and every `:READout:*` query correctly), but `pipeline.py` assumes this class while `_bench_ops.py` assumes the other, and **their surfaces differ** — `SantecTSL` has setters `TSL775` does not. Do not assume a method exists on both; that shipped a bug on 2026-09-01. See Q35. |
 | `output.py` | CSV deliverable plus the raw `.npz`. Trusted, offline. |
 | `pipeline.py` | **THE DELIVERABLE PATH**, added 2026-08-25. **The wavelength axis comes from the MEASURED trigger edges, not a uniform step** (Q29, 2026-08-28): the trigger is periodic in WAVELENGTH, and the laser's sweep speed ripples ~11%, so a uniform grid misassigns wavelength by up to 0.68 of a step. Do not reintroduce a uniform step as the default. `reduce_sweep` joins demodulate → edges → log → wavelength → CSV and is checked against emulator truth. `SweepSeries`/`write_series` handle the 11-step set. `measure_sweep` is the hardware wrapper and **has never run against a board.** |
-| `scripts/bench_gui.py` | Tkinter bench GUI (Q14). Drives the implemented features by hand, including a Simulate path that needs no hardware. Outputs off on close; laser writes gated. |
+| `scripts/bench.py` | **THE WORKING BENCH.** Panel GUI: independent operations that compose into a sweep. Hardware-exercised daily. Outputs off on close; every output enable needs a typed confirmation. |
+| `scripts/_bench_ops.py` | Tk-free instrument operations shared by the bench buttons, its sequences and the P-scripts. **One implementation, so nothing can drift.** |
+| `scripts/tsl775.py` | Vendored TSL-775 driver, `write`/`query` only. **This is what the bench talks to**, not `santec.py`. |
+| `scripts/bench_gui.py` | The older tabbed GUI (Q14). Kept because it is the only path with a **Simulate** mode needing no hardware. |
 
 `hardware.py` is deliberately isolated from the maths so a wrong command string
 produces a connection error rather than corrupted physics. **Keep it that way.**
@@ -156,7 +159,8 @@ The P-series scripts (`scripts/p2_trigger_check.py` … `p6_robustness.py`) shar
   amplifier-generated product sits at exactly the frequency P5.2 looks at, so a
   signal found there proves nothing until the one-tone control is clean.
 
-**Match that contract in anything new.** `scripts/bench_gui.py` follows it too.
+**Match that contract in anything new.** `scripts/bench.py` and
+`scripts/bench_gui.py` both follow it.
 
 ### Testing discipline
 
@@ -218,7 +222,29 @@ wrong answers rather than crashes:
 9. **Coupling and gain are PER CHANNEL** (`setup_channel`). IN1 wants LV for the
    detector, IN2 wants HV for the 3.3 V trigger. On LV that trigger clips to a
    flat line, which reads as "the laser is not triggering".
-10. **A serial read that times out desynchronises `santec.py` permanently** —
+10. **A connection attempt to the laser is a CONSUMABLE, not a free probe.**
+    Measured 2026-09-01: two connect-and-close cycles on a port took it from
+    accepting to silently dropping SYNs, with nothing else on the network
+    talking to the instrument. Only a power cycle recovers it — a front-panel
+    LAN reset alone does not. **One connection, held for the whole session.
+    Never retry a failed connect; power cycle with the PC quiet instead.** Q33.
+11. **A test fake must never be richer than the real object.** Two bugs shipped
+    on 2026-09-01 because a stand-in offered a method the instrument did not
+    have: the suite was green and the bench raised `AttributeError` on the
+    first press. Build fakes from the real class, and assert their surface does
+    not exceed it — `test_the_fakes_offer_no_more_than_the_real_driver` does.
+12. **`mod_cycles` multiplies the generator's frequency error.** The output is
+    `mod_cycles x play_rate`, so a plan with 12 modulation cycles carries 12x
+    the error of one with 1. At 915 kHz that was ~0.69 Hz, which the lock-in
+    drew as a smooth arch through zero across the whole sweep — reading exactly
+    like a wavelength-dependent response. `plan_exact_am` now takes the fewest
+    cycles the carrier tolerance allows. Q31.
+13. **`amplitude()` can go negative, and that is correct.** It projects X+jY
+    onto one phase, so it is unbiased where `R` reads +1.25 sigma on pure
+    noise — but it assumes the phase is steady. A sign change means the phase
+    rotated past 90 degrees, which no optical amplitude can do. When you see
+    one, plot **lock-in R**: if R is flat, it is phase, not physics.
+14. **A serial read that times out desynchronises `santec.py` permanently** —
     every later query returns the tail of the previous reply, plausibly and
     without raising. Call `resync()`; it is read-only and safe any time.
 
@@ -256,108 +282,76 @@ python -c "from rp_lockin import describe_capture_plan; print(describe_capture_p
 pytest -q
 ```
 
-## Current state — updated 2026-08-26
+## Current state — updated 2026-09-01
 
 **This section is a summary. The authoritative current state is the HANDOFF
 block at the top of `SESSION_LOG.md`, which is rewritten every session.**
 
-**Phase 0 and Phase 1 are both COMPLETE.** The offline suite passes; its size
-grows, so check `SESSION_LOG.md` rather than trusting a number quoted here. Every
-loopback test in `07-phase1-loopback.md` has been run against the board, except two
-that were deliberately skipped and are recorded as such (H6.1, H5.2/H5.3).
+**Phases 0 and 1 are complete. Phase 2 is under way and there are no blockers.**
+The offline suite passes; its size grows, so check `SESSION_LOG.md` rather than
+trusting a number quoted here.
 
-**Phase 2 has not started and is gated on a planning session with Kevin.** Do not
-connect anything.
+**The instrument works end to end against real hardware.** A sweep runs from
+`scripts/bench.py`: drive on, capture armed, laser sweeps, 5001 trigger pulses
+land on IN2, the capture demodulates at f1, and the wavelength axis is built
+from the measured trigger edges. Real optical amplitude-against-wavelength
+traces exist.
 
-A step-by-step status of every H item, in plain language, is at the top of
-`SESSION_LOG.md` under "STATUS AT A GLANCE". Start there.
+**What Phase 2 has left is physics, not instrumentation:**
 
-Key-based SSH is installed, so the board helper no longer needs a human — see
-"Talking to the board" below. **Restarting the SCPI server is Kevin's job, not
-the agent's** (asked 2026-08-14).
+- **There is no crystal yet.** No SHG or SFG signal has ever been looked for.
+- **The second beam path is not wired** — the second ZHL-1-2W+ and second AOM
+  exist but are not connected, so nothing two-tone has been driven.
+- **The stepping laser (TSL-770) has never been contacted**, so the deliverable
+  is a 1 x 5000 sweep rather than the 11 x 5000 map. Parked at Kevin's request.
+- **The PDA100A2 silicon detector is on the bench, not installed.** It is how
+  SHG gets separated from the AOM's own second harmonic (Q30), because silicon
+  cannot see 1550 at all.
 
-| Test | State |
-|---|---|
-| H1 transport | done — OS 2.00, 250 MS/s confirmed by measurement, binary transfer verified |
-| H2.1–H2.4 transmit | done — AM lines exact, depth 0.512/0.488 vs 0.500, worst spur −48.5 dBc |
-| H2.5 / Q6 phase | failed, **downgraded, and its residual risk is now closed** by H3.2 |
-| H3.1 amplitude linearity | done — linear over 2.4 decades; 0.3% spread above 20 mV |
-| H3.2 phase stability | done — 0.002° over 28 ms |
-| H3.3 noise floor / Q8 | **done, revised twice — σ = 3.57 µV per trace point; ≥36 µV of signal gives SNR 10.** Do not quote the earlier 2.96 µV |
-| H3.4 √bandwidth law | done — holds to 2–4% over 8× in bandwidth |
-| H3.5 offset response | **done — measured rejection matches the designed filter to 0.0 dB** over the range above the noise floor |
-| H4.1–H4.4 trigger | done — edges recovered exactly, inputs aligned to 0.0005 samples, `Trig:Pos` solved |
-| H5.1 Deep Memory Gen | **answered: NOT AVAILABLE.** 16384-point ceiling is permanent |
-| H5.2 / H5.3 | superseded — H6.5 emulated the DUT by stepping amplitude instead |
-| H6.1 memory move | **deliberately not done, and no longer needed** — see `04-hardware-reference.md` |
-| H6.2 / H6.3 full capture | **done — exactly 5000 points at exactly 200.000 µs spacing** |
-| H6.4 pre-roll | done — and two real `acquire_deep_fast` defects fixed getting there |
-| H6.5 full capture | **PASSES** — the Phase 1 exit criterion |
-| H7.1 repeatability | **done — 20/20 sweeps, amplitude to 0.0029% rms, first edge to 6 ns** |
-| H7.2 trigger never arrives | **done — raises cleanly; fixed a defect that left the board armed and SCPI wedged** |
-| H7.3 mid-capture disconnect | **done — all three stages fail cleanly and leave the board healthy** |
-| H7.4 outputs off after a crash | **failed, then fixed — `close()` now disarms both outputs** |
+Details in `docs/08-phase2-hardware.md` (what is connected) and
+`docs/09-phase2-plan.md` (what to do next).
 
-**Both former blockers are CLOSED as of 2026-08-28.**
-
-**1. The board is reachable** from the new control PC — 1 Gbps, ping 1 ms, SCPI
-on port 5000 and key-based SSH both working. Q28's root cause was never found;
-the evidence pointed at the old PC's port and replacing the machine removed it.
-
-**2. The laser answers over LAN.** Its USB is a hardware fault inside the
-instrument, established exhaustively — see Q27 and `TSL775_HANDOFF.md`. The
-trigger train has now been observed electrically on IN2: 5001 pulses against
-5001 logged points, 24.997 µs wide, 199.997 µs apart, none lost at decimation 8.
-
-The lasers are a **TSL-770 and a TSL-775** (Kevin, 2026-08-14).
-
-`santec.py` **is** written, entirely from the manuals — bare-CR delimiter,
-little-endian payloads, every setter reading back. **It has a LAN transport
-(`SantecTSL.over_lan`) as well as a serial one, and LAN is the working path.**
-The module itself has still never been exercised against the instrument — the
-2026-08-28 work drove the laser through `TSL775_HANDOFF.md`'s `tsl775.py`
-instead — so treat its command strings as unproven even though the protocol
-they speak is now known to be right. One command string in it is inferred rather than quoted
-(`set_wavelength_m`, whose SET form is not in the manuals' tables); that is safe
-only because it verifies itself by read-back, and the module says so. **Do not
-extend that pattern to a command whose effect cannot be read back** — on this
-project a misspelled command returns zero bytes exactly like a correct one, and
-the wavelength axis is the one place a silent failure is invisible in the output.
-
-`wavelength.py` still holds **no serial commands at all**, and `pipeline.py`
-keeps the same split. What remains unknown about the laser: the port settings,
-and whether the table streams during the sweep or is dumped afterwards (P1.4).
-
-That change also **defused the decimation/memory question.** It was live only
-because the wavelength axis depended on recovering trigger intervals exactly; it
-no longer does. Do not start the device-tree move — see `04-hardware-reference.md`.
-
-**Two numbers from H3.3 not to re-derive or guess at:**
+### Numbers not to re-derive or guess at
 
 - **The demodulator's noise gain is NOT the nominal bandwidth.** 4232.7 Hz
-  analytically, **4763 Hz measured** — both about 1.9× the nominal 2250 Hz.
-  Using the −3 dB bandwidth instead gives 2.45 µV against 3.57 measured,
+  analytically, **4763 Hz measured** — both about 1.9x the nominal 2250 Hz.
+  Using the -3 dB bandwidth instead gives 2.45 uV against 3.57 measured,
   **46% low, in the dangerous direction.** Pinned by
   `test_quadrature_noise_gain_matches_filter_chain`.
-- **A switching-supply harmonic sits 17.9 kHz from the lock-in frequency, and
-  it is ~32 µV — 11× the noise floor.** Rejected by >200 dB today, but only
-  **1.77%** of switcher drift from landing on it, where it would look like a
-  strong, clean, steady DUT response rather than interference.
-  **504.868 kHz and its multiples are off limits for any future
-  difference frequency**, with several kHz of margin.
+- **A switching-supply harmonic family sits at 504.868 kHz and its multiples**,
+  at ~32 uV — nine times the noise floor. Rejected by >200 dB when you are far
+  from it, but a drive frequency landing there reads as a strong, clean, steady
+  optical signal. **Every frequency the lock-in will ever sit on must clear it
+  by several kHz — including sums and differences, not just the driven tones.**
+- **sigma = 3.57 uV per trace point at the ADC**, but the PDA05CF2 contributes
+  ~11 uV, so **SNR 10 needs ~120 uV**, not 36.
 
-**Three things bit hard this session and are worth knowing before you start:**
+### Things that were true and are not
 
-1. The generator never worked as written — `make_am_waveform` models a device
-   this board is not. Fixed by `make_am_table`; see `03-frequency-plan.md`.
-2. **The drive frequencies are not round numbers.** The lock-in frequency is
-   **991.821 kHz, not 1 MHz.** Never hardcode `1e6`; use
-   `plan_two_tone_grid().difference`.
-3. Deep captures need `scripts/rp_fastread.py` running on the board. It lives
-   in `/dev/shm`, which is RAM, so **it disappears on every reboot.**
+Do not act on these if you find them repeated somewhere:
 
-`docs/10-open-questions.md` lists what is still undecided. If you resolve one,
-move it into the relevant doc and note it in the session log.
+- ~~"The Ethernet link to the board is dead"~~ — fixed by the new control PC.
+- ~~"The laser has never answered"~~ — it answers over LAN. USB is a hardware
+  fault inside the instrument and is not worth another minute.
+- ~~"santec.py has never been run against a laser"~~ — the bench uses
+  `scripts/tsl775.py` instead, which has. See the driver note below.
+- ~~"Phase 2 is gated on a planning session"~~ — discharged 2026-08-28.
+- ~~"Frequencies must sit on the fs/16384 grid"~~ — that grid is only the
+  default play rate. Any whole number of hertz is exact.
+
+### Two laser drivers, and the bench uses the one in `scripts/`
+
+`scripts/tsl775.py` defines **`TSL775`**, which has `write`, `query`,
+`read_line`, `read_block` and `query_wavelength_log` — and no setters.
+**`scripts/bench.py` and `scripts/_bench_ops.py` use this one.**
+
+`src/rp_lockin/santec.py` defines **`SantecTSL`**, a much richer surface
+including `set_wavelength_m`. `pipeline.py` assumes this one.
+
+Writing an operation against the wrong class shipped a bug on 2026-09-01 that
+the offline suite could not catch, because the test fake had been built from
+the wrong class too. **Check which object you actually have**, and build fakes
+from the real class's surface. Q35.
 
 ## Getting the environment up
 

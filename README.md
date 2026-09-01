@@ -41,25 +41,23 @@ No FPGA development. Everything runs on a control PC over the network.
 
 ## Status
 
-**Phase 0 (offline) and Phase 1 (loopback) are both COMPLETE** — 233 offline
-tests pass, and every loopback test has run against the board.
+**Phases 0 and 1 are COMPLETE, and Phase 2 is UNDER WAY. There are no
+blockers.** The board and the laser both work, and the instrument runs end to
+end against real hardware: drive on, capture armed, laser sweeps, 5001 trigger
+pulses on IN2, demodulate, wavelength axis from the measured trigger edges, CSV
+out. Real optical amplitude-against-wavelength traces exist.
 
-**The end-to-end pipeline exists** (`src/rp_lockin/pipeline.py`) and is checked
-against emulator truth: a resonance planted at a known wavelength comes back at
-that wavelength. Its hardware wrapper has never run against a board.
+**The working tool is `scripts/bench.py`** — a panel bench whose independent
+operations compose into a sweep.
 
-**Phase 2 (hardware in the loop) has not started** and is gated on a planning
-session. Its three original blockers are all answered; see
-`docs/08-phase2-hardware.md`.
+**What Phase 2 has left is physics, not instrumentation:**
 
-**Two live problems, neither of them software:**
-
-1. **The Ethernet link to the board has been dead since 2026-08-25.** The board
-   is healthy — its LEDs confirm it boots. The control PC's port is the leading
-   suspect.
-2. **The laser has never answered a byte.** New on 2026-08-26: its virtual COM
-   port driver reports `CM_PROB_FAILED_INSTALL` on the control PC, which is the
-   most concrete lead this blocker has had.
+1. **No crystal yet.** Nothing SHG or SFG has been looked for. This is the
+   experiment; everything else is the instrument.
+2. **The second beam path is not wired** — the second amplifier and AOM exist
+   but are not connected, so nothing two-tone has been driven.
+3. **The stepping laser (TSL-770) has never been contacted**, so today's output
+   is a 1 x 5000 sweep rather than the 11 x 5000 map. Parked at Kevin's request.
 
 **Start at the HANDOFF block at the top of `SESSION_LOG.md`** — it is the fastest
 way to learn the current state, and it is kept current.
