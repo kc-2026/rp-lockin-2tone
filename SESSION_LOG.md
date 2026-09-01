@@ -3713,3 +3713,86 @@ on screen.
 **Next:** measure the 2*f1 amplitude against laser power now, and confirm the
 slope is 1. That is the baseline the crystal will have to beat.
 
+---
+
+## 2026-08-28 (night) — Claude (Claude Code) — the ASG grid was never a hardware limit
+
+**Kevin said he had previously run a short table played at 1 MHz. The record
+said that was impossible. He was right and the record was wrong.**
+
+Measured directly, OUT2 looped to IN2:
+
+```
+buffer written    out / play_rate
+        16384              1.00
+         4096              4.00
+         1024             16.00
+          250             65.54          = 16384 / N, exactly
+```
+
+So a short buffer is NOT ignored and does not produce silence -- Q3's "a
+50-sample buffer produces no output at all" is wrong. What actually happens is
+that the board treats whatever you write as the whole table, so the output
+frequency is `cycles x play_rate x 16384/N`.
+
+**And SOUR:FREQ:FIX accepts 1 MHz and 5 MHz.** There is no 15258 Hz ceiling.
+That number is only fs/16384 -- the rate at which the table advances one entry
+per DAC clock -- and nothing was ever enforcing it.
+
+### The decisive test
+
+A 16384-entry table holding **one** modulation cycle and **80** carrier cycles,
+played at **1000000 Hz**:
+
+```
+carrier    80.0018 MHz  (rel 1.000)
+sidebands  78.995 and 80.978 MHz
+swing      132 counts   (the verified grid path gives 124)
+```
+
+Exactly 80 MHz AM'd at exactly 1 MHz, at the same amplitude. **This is what
+Kevin remembered doing, and it works.**
+
+### What this supersedes
+
+| Was recorded | Actually |
+|---|---|
+| Q3: the ASG always traverses 16384 entries; a short buffer gives no output | Short buffers work; frequency scales as 16384/N |
+| The fs/16384 grid is a hardware limit | It is only the default play rate |
+| Play rate <= 15258 Hz | At least 5 MHz is accepted |
+| mod_cycles >= modulation x 16384/fs | mod_cycles can be 1 |
+
+**The one real limit, measured: the play rate is quantised to 1 Hz.** 1000000.5
+reads back 1000000, 15151.5152 reads back 15151. So the modulation must be a
+whole number of hertz -- and that is the entire remaining grid.
+
+`plan_exact_am` now uses `mod_cycles = 1` wherever it can, so **every whole-hertz
+modulation is exactly reachable**, including 999983 (prime) and 1234567, which
+the previous divisor-hunting version refused. The carrier lands on the nearest
+multiple of the same play rate, within a few hundred kHz of 80 MHz, which the
+1550AOM-1's megahertz-wide passband cannot tell apart.
+
+**Not free, and worth knowing:** driving at a high play rate raised spurs at
+36.0 and 54.0 MHz to ~6% and ~4.6% of the carrier, against ~0.2% on the default
+grid. They sit far from the modulation and an AOM will not diffract them
+efficiently, but they are real and unexplained.
+
+**One constraint I had to add back.** The first rewrite chose the pairing with
+the closest carrier, which picked 8000 carrier cycles in a 16384 table --
+2.05 entries per cycle. That satisfies Nyquist and reconstructs to pure alias.
+The search now requires at least 8 entries per carrier cycle, which is what the
+measured-working configuration had (204.8).
+
+### The habit this rewards
+
+Three times today a recorded "impossible" turned out to be an untested
+assumption: the laser's LAN, the play rate, and the buffer length. In each case
+the measurement took minutes and the belief had stood for weeks. **When
+somebody who was there says it used to work, test it before explaining why it
+cannot.**
+
+**Next:** the two-tone plan (`plan_two_tone_grid`, carrier 80.001831 MHz, f1/f2
+on the fs/16384 grid) is still built on the superseded model. It is not wrong --
+those frequencies do work -- but it is now needlessly constrained, and
+`docs/03-frequency-plan.md` should say so.
+

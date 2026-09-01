@@ -180,60 +180,80 @@ class GridTwoTonePlan:
 
 
 def plan_exact_am(carrier: float, modulation: float,
-                  fs: float = BASE_SAMPLE_RATE) -> tuple[int, int, int] | None:
-    """Cycle counts and an INTEGER play rate that reproduce the modulation
-    exactly, putting the carrier as close as the same rate allows.
+                  fs: float = BASE_SAMPLE_RATE,
+                  max_play: float = 2e6) -> tuple[int, int, int] | None:
+    """Cycle counts and an integer PLAY RATE giving the modulation exactly.
 
-    The fs/16384 "grid" is not a property of the hardware. It is what you get
-    by leaving the play rate at its default, where the table advances exactly
-    one entry per DAC clock. `SOUR:FREQ:FIX` sets that rate, so:
+    MEASURED ON THE BOARD, 2026-08-28, correcting two things this project had
+    recorded and one thing this function previously assumed.
 
-        modulation = mod_cycles     x play_rate
-        carrier    = carrier_cycles x play_rate
+    The rule is simply::
 
-    Two hard limits decide what is reachable, and both were MEASURED rather
-    than assumed:
+        output frequency = cycles_in_table x play_rate
 
-    1. THE BOARD ROUNDS THE PLAY RATE TO 1 Hz. Asked for 15151.5152 it reports
-       back 15151. So the play rate is an integer, and the modulation has to be
-       an integer multiple of one -- which means an integer number of hertz
-       with a divisor in range. 1.000000 MHz is 80 cycles at 12500 Hz. A prime
-       like 999983 Hz has no usable divisor and cannot be hit at all.
+    and the play rate is a free setting, quantised to 1 Hz. Both facts were
+    checked directly:
 
-       This is why the rate cannot simply be modulation/n_m: that gives
-       15151.5152 for 1 MHz, the board stores 15151, and the output lands on
-       999966 Hz -- a 34 Hz error, which a lock-in returns as a 34 Hz beat.
+    * A 16384-entry table holding ONE modulation cycle and 80 carrier cycles,
+      played at 1000000 Hz, produced a carrier at 80.0018 MHz with sidebands at
+      78.995 and 80.978 MHz -- exactly 80 MHz AM'd at 1 MHz, at the same
+      amplitude as the default-grid path. Kevin said he had done this before,
+      and he was right.
+    * SOUR:FREQ:FIX accepts 1 MHz and 5 MHz. There is no 15258 Hz ceiling; that
+      number is only fs/16384, which is the rate at which the table advances
+      one entry per DAC clock, not a limit on anything.
 
-    2. THE TABLE IS ALWAYS 16384 ENTRIES and is traversed at
-       play_rate x 16384 samples per second, which cannot exceed the DAC's
-       250 MS/s. So play_rate <= 15258 Hz, and the table must therefore hold at
-       least modulation/15258 cycles of the modulation -- 66 of them for 1 MHz.
-       One period per table would need a 16.384 GS/s converter.
+    So `mod_cycles` may be as low as 1, and the fs/16384 "grid" -- along with
+    the hunt for a divisor under 15258 -- disappears. Any modulation that is a
+    whole number of hertz is reachable exactly.
 
-    The CARRIER is placed on the nearest multiple of the same rate, off by at
-    most half a step. That is deliberate: the 1550AOM-1's acoustic passband is
-    megahertz wide, so a few kHz on 80 MHz is beneath its notice, and insisting
-    on both exactly would rule out most modulations for no benefit.
+    The CARRIER lands on the nearest multiple of the same play rate, so its
+    error is at most play_rate/2. Larger mod_cycles means a lower play rate and
+    a closer carrier, so the search prefers the pairing that puts the carrier
+    nearest -- 1.000000 MHz comes out as 80 cycles at 12500 Hz, which lands the
+    carrier on 80.000000 MHz exactly.
 
-    Returns (carrier_cycles, mod_cycles, play_rate_hz), or None.
+    Also measured, and NOT free: driving at a high play rate raised spurs at
+    36.0 and 54.0 MHz to ~6% and ~4.6% of the carrier, against ~0.2% for the
+    default grid. They sit far from the modulation and an AOM will not diffract
+    them efficiently, but they are there.
+
+    Returns (carrier_cycles, mod_cycles, play_rate_hz), or None when the
+    modulation is not a whole number of hertz.
     """
-    if modulation <= 0 or carrier <= modulation:
+    if modulation <= 0 or carrier <= 0:
         return None
     m = int(round(modulation))
-    if abs(m - modulation) > 1e-6:          # not a whole number of hertz
-        return None
-    f_max = int(fs // ASG_BUFFER_MAX)       # 15258 Hz at 250 MS/s
-    for play in range(f_max, 0, -1):
-        if m % play:                        # play rate must divide it exactly
+    if abs(m - modulation) > 1e-6 or m < 1:
+        return None                         # not a whole number of hertz
+
+    best = None
+    for n_m in range(1, int(m ** 0.5) + 1):
+        if m % n_m:
             continue
-        n_m = m // play
-        n_c = int(round(carrier / play))
-        if n_c <= n_m:
-            continue
-        if n_c + n_m >= ASG_BUFFER_MAX // 2:    # upper sideband past Nyquist
-            continue
-        return n_c, n_m, play
-    return None
+        for cycles in {n_m, m // n_m}:      # divisor pairs
+            play = m // cycles
+            if play > max_play or play < 1:
+                continue
+            n_c = int(round(carrier / play))
+            # At least 8 table entries per carrier cycle. Nyquist alone (2)
+            # is not enough: a table holding 8000 carrier cycles in 16384
+            # entries technically satisfies it while representing the carrier
+            # with 2.05 points, and the reconstruction is then all alias. The
+            # configuration measured working on 2026-08-28 had 80 cycles --
+            # 204.8 points each -- and the DAC's 250 MS/s is the real limit
+            # on the output either way.
+            if n_c < 1 or n_c > ASG_BUFFER_MAX // 8:
+                continue
+            if n_c + cycles >= ASG_BUFFER_MAX // 2:
+                continue
+            err = abs(n_c * play - carrier)
+            # Closest carrier first; on a tie take the HIGHEST play rate,
+            # which is the fewest cycles and so the best-resolved table.
+            key = (err, -play)
+            if best is None or key < best[0]:
+                best = (key, (n_c, cycles, play))
+    return None if best is None else best[1]
 
 
 def make_am_table_exact(carrier: float, modulation: float,

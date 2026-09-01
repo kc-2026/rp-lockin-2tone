@@ -1,3 +1,35 @@
+def test_any_whole_hertz_modulation_is_reachable():
+    """The fs/16384 grid was never a hardware limit -- it is what you get by
+    leaving the play rate at its default. SOUR:FREQ:FIX is settable (1 MHz and
+    5 MHz both accepted, measured) and quantised to 1 Hz, so mod_cycles can be
+    1 and any whole number of hertz is exact.
+
+    999983 Hz is prime and used to be refused. It is not special."""
+    from rp_lockin.waveforms import make_am_table_exact
+    for mod in (999983.0, 1234567.0, 915527.0, 991821.0, 1e6):
+        t = make_am_table_exact(80e6, mod)
+        assert t.modulation == pytest.approx(mod, abs=1e-6), mod
+
+
+def test_a_fractional_hertz_modulation_is_refused():
+    """The play rate is quantised to 1 Hz, so a modulation that is not a whole
+    number of hertz has no exact table."""
+    from rp_lockin.waveforms import make_am_table_exact, plan_exact_am
+    assert plan_exact_am(80e6, 915527.34375) is None
+    with pytest.raises(ValueError):
+        make_am_table_exact(80e6, 915527.34375)
+
+
+def test_the_carrier_lands_close_enough_for_the_aom():
+    """It is placed on the nearest multiple of the play rate. The 1550AOM-1's
+    acoustic passband is megahertz wide, so a few hundred kHz is beneath its
+    notice -- and insisting on exact would rule out most modulations."""
+    from rp_lockin.waveforms import make_am_table_exact
+    for mod in (1e6, 999983.0, 915527.0, 1234567.0):
+        t = make_am_table_exact(80e6, mod)
+        assert abs(t.carrier - 80e6) < 0.5e6, mod
+
+
 """
 The panel bench: that it builds, and that its pieces really are independent.
 
@@ -761,14 +793,26 @@ def test_exactly_one_megahertz_is_reachable(app):
 
 
 def test_the_exact_table_gets_the_carrier_right_too(app):
-    """Both frequencies are multiples of the SAME play rate, so hitting one
-    exactly is only useful if the other lands somewhere sane too."""
+    """MEASURED on the board 2026-08-28: a 16384-entry table holding ONE
+    modulation cycle and 80 carrier cycles, played at 1000000 Hz, gave a
+    carrier at 80.0018 MHz with sidebands at 78.995 and 80.978. This pins that
+    configuration, because it is the one that was actually seen to work."""
     from rp_lockin.waveforms import make_am_table_exact
     t = make_am_table_exact(80e6, 1e6)
     assert t.modulation == pytest.approx(1e6, abs=1e-6)
     assert t.carrier == pytest.approx(80e6, abs=1e-3)
-    assert t.carrier_cycles == 6400 and t.mod_cycles == 80
-    assert t.play_freq == 12500.0
+    assert t.mod_cycles == 1 and t.carrier_cycles == 80
+    assert t.play_freq == 1000000.0
+
+
+def test_the_table_resolves_the_carrier_properly(app):
+    """Nyquist alone is not enough. A table with 8000 carrier cycles in 16384
+    entries satisfies it with 2.05 points per cycle and reconstructs to alias;
+    the configuration that worked had 204.8."""
+    from rp_lockin.waveforms import make_am_table_exact
+    for mod in (1e6, 500e3, 915527.0, 1.5e6):
+        t = make_am_table_exact(80e6, mod)
+        assert 16384 / t.carrier_cycles >= 8.0
 
 
 def test_the_play_rate_is_a_whole_number_of_hertz():
@@ -782,47 +826,30 @@ def test_the_play_rate_is_a_whole_number_of_hertz():
         assert t.mod_cycles * t.play_freq == pytest.approx(mod, abs=1e-6)
 
 
-def test_a_frequency_with_no_usable_divisor_is_refused():
-    """999983 Hz is prime, so the only play rates dividing it are 1 Hz and
-    itself; neither leaves a workable number of cycles."""
-    from rp_lockin.waveforms import make_am_table_exact, plan_exact_am
-    assert plan_exact_am(80e6, 999983.0) is None
-    with pytest.raises(ValueError):
-        make_am_table_exact(80e6, 999983.0)
-
-
-def test_the_play_rate_never_exceeds_one_entry_per_clock(app):
-    """The table is ALWAYS 16384 entries, traversed at play_rate x 16384
-    samples per second. Above fs/16384 that exceeds the DAC. It is also why a
-    table cannot hold one modulation period and be played at 1 MHz: that would
-    need 16.384 GS/s."""
-    from rp_lockin.waveforms import make_am_table_exact
-    for mod in (1e6, 1.5e6, 2e6):
-        t = make_am_table_exact(80e6, mod)
-        assert t.play_freq * 16384 <= 250e6 + 1.0
-
-
-def test_an_unreachable_pair_falls_back_to_the_grid_and_says_so(app):
-    """915.5273 kHz against an 80 MHz carrier has no integer pair that fits, so
-    the default grid is the honest answer."""
+def test_a_fractional_request_falls_back_and_says_so(app):
+    """915.5273 kHz is not a whole number of hertz, so no exact table exists
+    and the default grid is the honest answer."""
     lines = []
     app.log = lambda m: lines.append(m)
     app.v_carrier.set("80.0")
+    # 915.5273 kHz is not a whole number of hertz, so there is no exact
+    # table -- but it happens to sit ON the default grid, so the fallback
+    # moves it by 0.04 Hz and rightly says nothing.
     app.v_real.set("915.5273")
     app._settle_actual()
     assert float(app.v_real.get()) == pytest.approx(915.527344, abs=1e-4)
+    assert not lines, f"a 0.04 Hz correction is not worth a warning: {lines}"
 
-    # 999.983 kHz is prime in hertz, so no play rate divides it usefully.
-    app.v_real.set("999.983")
+    # 920.0005 kHz is fractional AND far from the grid, so the fallback moves
+    # it by 4.5 kHz -- which must be said out loud.
+    app.v_real.set("920.0005")
     app._settle_actual()
-    assert float(app.v_real.get()) != pytest.approx(999.983, abs=1e-4)
     assert any("cannot be generated exactly" in m for m in lines), lines
 
-    # ...but 915.4 kHz IS reachable, and must be left alone. The unreachable
-    # set is "no usable divisor", not "not a round number".
-    app.v_real.set("915.4")
+    # A whole number of hertz IS reachable and must be left alone.
+    app.v_real.set("999.983")
     app._settle_actual()
-    assert float(app.v_real.get()) == pytest.approx(915.4, abs=1e-4)
+    assert float(app.v_real.get()) == pytest.approx(999.983, abs=1e-6)
 
 
 def test_the_drive_and_f1_both_follow_the_generated_value(app):
