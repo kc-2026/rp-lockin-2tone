@@ -335,10 +335,12 @@ class Bench:
         bar.pack(fill="x")
         self.plot_what = tk.StringVar(value="trace")
         ttk.Label(bar, text="show:").pack(side="left")
-        cb = ttk.Combobox(bar, textvariable=self.plot_what, width=22,
+        cb = ttk.Combobox(bar, textvariable=self.plot_what, width=28,
                           state="readonly",
                           values=("trace (amplitude vs wavelength)",
                                   "lock-in (amplitude vs time)",
+                                  "lock-in R (magnitude vs time)",
+                                  "lock-in phase (degrees vs time)",
                                   "raw IN1 (volts vs time)",
                                   "raw IN2 (counts vs time)"))
         cb.pack(side="left", padx=6)
@@ -419,6 +421,27 @@ class Bench:
                 self.plot.show(w * 1e9, a, "wavelength (nm)", "amplitude (V)",
                                xfmt=lambda v: f"{v:.1f}",
                                yfmt=lambda v: eng(v, "V"))
+            elif what.startswith("lock-in R"):
+                # R cannot go negative and does not care where the reference
+                # phase sits, so it separates "the signal changed" from "the
+                # phase rotated" -- which the projected amplitude cannot.
+                if self.ws.lockin is None:
+                    return self.log("no lock-in: run Demodulate first")
+                r = self.ws.lockin
+                t0, label = self._time_origin()
+                self.plot.show(r.t - t0, r.R, label, "R (V)",
+                               yfmt=lambda v: eng(v, "V"))
+            elif what.startswith("lock-in phase"):
+                # Unwrapped, because the interesting case is phase that WINDS:
+                # wrapped into (-180, 180] a steady drift looks like a sawtooth
+                # rather than the straight line it is.
+                if self.ws.lockin is None:
+                    return self.log("no lock-in: run Demodulate first")
+                r = self.ws.lockin
+                t0, label = self._time_origin()
+                ph = np.degrees(np.unwrap(r.theta))
+                self.plot.show(r.t - t0, ph, label, "phase (deg)",
+                               yfmt=lambda v: f"{v:.0f}")
             elif what.startswith("lock-in"):
                 if self.ws.lockin is None:
                     return self.log("no lock-in: run Demodulate first")
@@ -1280,26 +1303,39 @@ class Bench:
                      f"{k} x 504.868 kHz (switching supply). Move f1 or f2.")
 
     def _warn_if_beating(self, r):
-        """A lock-in output that oscillates is a frequency offset, not physics.
+        """A lock-in output that swings through zero is a frequency offset.
 
-        amplitude() projects X+jY onto one phase, so a reference that is off by
-        df makes the projection swing between +A and -A at df. Counting sign
-        changes recovers df, which is the number needed to fix it -- so say it
-        rather than leaving a sine on screen looking like a result.
+        amplitude() projects X+jY onto ONE phase, so a reference that is off by
+        df turns a steady signal into A*cos(2*pi*df*t) -- a smooth swing that
+        crosses zero and goes NEGATIVE. No optical amplitude can do that, so a
+        sign change is diagnostic on its own.
+
+        Measured by fitting the UNWRAPPED PHASE against time rather than by
+        counting sign changes. The old version needed four crossings, i.e. two
+        full beat cycles, so anything slower than ~2 Hz in a one-second record
+        went unreported -- and a sub-hertz offset is the dangerous one: it
+        draws a single smooth arch across the sweep that looks exactly like a
+        wavelength-dependent response.
         """
+        if r.t.size < 32:
+            return
+        ph = np.unwrap(r.theta)
+        turns = (ph[-1] - ph[0]) / (2.0 * np.pi)
+        if abs(turns) < 0.05:
+            return
+        slope = np.polyfit(r.t, ph, 1)[0]
+        df = slope / (2.0 * np.pi)
         a = r.amplitude()
-        if a.size < 32:
-            return
-        crossings = int(np.count_nonzero(np.diff(np.signbit(a))))
-        if crossings < 4:
-            return
-        duration = a.size / r.fs_out
-        beat = crossings / (2.0 * duration)
-        self.log(f"WARNING: the lock-in output changes sign {crossings} times "
-                 f"-- that is a BEAT at about {beat:.1f} Hz, not a signal. "
-                 f"f_ref is roughly {beat:.1f} Hz away from whatever is "
-                 f"actually there. Use the f1 / 2 x f1 buttons, which take the "
-                 f"SNAPPED drive frequency.")
+        crossed = bool(np.any(np.signbit(a)) and np.any(~np.signbit(a)))
+        self.log(
+            f"WARNING: the lock-in PHASE winds {turns:+.2f} turns across the "
+            f"record, a drift of {df:+.4f} Hz between f_ref and whatever is "
+            f"actually there."
+            + (" That is why the amplitude goes NEGATIVE: the projection is "
+               "A*cos(phase), and the phase has rotated past 90 deg. It is "
+               "not the signal changing sign." if crossed else "")
+            + f" Try f_ref = {(r.f_ref + df) / 1e3:.6f} kHz, and plot "
+              f"'lock-in R', which does not care about the reference phase.")
 
     def demod_run(self):
         if not self.ws.capture:

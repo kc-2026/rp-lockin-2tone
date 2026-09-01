@@ -413,30 +413,23 @@ def test_the_first_harmonic_button_reproduces_the_drive(app):
         make_am_table(80e6, 915.5273e3).modulation, abs=1.0)
 
 
-class _Beating:
-    """A lock-in output whose phase rotates, as an offset reference gives."""
+def _beating(beat_hz, seconds=1.0, fs_out=5000.0, amp=0.024,
+             f_ref=1831000.0):
+    """A real LockinResult whose phase rotates, as an offset reference gives.
 
-    def __init__(self, beat_hz, seconds=1.0, fs_out=5000.0, amp=0.024):
-        self.fs_out = fs_out
-        self.f_ref = 1831000.0
-        n = int(seconds * fs_out)
-        self.t = np.arange(n) / fs_out
-        self._a = amp * np.cos(2 * np.pi * beat_hz * self.t)
-
-    def amplitude(self, smooth=None):
-        return self._a
-
-
-class _Steady:
-    def __init__(self, seconds=1.0, fs_out=5000.0, amp=0.18):
-        self.fs_out = fs_out
-        self.f_ref = 915527.34
-        n = int(seconds * fs_out)
-        self.t = np.arange(n) / fs_out
-        self._a = np.full(n, amp)
-
-    def amplitude(self, smooth=None):
-        return self._a
+    A REAL one, not a stand-in carrying only the attributes the detector
+    happened to use when it was written. The previous version supplied
+    amplitude(), t and fs_out and nothing else, so when the detector moved to
+    reading .theta the tests broke while the bench was fine -- the mirror
+    image of the _ParkLaser failure and the same root cause. LockinResult is
+    four arrays and three floats; there is no reason to imitate it.
+    """
+    from rp_lockin.dsp import LockinResult
+    n = int(seconds * fs_out)
+    t = np.arange(n) / fs_out
+    z = amp * np.exp(1j * 2 * np.pi * beat_hz * t)
+    return LockinResult(t=t, X=z.real, Y=z.imag, f_ref=f_ref, fs_out=fs_out,
+                        bandwidth=2250.0, settle=113)
 
 
 def test_a_beating_lockin_output_is_called_out(app):
@@ -444,8 +437,8 @@ def test_a_beating_lockin_output_is_called_out(app):
     result. Nothing else in the trace distinguishes the two."""
     lines = []
     app.log = lambda m: lines.append(m)
-    app._warn_if_beating(_Beating(54.7))
-    hits = [m for m in lines if "BEAT" in m]
+    app._warn_if_beating(_beating(54.7))
+    hits = [m for m in lines if "PHASE winds" in m]
     assert hits, lines
     assert "54" in hits[0] or "55" in hits[0], f"name the offset: {hits[0]}"
 
@@ -454,8 +447,8 @@ def test_a_steady_lockin_output_is_not_called_a_beat(app):
     """It must not cry wolf on the measurement that is working."""
     lines = []
     app.log = lambda m: lines.append(m)
-    app._warn_if_beating(_Steady())
-    assert not any("BEAT" in m for m in lines), lines
+    app._warn_if_beating(_beating(0.0, amp=0.18, f_ref=915527.34))
+    assert lines == [], lines
 
 
 # ------------------------------------------------ discrete instrument settings
@@ -1184,4 +1177,88 @@ def test_all_seven_settings_are_verified_not_just_the_trigger():
         held[key] = wrong
         bad = ops.check_sweep_config(want, held)
         assert bad and key in bad[0], f"{key} was not checked"
+
+
+# ------------------------------------------------- the sub-hertz beat
+# From the bench, 2026-09-01: a demodulation at f1 with the drive on drew a
+# smooth arch from -76.3 mV up to +133.8 mV and back, over a 1 s sweep. It
+# reads as a wavelength-dependent response and it is not one.
+#
+# A 0.69 Hz offset between f_ref and the light, with R CONSTANT at 134 mV,
+# reproduces it to -79.9 .. +134.0 mV. amplitude() projects onto one phase, so
+# a rotating phasor comes out as A*cos(phase) -- and once the phase passes
+# 90 deg the projection goes negative. No optical amplitude can do that.
+#
+# The old detector counted sign changes and needed four of them, i.e. two full
+# beat cycles. Under about 2 Hz in a one-second record it saw nothing, which
+# is precisely the regime that draws a convincing arch.
+
+
+def _rotating(df_hz, amp=0.134, n=5097, fs=5000.0, f_ref=915000.0):
+    """A steady signal seen through a reference that is df_hz off."""
+    from rp_lockin.dsp import LockinResult
+    t = np.arange(n) / fs
+    ph = 2 * np.pi * df_hz * (t - t[-1] / 2.0)
+    z = amp * np.exp(1j * ph)
+    return LockinResult(t=t, X=z.real, Y=z.imag, f_ref=f_ref, fs_out=fs,
+                        bandwidth=2250.0, settle=113)
+
+
+def test_a_sub_hertz_offset_reproduces_the_arch_seen_on_the_bench():
+    r = _rotating(0.69)
+    a = r.amplitude()
+    assert a.min() * 1e3 == pytest.approx(-79.9, abs=2.0)
+    assert a.max() * 1e3 == pytest.approx(134.0, abs=2.0)
+    # R is flat throughout: nothing about the SIGNAL changed.
+    assert r.R.std() / r.R.mean() < 1e-9
+
+
+def test_the_sub_hertz_beat_is_now_reported(app):
+    """The whole point. Two sign changes in a 1 s record is fewer than the
+    four the old counter needed, so this went unreported."""
+    lines = []
+    app.log = lambda m: lines.append(m)
+    r = _rotating(0.69)
+    assert int(np.count_nonzero(np.diff(np.signbit(r.amplitude())))) < 4
+    app._warn_if_beating(r)
+    assert lines, "a 0.69 Hz beat was not reported"
+    msg = " ".join(lines)
+    assert "PHASE winds" in msg
+    assert "0.69" in msg or "0.6900" in msg
+
+
+def test_the_reported_offset_is_the_one_to_correct_f_ref_by(app):
+    lines = []
+    app.log = lambda m: lines.append(m)
+    app._warn_if_beating(_rotating(-1.25))
+    msg = " ".join(lines)
+    assert "-1.25" in msg
+    # f_ref + df, in kHz, is what the message offers as the fix.
+    assert "914.998750" in msg
+
+
+def test_a_clean_lockin_is_left_alone(app):
+    """No phase drift, no warning -- or the message becomes noise."""
+    lines = []
+    app.log = lambda m: lines.append(m)
+    app._warn_if_beating(_rotating(0.0))
+    assert lines == []
+
+
+def test_R_and_phase_views_exist(app):
+    """R cannot go negative and ignores the reference phase, so it separates
+    'the signal changed' from 'the phase rotated'. Without it there is no way
+    to tell those apart from the bench."""
+    import tkinter.ttk as ttk_
+    found = []
+
+    def walk(w):
+        for c in w.winfo_children():
+            if isinstance(c, ttk_.Combobox):
+                found.extend(str(v) for v in c.cget("values"))
+            walk(c)
+
+    walk(app.root)
+    assert any(v.startswith("lock-in R") for v in found), found
+    assert any(v.startswith("lock-in phase") for v in found), found
 
