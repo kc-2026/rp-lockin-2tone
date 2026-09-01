@@ -181,7 +181,8 @@ class GridTwoTonePlan:
 
 def plan_exact_am(carrier: float, modulation: float,
                   fs: float = BASE_SAMPLE_RATE,
-                  max_play: float = 10e6) -> tuple[int, int, int] | None:
+                  max_play: float = 10e6,
+                  carrier_tol: float = 0.5e6) -> tuple[int, int, int] | None:
     """Cycle counts and an integer PLAY RATE giving the modulation exactly.
 
     MEASURED ON THE BOARD, 2026-08-28, correcting two things this project had
@@ -209,9 +210,30 @@ def plan_exact_am(carrier: float, modulation: float,
 
     The CARRIER lands on the nearest multiple of the same play rate, so its
     error is at most play_rate/2. Larger mod_cycles means a lower play rate and
-    a closer carrier, so the search prefers the pairing that puts the carrier
-    nearest -- 1.000000 MHz comes out as 80 cycles at 12500 Hz, which lands the
-    carrier on 80.000000 MHz exactly.
+    a closer carrier -- but that is the WRONG trade, and the search used to
+    make it.
+
+    **Why the fewest modulation cycles wins.** The output is
+    `mod_cycles x play_rate`, so whatever error the board has in realising the
+    play rate is multiplied by mod_cycles, and it lands on the MODULATION --
+    the one frequency the lock-in has to match. The carrier error it buys in
+    exchange lands on the AOM, whose acoustic passband is megahertz wide and
+    cannot tell.
+
+    Measured on the bench 2026-09-01: 915 kHz planned as 12 cycles at
+    76250 Hz demodulated with a ~0.69 Hz offset, which drew a smooth arch from
+    -76 mV through zero to +134 mV and back across a 1 s sweep -- indis-
+    tinguishable from a wavelength-dependent response. 1 MHz, which plans as a
+    single cycle at 1000000 Hz, showed none of it. Twelve times the cycles,
+    twelve times the frequency error.
+
+    So: take the FEWEST modulation cycles whose carrier still lands within
+    `carrier_tol`, and use the carrier error only to break ties. 915 kHz now
+    plans as 1 cycle at 915000 Hz, putting the carrier at 79.605 MHz -- 395 kHz
+    off 80 MHz, and beneath the AOM's notice.
+
+    If nothing meets `carrier_tol` the search falls back to the closest carrier
+    it can find, so a modulation that was plannable before still is.
 
     Also measured, and NOT free: driving at a high play rate raised spurs at
     36.0 and 54.0 MHz to ~6% and ~4.6% of the carrier, against ~0.2% for the
@@ -227,7 +249,8 @@ def plan_exact_am(carrier: float, modulation: float,
     if abs(m - modulation) > 1e-6 or m < 1:
         return None                         # not a whole number of hertz
 
-    best = None
+    best_near = None        # within carrier_tol: fewest cycles wins
+    best_any = None         # fallback: closest carrier, as before
     for n_m in range(1, int(m ** 0.5) + 1):
         if m % n_m:
             continue
@@ -248,11 +271,20 @@ def plan_exact_am(carrier: float, modulation: float,
             if n_c + cycles >= ASG_BUFFER_MAX // 2:
                 continue
             err = abs(n_c * play - carrier)
-            # Closest carrier first; on a tie take the HIGHEST play rate,
-            # which is the fewest cycles and so the best-resolved table.
-            key = (err, -play)
-            if best is None or key < best[0]:
-                best = (key, (n_c, cycles, play))
+            found = (n_c, cycles, play)
+            # Fewest MODULATION cycles first, because mod_cycles multiplies
+            # whatever error the board has in the play rate and puts it on the
+            # frequency the lock-in must match. Carrier error only breaks ties.
+            if err <= carrier_tol:
+                key = (cycles, err)
+                if best_near is None or key < best_near[0]:
+                    best_near = (key, found)
+            # Kept so a modulation whose every pairing misses carrier_tol is
+            # still plannable rather than suddenly refused.
+            key_any = (err, -play)
+            if best_any is None or key_any < best_any[0]:
+                best_any = (key_any, found)
+    best = best_near or best_any
     return None if best is None else best[1]
 
 

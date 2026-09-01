@@ -1262,3 +1262,71 @@ def test_R_and_phase_views_exist(app):
     assert any(v.startswith("lock-in R") for v in found), found
     assert any(v.startswith("lock-in phase") for v in found), found
 
+
+# ------------------------------------------------ mod_cycles is a multiplier
+# From the bench, 2026-09-01: 915 kHz demodulated with a ~0.69 Hz offset and
+# drew a smooth arch, -76 mV through zero to +134 mV and back over a 1 s
+# sweep. 1 MHz, on the same hardware and the same code path, showed none of
+# it. The difference is entirely in the plan:
+#
+#   915 kHz  ->  12 cycles at   76250 Hz
+#   1 MHz    ->   1 cycle  at 1000000 Hz
+#
+# The output is mod_cycles x play_rate, so whatever error the board has in
+# realising the play rate is multiplied by mod_cycles -- and it lands on the
+# modulation, which is the frequency the lock-in has to match. The search used
+# to minimise the CARRIER error instead, which buys nothing: the carrier goes
+# to an AOM whose acoustic passband is megahertz wide.
+
+
+def test_915_kHz_is_planned_with_one_modulation_cycle():
+    """The regression. 12 cycles multiplied the play-rate error by 12."""
+    from rp_lockin.waveforms import make_am_table_exact
+    t = make_am_table_exact(80e6, 915000.0)
+    assert t.mod_cycles == 1
+    assert t.play_freq == 915000.0
+    assert t.modulation == pytest.approx(915000.0, abs=1e-6)
+
+
+def test_the_plan_takes_the_fewest_cycles_the_carrier_allows():
+    """Fewest cycles, subject to the carrier still landing close enough. Not
+    fewest outright -- that would let the carrier wander arbitrarily far."""
+    from rp_lockin.waveforms import plan_exact_am
+    for mod in (915000.0, 1000000.0, 1225000.0, 310000.0, 999983.0,
+                1234567.0, 915527.0, 991821.0):
+        n_c, cycles, play = plan_exact_am(80e6, mod)
+        assert cycles == 1, f"{mod} planned with {cycles} cycles"
+        assert cycles * play == mod
+        assert abs(n_c * play - 80e6) <= 0.5e6
+
+
+def test_more_cycles_are_accepted_when_one_would_miss_the_carrier():
+    """2.14 MHz at a single cycle puts the carrier 820 kHz out, past the
+    tolerance, so two cycles is correct there. The rule is 'fewest that
+    still land the carrier', not 'always one'."""
+    from rp_lockin.waveforms import plan_exact_am
+    n_c, cycles, play = plan_exact_am(80e6, 2140000.0)
+    assert cycles == 2 and play == 1070000
+    assert abs(n_c * play - 80e6) <= 0.5e6
+    # and one cycle really would have missed
+    assert abs(round(80e6 / 2140000) * 2140000 - 80e6) > 0.5e6
+
+
+def test_a_modulation_no_pairing_can_place_well_is_still_plannable():
+    """The fallback. Tightening the carrier rule must not turn a frequency
+    that used to work into a refusal."""
+    from rp_lockin.waveforms import plan_exact_am
+    got = plan_exact_am(80e6, 915000.0, carrier_tol=0.0)
+    assert got is not None
+    n_c, cycles, play = got
+    assert cycles * play == 915000.0
+
+
+def test_the_carrier_error_is_traded_for_frequency_accuracy_knowingly():
+    """915 kHz moves the carrier from 79.9862 to 79.6050 MHz -- 395 kHz, and
+    worth it. The AOM's passband is megahertz wide; the lock-in's is not."""
+    from rp_lockin.waveforms import make_am_table_exact
+    t = make_am_table_exact(80e6, 915000.0)
+    assert abs(t.carrier - 80e6) == pytest.approx(395e3, abs=1e3)
+    assert 16384 / t.carrier_cycles >= 8.0
+
