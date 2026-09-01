@@ -786,10 +786,17 @@ def test_a_cancelled_capture_reads_differently_from_a_failed_one(app):
 
 def test_exactly_one_megahertz_is_reachable(app):
     """The case that started this. 15258.789 Hz does not divide 1 MHz, but the
-    play rate is not obliged to be 15258.789 Hz."""
+    play rate is not obliged to be 15258.789 Hz.
+
+    One box now, not two: the second existed to show what the ASG would snap
+    to, and there is no snapping left for any whole number of hertz."""
     app.v_carrier.set("80.0")
     app.v_mod.set("1000")
-    assert float(app.v_real.get()) == pytest.approx(1000.0, abs=1e-6)
+    app._settle_mod()
+    assert float(app.v_mod.get()) == pytest.approx(1000.0, abs=1e-6)
+    t, mode = app._resolve(80e6, 1e6)
+    assert mode == "exact"
+    assert t.modulation == pytest.approx(1e6, abs=1e-6)
 
 
 def test_the_exact_table_gets_the_carrier_right_too(app):
@@ -827,29 +834,38 @@ def test_the_play_rate_is_a_whole_number_of_hertz():
 
 
 def test_a_fractional_request_falls_back_and_says_so(app):
-    """915.5273 kHz is not a whole number of hertz, so no exact table exists
-    and the default grid is the honest answer."""
+    """The play rate is quantised to 1 Hz, so a fractional-hertz modulation has
+    no exact table and the default grid is the honest answer."""
     lines = []
     app.log = lambda m: lines.append(m)
     app.v_carrier.set("80.0")
-    # 915.5273 kHz is not a whole number of hertz, so there is no exact
-    # table -- but it happens to sit ON the default grid, so the fallback
-    # moves it by 0.04 Hz and rightly says nothing.
-    app.v_real.set("915.5273")
-    app._settle_actual()
-    assert float(app.v_real.get()) == pytest.approx(915.527344, abs=1e-4)
+
+    # 915.5273 kHz sits ON the old grid, so the fallback moves it 0.04 Hz and
+    # rightly says nothing.
+    app.v_mod.set("915.5273")
+    app._settle_mod()
     assert not lines, f"a 0.04 Hz correction is not worth a warning: {lines}"
+    _t, mode = app._resolve(80e6, 915527.3)
+    assert mode == "grid"
 
     # 920.0005 kHz is fractional AND far from the grid, so the fallback moves
-    # it by 4.5 kHz -- which must be said out loud.
-    app.v_real.set("920.0005")
-    app._settle_actual()
+    # it by kilohertz -- which must be said out loud.
+    app.v_mod.set("920.0005")
+    app._settle_mod()
     assert any("cannot be generated exactly" in m for m in lines), lines
 
-    # A whole number of hertz IS reachable and must be left alone.
-    app.v_real.set("999.983")
-    app._settle_actual()
-    assert float(app.v_real.get()) == pytest.approx(999.983, abs=1e-6)
+    # A whole number of hertz is exact and must be left alone.
+    lines.clear()
+    app.v_mod.set("999.983")
+    app._settle_mod()
+    assert float(app.v_mod.get()) == pytest.approx(999.983, abs=1e-6)
+    assert not lines, lines
+
+
+def test_there_is_only_one_modulation_box(app):
+    """The 'generated' box existed to show a snap that no longer happens."""
+    assert not hasattr(app, "v_real")
+    assert hasattr(app, "v_mod")
 
 
 def test_the_drive_and_f1_both_follow_the_generated_value(app):

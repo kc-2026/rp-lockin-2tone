@@ -181,7 +181,7 @@ class GridTwoTonePlan:
 
 def plan_exact_am(carrier: float, modulation: float,
                   fs: float = BASE_SAMPLE_RATE,
-                  max_play: float = 2e6) -> tuple[int, int, int] | None:
+                  max_play: float = 10e6) -> tuple[int, int, int] | None:
     """Cycle counts and an integer PLAY RATE giving the modulation exactly.
 
     MEASURED ON THE BOARD, 2026-08-28, correcting two things this project had
