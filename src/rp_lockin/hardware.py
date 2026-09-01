@@ -29,7 +29,7 @@ import time
 import numpy as np
 
 from .constants import ANALOG_BANDWIDTH, BASE_SAMPLE_RATE
-from .waveforms import AsgTable, make_am_table
+from .waveforms import AsgTable, make_am_table, make_am_table_exact
 
 __all__ = ["RedPitaya"]
 
@@ -220,7 +220,7 @@ class RedPitaya:
 
     def setup_am_generator(self, carrier: float = 80e6, modulation: float = 5e6,
                            amplitude: float = 1.0, depth: float = 1.0,
-                           channel: int = 1) -> AsgTable:
+                           channel: int = 1, exact: bool = False) -> AsgTable:
         """
         Output an amplitude-modulated carrier from the arbitrary-waveform table.
 
@@ -249,7 +249,23 @@ class RedPitaya:
                 f"output will be attenuated.",
                 file=sys.stderr,
             )
-        table = make_am_table(carrier, modulation, self.base_rate, depth)
+        # `exact` picks the PLAY RATE to fit the frequencies instead of
+        # leaving it at fs/16384. That is what makes 80.000000 MHz with
+        # 1.000000 MHz reachable at all -- see plan_exact_am. It costs the
+        # one-entry-per-clock property, so the generator repeats or skips
+        # entries like any DDS. Falls back to the grid when no integer pair
+        # fits, because a refusal here would be worse than a 7 kHz offset the
+        # caller can see in the returned table.
+        table = None
+        if exact:
+            try:
+                table = make_am_table_exact(carrier, modulation,
+                                            self.base_rate, depth)
+            except ValueError as exc:
+                print(f"NOTE: {exc} Falling back to the default grid.",
+                      file=sys.stderr)
+        if table is None:
+            table = make_am_table(carrier, modulation, self.base_rate, depth)
         data = ",".join(f"{v:.6f}" for v in table.samples)
         self.write(f"SOUR{channel}:FUNC ARBITRARY")
         self.write(f"SOUR{channel}:TRAC:DATA:DATA {data}")

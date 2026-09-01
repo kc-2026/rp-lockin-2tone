@@ -179,6 +179,83 @@ class GridTwoTonePlan:
         ])
 
 
+def plan_exact_am(carrier: float, modulation: float,
+                  fs: float = BASE_SAMPLE_RATE,
+                  max_cycles: int = 4000) -> tuple[int, int, float] | None:
+    """Cycle counts and a PLAY RATE that reproduce both frequencies exactly.
+
+    The fs/16384 "grid" is not a property of the hardware. It is what you get
+    by leaving the play rate at its default, where the table advances exactly
+    one entry per DAC clock. `SOUR:FREQ:FIX` sets that rate, so the real
+    constraint is only this:
+
+        carrier    = carrier_cycles x play_rate
+        modulation = mod_cycles     x play_rate
+
+    Both cycle counts are integers because the table has to hold whole cycles
+    to wrap without a discontinuity -- but the play rate they multiply is free.
+    Pick it to suit the frequencies and both come out exact.
+
+    So 80.000000 MHz with 1.000000 MHz modulation IS available: 5280 and 66
+    cycles at 15151.5152 Hz. The default grid cannot express it only because
+    15258.789 Hz happens not to divide 1 MHz.
+
+    THE COST. At any rate other than fs/16384 the table no longer advances one
+    entry per clock, so the generator repeats or skips entries -- ordinary DDS
+    behaviour, and the source of DDS spurs. Below the default rate the effect
+    is a slightly slower traversal; it is not free, but it is how every direct
+    digital synthesiser works.
+
+    Returns (carrier_cycles, mod_cycles, play_rate), or None when no integer
+    pair fits under `max_cycles` -- which happens whenever the two frequencies
+    are not in a simple ratio.
+    """
+    if modulation <= 0 or carrier <= modulation:
+        return None
+    # play_rate = modulation / mod_cycles must not exceed the default, or the
+    # table would have to advance more than one entry per DAC clock.
+    lowest = int(np.ceil(modulation * ASG_BUFFER_MAX / fs))
+    for n_m in range(max(lowest, 1), max_cycles):
+        ratio = carrier * n_m / modulation
+        n_c = int(round(ratio))
+        if abs(ratio - n_c) > 1e-9:
+            continue
+        if n_c + n_m >= ASG_BUFFER_MAX // 2:        # upper sideband past Nyquist
+            break
+        return n_c, n_m, modulation / n_m
+    return None
+
+
+def make_am_table_exact(carrier: float, modulation: float,
+                        fs: float = BASE_SAMPLE_RATE,
+                        depth: float = 1.0) -> AsgTable:
+    """An AM table that plays BOTH frequencies exactly, or raises.
+
+    Same table construction as `make_am_table`; the difference is entirely in
+    the play rate, which is chosen to fit rather than assumed. Use this when
+    the exact number matters and `make_am_table` when staying on the default
+    grid matters -- the grid path is the one Phase 1 verified.
+    """
+    if not 0 < depth <= 1.0:
+        raise ValueError("depth must be in (0, 1]")
+    found = plan_exact_am(carrier, modulation, fs)
+    if found is None:
+        f_m, n_m = snap_to_asg_grid(modulation, fs)
+        raise ValueError(
+            f"no exact table for {carrier / 1e6:g} MHz with "
+            f"{modulation / 1e3:g} kHz modulation: they are not in a ratio "
+            f"that fits whole cycles in {ASG_BUFFER_MAX} entries. The nearest "
+            f"on the default grid is {f_m / 1e3:.4f} kHz."
+        )
+    n_c, n_m, play = found
+    k = np.arange(ASG_BUFFER_MAX)
+    env = 1.0 + depth * np.cos(2 * np.pi * n_m * k / ASG_BUFFER_MAX)
+    wave = env * np.cos(2 * np.pi * n_c * k / ASG_BUFFER_MAX)
+    wave = wave / np.max(np.abs(wave))
+    return AsgTable(samples=wave, play_freq=play, carrier=n_c * play,
+                    modulation=n_m * play, carrier_cycles=n_c, mod_cycles=n_m)
+
+
 def plan_two_tone_grid(difference: float = 1e6, f1: float = 5e6,
                        carrier: float = 80e6,
                        fs: float = BASE_SAMPLE_RATE) -> GridTwoTonePlan:

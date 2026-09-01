@@ -450,7 +450,7 @@ class Bench:
                      ).grid(row=2, column=1, sticky="w")
         ttk.Label(f, text="IN1 AC/LV for the detector (0-10 V unipolar);\n"
                           "IN2 HV or the 3.3 V trigger clips flat.",
-                  foreground="#666", justify="left").grid(
+                  foreground="#666", justify="left", wraplength=300).grid(
             row=3, column=0, columnspan=3, sticky="w", pady=(4, 4))
         b = ttk.Frame(f)
         b.grid(row=4, column=0, columnspan=3, sticky="w")
@@ -507,14 +507,12 @@ class Bench:
         self.v_real = tk.StringVar(value=f"{DEFAULT_MOD_HZ / 1e3:.6f}")
         self.v_amp = tk.StringVar(value="1.0")
         fld(f, 0, "carrier", self.v_carrier, "MHz")
-        fld(f, 1, "want mod", self.v_mod, "kHz")
-        # ACTUAL: what the ASG will really play, and editable. Type a wish in
-        # the box above and this fills in; type here and it locks to the
-        # nearest grid point directly, which is how you dial a specific one in
-        # without doing the arithmetic. Everything downstream -- Drive ON, the
-        # f1 button, the sequences -- uses THIS value, because it is the only
-        # one that exists in the hardware.
-        e_real = fld(f, 2, "ACTUAL mod", self.v_real, "kHz", width=14)
+        fld(f, 1, "modulation", self.v_mod, "kHz")
+        # "generated" is what will actually come out. Editable, so a value
+        # can be dialled in directly. Everything downstream -- Drive ON, the
+        # f1 button, the sequences -- reads THIS one, because it is the number
+        # the hardware will produce.
+        e_real = fld(f, 2, "generated", self.v_real, "kHz", width=14)
         # Settles onto the grid when you leave the box or press Return, not on
         # every keystroke -- correcting mid-type would fight you. Deferring it
         # is what keeps the box honest: a field called ACTUAL that could sit
@@ -524,9 +522,11 @@ class Bench:
         e_real.bind("<Return>", lambda _e: self._settle_actual())
         fld(f, 3, "amplitude", self.v_amp, "V")
         self.v_snap = tk.StringVar(value="")
+        # wraplength, or a long readout pushes the whole rail wider and the
+        # entry boxes march off to the right.
         ttk.Label(f, textvariable=self.v_snap, foreground="#144",
-                  justify="left").grid(row=4, column=0, columnspan=3,
-                                       sticky="w", pady=(2, 2))
+                  justify="left", wraplength=300).grid(
+            row=4, column=0, columnspan=3, sticky="w", pady=(2, 2))
         self._snapping = False
         self.v_carrier.trace_add("write", lambda *_a: self._update_snap())
         self.v_mod.trace_add("write", lambda *_a: self._mod_wanted())
@@ -536,7 +536,7 @@ class Bench:
                           "off-grid glitches at every table wrap. 1.000 MHz is\n"
                           "not available; the nearest is 1007.080. f_ref in\n"
                           "Demodulate is software and has no such limit.",
-                  foreground="#666", justify="left").grid(
+                  foreground="#666", justify="left", wraplength=300).grid(
             row=5, column=0, columnspan=3, sticky="w", pady=(2, 4))
         b = ttk.Frame(f)
         b.grid(row=6, column=0, columnspan=3, sticky="w")
@@ -544,14 +544,27 @@ class Bench:
         ttk.Button(b, text="Drive OFF",
                    command=self.all_off).pack(side="left", padx=4)
 
+    def _resolve(self, carrier, mod):
+        """The table that will really be played, and how it was reached.
+
+        Tries an EXACT table first -- one whose play rate is chosen so both
+        frequencies come out on the nose -- and falls back to the default
+        fs/16384 grid when the two are not in a ratio that fits whole cycles.
+        Returns (table, "exact"|"grid").
+        """
+        from rp_lockin.waveforms import make_am_table, make_am_table_exact
+        try:
+            return make_am_table_exact(carrier, mod), "exact"
+        except ValueError:
+            return make_am_table(carrier, mod), "grid"
+
     def _mod_wanted(self, *_a):
         """Typed in `want mod`: fill ACTUAL with the grid point it lands on."""
         if self._snapping:
             return
-        from rp_lockin.waveforms import make_am_table
         try:
             carrier = float(self.v_carrier.get()) * 1e6
-            t = make_am_table(carrier, float(self.v_mod.get()) * 1e3)
+            t, _mode = self._resolve(carrier, float(self.v_mod.get()) * 1e3)
         except Exception:                            # noqa: BLE001
             return self._update_snap()
         self._snapping = True
@@ -580,18 +593,18 @@ class Bench:
         log when that differs from what was asked for. f_ref in Demodulate has
         no such constraint: that one is software and can be any number at all.
         """
-        from rp_lockin.waveforms import make_am_table
         try:
             carrier = float(self.v_carrier.get()) * 1e6
             asked = float(self.v_real.get()) * 1e3
-            t = make_am_table(carrier, asked)
+            t, mode = self._resolve(carrier, asked)
         except Exception:                            # noqa: BLE001
             return
         if abs(t.modulation - asked) > 0.5:
-            self.log(f"{asked / 1e3:.4f} kHz is not on the ASG grid; using "
-                     f"{t.modulation / 1e3:.4f} kHz ({t.mod_cycles} cycles of "
-                     f"{ops.ASG_GRID:.3f} Hz). The table must hold whole "
-                     f"cycles, so nothing can play the number you asked for.")
+            self.log(f"{asked / 1e3:.4f} kHz cannot be generated exactly "
+                     f"alongside this carrier; using {t.modulation / 1e3:.4f} "
+                     f"kHz ({t.mod_cycles} cycles at "
+                     f"{t.play_freq:.4f} Hz). Both need a whole number of "
+                     f"cycles in the 16384-entry table.")
         self._snapping = True
         try:
             self.v_real.set(f"{t.modulation / 1e3:.6f}")
@@ -601,27 +614,26 @@ class Bench:
 
     def _update_snap(self):
         """Show what the ASG will really play, beside what was typed."""
-        from rp_lockin.waveforms import make_am_table
         try:
             carrier = float(self.v_carrier.get()) * 1e6
             asked = float(self.v_real.get()) * 1e3
-            t = make_am_table(carrier, asked)
+            t, mode = self._resolve(carrier, asked)
         except Exception:                            # noqa: BLE001
             return self.v_snap.set("")
-        off = t.modulation - asked
-        note = ""
-        if abs(off) > 0.5:
-            note = (f"  <-- {asked / 1e3:.4f} is OFF-GRID, nearest is "
-                    f"{t.modulation / 1e3:.4f}")
+        note = "" if abs(t.modulation - asked) <= 0.5 else \
+            f"  (nearest reachable to {asked / 1e3:.4f})"
+        how = ("EXACT -- play rate chosen to fit" if mode == "exact"
+               else "on the default fs/16384 grid")
         self.v_snap.set(
-            f"plays: carrier {t.carrier / 1e6:.6f} MHz ({t.carrier_cycles} cyc)"
-            f"\n       mod {t.modulation / 1e3:.4f} kHz ({t.mod_cycles} cyc)"
-            f"{note}\n       2x = {2 * t.modulation / 1e3:.4f} kHz   "
-            f"3x = {3 * t.modulation / 1e3:.4f} kHz")
+            f"generates: carrier {t.carrier / 1e6:.6f} MHz "
+            f"({t.carrier_cycles} cyc), mod {t.modulation / 1e3:.4f} kHz "
+            f"({t.mod_cycles} cyc){note}. {how}, play rate "
+            f"{t.play_freq:.4f} Hz. 2x = {2 * t.modulation / 1e3:.4f} kHz, "
+            f"3x = {3 * t.modulation / 1e3:.4f} kHz.")
 
     def _drive_cfg(self):
-        # ACTUAL, not the wish. It is the only one that exists in hardware, and
-        # it is what the f1 button and the sequences must agree with.
+        # The GENERATED value, not the request: it is what the hardware will
+        # produce, and what the f1 button and the sequences must agree with.
         return dict(carrier=float(self.v_carrier.get()) * 1e6,
                     modulation=float(self.v_real.get()) * 1e3,
                     amplitude=float(self.v_amp.get()))
@@ -667,7 +679,7 @@ class Bench:
         fld(f, 1, "power", self.v_dbm, "dBm")
         ttk.Label(f, text="One connection is held for the whole session:\n"
                           "about one reconnect in four fails outright.",
-                  foreground="#666", justify="left").grid(
+                  foreground="#666", justify="left", wraplength=300).grid(
             row=2, column=0, columnspan=3, sticky="w", pady=(4, 4))
         b = ttk.Frame(f)
         b.grid(row=3, column=0, columnspan=3, sticky="w")
@@ -882,13 +894,13 @@ class Bench:
                           "optional: the wavelength axis is only valid if\n"
                           "the detector and the trigger share one record,\n"
                           "and one time base.",
-                  foreground="#666", justify="left").grid(
+                  foreground="#666", justify="left", wraplength=300).grid(
             row=4, column=0, columnspan=3, sticky="w", pady=(4, 2))
         ttk.Label(f, text="ORDER: Capture FIRST -- it arms and waits --\n"
                           "then Start in the Sweep panel above. The laser has\n"
                           "its own worker, so it is not stuck behind the\n"
                           "waiting capture.",
-                  foreground="#144", justify="left").grid(
+                  foreground="#144", justify="left", wraplength=300).grid(
             row=5, column=0, columnspan=3, sticky="w", pady=(0, 4))
         b = ttk.Frame(f)
         b.grid(row=6, column=0, columnspan=3, sticky="w")
@@ -1093,11 +1105,11 @@ class Bench:
         ttk.Label(f, text="Runs on the capture in the workspace, so the\n"
                           "same record can be examined at f1 and 2*f1\n"
                           "without touching hardware.",
-                  foreground="#666", justify="left").grid(
+                  foreground="#666", justify="left", wraplength=300).grid(
             row=2, column=0, columnspan=3, sticky="w", pady=(4, 4))
         h = ttk.Frame(f)
         h.grid(row=3, column=0, columnspan=3, sticky="w")
-        ttk.Label(h, text="from ACTUAL mod:").pack(side="left")
+        ttk.Label(h, text="from generated:").pack(side="left")
         ttk.Button(h, text="f1", width=4,
                    command=lambda: self.fref_from_drive(1)).pack(side="left",
                                                                   padx=2)
@@ -1110,7 +1122,7 @@ class Bench:
                           "tens of hertz out, because the ASG SNAPS the drive\n"
                           "to its grid. The lock-in then beats at the offset\n"
                           "and the trace comes out as a sine wave.",
-                  foreground="#a04000", justify="left").grid(
+                  foreground="#a04000", justify="left", wraplength=300).grid(
             row=4, column=0, columnspan=3, sticky="w", pady=(4, 4))
         ttk.Button(f, text="Demodulate capture",
                    command=self.demod_run).grid(row=5, column=0, columnspan=3,
@@ -1127,15 +1139,14 @@ class Bench:
         onto a common phase, is a clean sine wave across the trace. It looks
         like a measurement. It is a typo.
         """
-        from rp_lockin.waveforms import make_am_table
         try:
             cfg = self._drive_cfg()
         except ValueError as e:
             return messagebox.showerror("Drive", f"Not a number: {e}")
-        table = make_am_table(cfg["carrier"], cfg["modulation"])
+        table, _mode = self._resolve(cfg["carrier"], cfg["modulation"])
         f = harmonic * table.modulation
         self.v_fref.set(f"{f / 1e3:.6f}")
-        self.log(f"f_ref = {harmonic} x the ACTUAL drive "
+        self.log(f"f_ref = {harmonic} x the generated drive "
                  f"({table.modulation:.4f} Hz) = {f:.4f} Hz")
 
     def _warn_if_beating(self, r):
@@ -1196,7 +1207,7 @@ class Bench:
         ttk.Label(f, text="capture + laser log -> amplitude vs wavelength.\n"
                           "Goes through reduce_sweep, the offline-tested\n"
                           "join, rather than reusing the panel above.",
-                  foreground="#666", justify="left").grid(
+                  foreground="#666", justify="left", wraplength=300).grid(
             row=0, column=0, sticky="w", pady=(0, 4))
         ttk.Button(f, text="Map", command=self.map_run).grid(row=1, column=0,
                                                              sticky="w")
@@ -1278,7 +1289,7 @@ class Bench:
         f = self._panel(parent, "Sequences")
         ttk.Label(f, text="The same functions the buttons call, in order.\n"
                           "There is no second implementation to drift.",
-                  foreground="#666", justify="left").grid(
+                  foreground="#666", justify="left", wraplength=300).grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
         self.v_seq = tk.StringVar(value="linear sweep")
         ttk.Combobox(f, textvariable=self.v_seq, width=26, state="readonly",

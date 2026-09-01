@@ -741,70 +741,69 @@ def test_a_cancelled_capture_reads_differently_from_a_failed_one(app):
     assert "Arm FIRST" not in joined, "a deliberate stop is not a fault"
 
 
-# --------------------------------------------- the want / ACTUAL modulation
-# Two boxes: the wish, and what the hardware will really play. Everything
-# downstream follows the second, because it is the only one that exists.
+# ------------------------------------------ the modulation / generated pair
+# Two boxes: what you ask for, and what the hardware will produce. Everything
+# downstream follows the second.
+#
+# These five used to assert that 1.000 MHz was unreachable and would snap to
+# 1007.080. That was wrong, and the tests were encoding the mistake: the
+# fs/16384 "grid" is only what you get by leaving the PLAY RATE at its default.
+# SOUR:FREQ:FIX sets that rate, so 80.000000 MHz with 1.000000 MHz is available
+# at 5280 and 66 cycles played at 15151.5152 Hz.
 
 
-def test_typing_a_wish_fills_in_the_grid_point(app):
+def test_exactly_one_megahertz_is_reachable(app):
+    """The case that started this. 15258.789 Hz does not divide 1 MHz, but the
+    play rate is not obliged to be 15258.789 Hz."""
     app.v_carrier.set("80.0")
     app.v_mod.set("1000")
-    assert float(app.v_real.get()) == pytest.approx(1007.080078, abs=1e-4)
+    assert float(app.v_real.get()) == pytest.approx(1000.0, abs=1e-6)
 
 
-def test_actual_settles_onto_the_grid_and_never_lies(app):
-    """A field called ACTUAL that sits showing 1000.0000 while the ASG plays
-    1007.0801 is worse than no field at all."""
-    app.v_carrier.set("80.0")
-    app.v_real.set("1000")
-    app._settle_actual()
-    assert float(app.v_real.get()) == pytest.approx(1007.080078, abs=1e-4)
+def test_the_exact_table_gets_the_carrier_right_too(app):
+    """Both frequencies are integer multiples of the SAME play rate, so
+    hitting one exactly is only useful if the other lands as well."""
+    from rp_lockin.waveforms import make_am_table_exact
+    t = make_am_table_exact(80e6, 1e6)
+    assert t.carrier == pytest.approx(80e6, abs=1e-3)
+    assert t.modulation == pytest.approx(1e6, abs=1e-6)
+    assert t.carrier_cycles == 5280 and t.mod_cycles == 66
+    assert t.play_freq == pytest.approx(1e6 / 66, rel=1e-12)
 
 
-def test_settling_says_so_when_the_wish_was_unreachable(app):
+def test_the_play_rate_never_exceeds_one_entry_per_clock(app):
+    """Above fs/16384 the table would have to advance more than one entry per
+    DAC clock, which it cannot."""
+    from rp_lockin.waveforms import make_am_table_exact
+    for mod in (1e6, 1.5e6, 2e6):
+        t = make_am_table_exact(80e6, mod)
+        assert t.play_freq * 16384 <= 250e6 + 1.0
+
+
+def test_an_unreachable_pair_falls_back_to_the_grid_and_says_so(app):
+    """915.5273 kHz against an 80 MHz carrier has no integer pair that fits, so
+    the default grid is the honest answer."""
     lines = []
     app.log = lambda m: lines.append(m)
     app.v_carrier.set("80.0")
-    app.v_real.set("1000")
+    app.v_real.set("915.5273")
     app._settle_actual()
-    joined = " ".join(lines)
-    assert "not on the ASG grid" in joined
-    assert "1007.0801" in joined
+    assert float(app.v_real.get()) == pytest.approx(915.527344, abs=1e-4)
 
-
-def test_an_exact_grid_point_is_left_alone(app):
-    """976.5625 kHz is 64 grid steps exactly, so nothing should move."""
-    app.v_carrier.set("80.0")
-    app.v_real.set("976.5625")
+    app.v_real.set("915.4")
     app._settle_actual()
-    assert float(app.v_real.get()) == pytest.approx(976.5625, abs=1e-4)
+    assert float(app.v_real.get()) == pytest.approx(915.527344, abs=1e-4)
+    assert any("cannot be generated exactly" in m for m in lines), lines
 
 
-def test_the_drive_uses_ACTUAL_not_the_wish(app):
-    app.v_carrier.set("80.0")
-    app.v_mod.set("1000")            # ACTUAL becomes 1007.080078
-    cfg = app._drive_cfg()
-    assert cfg["modulation"] == pytest.approx(1007080.078, abs=1.0)
-
-
-def test_the_f1_button_follows_ACTUAL(app):
-    """If f_ref did not track what is really played, the lock-in would beat at
-    the difference -- which is exactly the sine wave that started all this."""
-    app.v_carrier.set("80.0")
-    app.v_real.set("976.5625")
-    app._settle_actual()
-    app.fref_from_drive(1)
-    assert float(app.v_fref.get()) == pytest.approx(976.5625, abs=1e-3)
-    app.fref_from_drive(2)
-    assert float(app.v_fref.get()) == pytest.approx(2 * 976.5625, abs=1e-3)
-
-
-def test_f1_ignores_an_unreachable_wish(app):
-    """Ask for 1000, get 1007.080 in the drive AND in f_ref -- consistent, so
-    no beat. f_ref matching the wish rather than the hardware is the bug."""
+def test_the_drive_and_f1_both_follow_the_generated_value(app):
+    """If f_ref tracked the request rather than the output, asking for
+    something unreachable would drive at one frequency and demodulate at
+    another, and the difference would come back as a beat."""
     app.v_carrier.set("80.0")
     app.v_mod.set("1000")
+    assert app._drive_cfg()["modulation"] == pytest.approx(1e6, abs=1.0)
     app.fref_from_drive(1)
-    assert float(app.v_fref.get()) == pytest.approx(1007.080078, abs=1e-3)
-    assert abs(float(app.v_fref.get()) - 1000.0) > 5.0
-
+    assert float(app.v_fref.get()) == pytest.approx(1000.0, abs=1e-3)
+    app.fref_from_drive(2)
+    assert float(app.v_fref.get()) == pytest.approx(2000.0, abs=1e-3)

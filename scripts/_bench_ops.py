@@ -63,7 +63,8 @@ def front_end(rp, in1_coupling="AC", in1_gain="LV",
             "decimation": decimation}
 
 
-def drive_on(rp, carrier, modulation, amplitude, depth=1.0, channel=1):
+def drive_on(rp, carrier, modulation, amplitude, depth=1.0, channel=1,
+             exact=True):
     """Enable an AM output. Returns the table, whose frequencies are SNAPPED.
 
     Both frequencies land on the fs/16384 grid because that is the only way the
@@ -72,7 +73,7 @@ def drive_on(rp, carrier, modulation, amplitude, depth=1.0, channel=1):
     """
     return rp.setup_am_generator(carrier=carrier, modulation=modulation,
                                  amplitude=amplitude, depth=depth,
-                                 channel=channel)
+                                 channel=channel, exact=exact)
 
 
 def drive_off(rp):
