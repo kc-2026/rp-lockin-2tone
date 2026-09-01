@@ -448,7 +448,8 @@ def restore_sweep(laser, before):
     return failed
 
 
-def park_at_sweep_start(laser, tolerance=1e-12, timeout=60.0):
+def park_at_sweep_start(laser, tolerance=1e-12, timeout=60.0,
+                        poll=0.2):
     """Put the laser AT the sweep's start wavelength before it is told to go.
 
     `:WAV:SWE 1` from the wrong wavelength neither refuses nor waits -- it
@@ -470,14 +471,36 @@ def park_at_sweep_start(laser, tolerance=1e-12, timeout=60.0):
     if abs(now - start) <= tolerance:
         return {"moved": False, "start_m": start, "from_m": now,
                 "arrived_m": now, "waited_s": 0.0}
+    # METRES, and checked. In the Legacy command set these queries answer in
+    # NANOMETRES, and ":WAV 1500" would command the laser 10^9 out. A range
+    # check is the only thing standing between a unit slip and that.
+    if not 1.0e-6 <= start <= 2.0e-6:
+        raise ValueError(
+            f"the sweep start reads {start!r}, which is not a C-band value in "
+            f"METRES (~1.55e-6). The laser is probably in the Legacy command "
+            f"set, where these queries answer in nanometres. Refusing to "
+            f"command a wavelength from a number that may be 10^9 out.")
     t0 = time.time()
-    # set_wavelength_m polls the read-back until it matches AND has stopped
-    # changing, and raises if it never converges -- so a laser that will not
-    # go there fails here rather than sweeping the wrong range.
-    arrived = laser.set_wavelength_m(start, tolerance=tolerance,
-                                     timeout=timeout)
-    return {"moved": True, "start_m": start, "from_m": now,
-            "arrived_m": arrived, "waited_s": time.time() - t0}
+    laser.write(f":WAV {start:.12E}")
+    # Settling is decided by MEASUREMENT, not a timer: no busy flag is
+    # documented for the 775, so poll until the read-back both matches the
+    # target and has stopped moving. Two consecutive on-target readings, so a
+    # value caught in passing on the way through does not count as arrival.
+    last = None
+    while time.time() - t0 < timeout:
+        time.sleep(poll)
+        at = float(laser.query(":WAV?"))
+        if (abs(at - start) <= tolerance and last is not None
+                and abs(at - last) <= tolerance):
+            return {"moved": True, "start_m": start, "from_m": now,
+                    "arrived_m": at, "waited_s": time.time() - t0}
+        last = at
+    raise RuntimeError(
+        f"the laser did not reach the sweep start {start * 1e9:.4f} nm within "
+        f"{timeout:g} s (it reads {last if last is None else last * 1e9:.4f} "
+        f"nm). Refusing to sweep: starting from the wrong wavelength covers a "
+        f"SHORT range at the right speed, which comes back looking like a "
+        f"normal trace.")
 
 
 def start_sweep(laser, park=True):

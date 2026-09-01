@@ -1203,27 +1203,59 @@ def test_all_seven_settings_are_verified_not_just_the_trigger():
 
 
 class _ParkLaser:
-    """A laser that remembers where it is and records the order of events."""
+    """A laser that moves when told, over several polls, recording the order.
 
-    def __init__(self, at_m=1.6e-6, start_m=1.5e-6):
+    write/query ONLY, because that is all `tsl775.TSL775` has. The first
+    version of this fake had a `set_wavelength_m` taken from the OTHER driver
+    (`rp_lockin.santec.SantecTSL`); the tests passed and the bench threw
+    AttributeError on the first press of Start. A fake richer than the
+    instrument tests nothing -- see
+    test_the_fakes_offer_no_more_than_the_real_driver.
+    """
+
+    def __init__(self, at_m=1.6e-6, start_m=1.5e-6, polls_to_arrive=2):
         self.at = at_m
         self.start = start_m
+        self.polls_to_arrive = polls_to_arrive
+        self.target = None
         self.events = []
 
     def query(self, cmd):
         if cmd == ":WAV:SWE:STAR?":
             return f"{self.start:.9E}"
-        if cmd in (":WAV?", ":WAVelength?"):
+        if cmd == ":WAV?":
+            # Creep towards the target so the settle loop is really exercised:
+            # arriving on the first poll would not test "has stopped moving".
+            if self.target is not None:
+                if self.polls_to_arrive > 0:
+                    self.polls_to_arrive -= 1
+                    self.at = (self.at + self.target) / 2.0
+                else:
+                    self.at = self.target
             return f"{self.at:.9E}"
         return "+0"
 
     def write(self, cmd):
         self.events.append(cmd)
+        if cmd.startswith(":WAV ") and not cmd.startswith(":WAV:"):
+            self.target = float(cmd.split(None, 1)[1])
 
-    def set_wavelength_m(self, wavelength, tolerance=1e-12, timeout=30.0):
-        self.events.append(f"GOTO {wavelength:.9E}")
-        self.at = wavelength
-        return wavelength
+
+def test_the_fakes_offer_no_more_than_the_real_driver():
+    """The park bug shipped because the fake had a method TSL775 does not.
+
+    The bench's laser is `tsl775.TSL775`, which exposes write/query and no
+    setters. `rp_lockin.santec.SantecTSL` has a much richer surface, and
+    writing ops against THAT while testing against a fake modelled on it
+    produces a suite that is green and a bench that raises AttributeError.
+    """
+    from tsl775 import TSL775
+    real = {n for n in dir(TSL775) if not n.startswith("_")}
+    for fake in (_ParkLaser, _FakeLaser):
+        offered = {n for n in vars(fake) if not n.startswith("_")}
+        extra = offered - real
+        assert not extra, (f"{fake.__name__} offers {sorted(extra)}, which "
+                           f"TSL775 does not have")
 
 
 def test_the_real_bench_numbers_read_as_a_short_range():
@@ -1266,11 +1298,11 @@ def test_parking_does_nothing_when_the_laser_is_already_there():
 def test_parking_moves_the_laser_to_the_start_and_waits():
     import _bench_ops as ops
     d = _ParkLaser(at_m=1.6e-6, start_m=1.5e-6)
-    p = ops.park_at_sweep_start(d)
+    p = ops.park_at_sweep_start(d, poll=0.01)
     assert p["moved"] is True
     assert p["from_m"] == pytest.approx(1.6e-6)
     assert p["arrived_m"] == pytest.approx(1.5e-6)
-    assert len(d.events) == 1 and d.events[0].startswith("GOTO")
+    assert len(d.events) == 1 and d.events[0].startswith(":WAV ")
     assert float(d.events[0].split()[1]) == pytest.approx(1.5e-6)
 
 
@@ -1279,7 +1311,7 @@ def test_the_start_wavelength_comes_from_the_instrument_not_the_panel():
     park at one wavelength and sweep from another."""
     import _bench_ops as ops
     d = _ParkLaser(at_m=1.6e-6, start_m=1.52e-6)
-    p = ops.park_at_sweep_start(d)
+    p = ops.park_at_sweep_start(d, poll=0.01)
     assert p["start_m"] == pytest.approx(1.52e-6)
 
 
@@ -1290,7 +1322,7 @@ def test_the_sweep_is_not_started_until_the_laser_is_parked():
     d = _ParkLaser(at_m=1.6e-6, start_m=1.5e-6)
     ops.start_sweep(d)
     assert ":WAV:SWE 1" in d.events
-    goto = next(i for i, e in enumerate(d.events) if e.startswith("GOTO"))
+    goto = next(i for i, e in enumerate(d.events) if e.startswith(":WAV "))
     assert goto < d.events.index(":WAV:SWE 1")
 
 
@@ -1300,11 +1332,14 @@ def test_a_laser_that_will_not_reach_the_start_fails_rather_than_sweeping():
     import _bench_ops as ops
 
     class Stuck(_ParkLaser):
-        def set_wavelength_m(self, wavelength, tolerance=1e-12, timeout=30.0):
-            raise RuntimeError("never got there")
+        def query(self, cmd):
+            if cmd == ":WAV?":
+                return f"{self.at:.9E}"      # never moves, whatever it is told
+            return super().query(cmd)
 
     d = Stuck(at_m=1.6e-6, start_m=1.5e-6)
-    with pytest.raises(RuntimeError):
-        ops.start_sweep(d)
+    with pytest.raises(RuntimeError) as e:
+        ops.park_at_sweep_start(d, timeout=0.4, poll=0.05)
+    assert "did not reach the sweep start" in str(e.value)
     assert ":WAV:SWE 1" not in d.events
 
