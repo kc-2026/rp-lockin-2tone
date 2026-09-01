@@ -13,7 +13,7 @@ relevant doc and note it in `SESSION_LOG.md`.
 dead, the instrument runs end to end, and real optical sweeps exist. What is
 open is either physics waiting on hardware that has not arrived, or a mechanism
 that is understood well enough to work around but not well enough to explain.
-The full brief is `08-phase2-hardware.md`; the current state is the HANDOFF
+The full brief is `08-the-bench.md`; the current state is the HANDOFF
 block at the top of `SESSION_LOG.md`.
 
 | # | Question | Blocks |

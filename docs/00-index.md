@@ -11,12 +11,16 @@ date describing a single laser is stale — say so if you find some.
 
 ## Status, in one line
 
-**Phases 0 and 1 are complete. Phase 2 is under way: the instrument works end to
-end against real hardware and has produced real optical sweeps.** 339 offline
-tests pass. **No blockers.** What Phase 2 has left is physics rather than
-instrumentation — there is no crystal yet, and the second beam path is not
-wired. The fastest way to learn the current state is the HANDOFF block at the
-top of `SESSION_LOG.md`.
+**The instrument is finished and works end to end against real hardware; what
+is left is physics.** Real optical amplitude-against-wavelength sweeps exist,
+driven from `scripts/bench.py`. **No blockers.** Next up is SHG, which needs a
+crystal and the silicon detector; then SFG, which needs the second beam path
+wired; then the stepping laser for the second axis. The fastest way to learn
+the current state is the HANDOFF block at the top of `SESSION_LOG.md`.
+
+*The old Phase 0–3 framing still describes the history accurately, and the
+P1–P6 / U1–U12 planning structure is retired — see the appendix to
+`08-the-bench.md`.*
 
 ## What each document is for
 
@@ -29,8 +33,8 @@ top of `SESSION_LOG.md`.
 | **05-results.md** | Every number this project has measured | You need a figure — noise floor, timing, rejection, repeatability |
 | **06-phase0-offline.md** | What was built with no hardware, and the test suite | Understanding what is already proved offline |
 | **07-phase1-loopback.md** | The loopback campaign, H1–H7, complete | Checking what was tested, how, and what it found |
-| **08-phase2-hardware.md** | What is connected, the U1–U12 risks and their current status, P1–P6 | Working on the bench |
-| **09-phase2-plan.md** | The decisions taken, and where execution stands | Deciding what to do next |
+| **08-the-bench.md** | What is connected, **how a measurement is actually made**, and the traps in the order they bite | Driving the bench, or picking up after a break |
+| **09-whats-next.md** | The remaining work in order — SHG, then SFG, then the second axis — with the decisions already taken | Deciding what to do next |
 | **10-open-questions.md** | What is undecided, what was decided, and who decided it | Something looks unresolved |
 | **11-pipeline.md** | The deliverable path end to end, and where its time axis comes from | Before touching `pipeline.py`, or before trusting a wavelength |
 
@@ -49,8 +53,9 @@ Also at the repository root:
 |---|---|
 | How to drive any of this by hand | **`scripts/bench.py`** — the working bench. `bench_gui.py` is the older tabbed one, kept because it has a Simulate path needing no hardware |
 | How a capture becomes a wavelength trace | `11-pipeline.md`, then `src/rp_lockin/pipeline.py` |
-| What is connected right now, and what is not | `08-phase2-hardware.md` section 1 |
-| What to do next on the bench | `09-phase2-plan.md`, "the order to work in" |
+| What is connected right now, and what is not | `08-the-bench.md` section 1 |
+| How to run a sweep, step by step | `08-the-bench.md` section 2 |
+| What to do next, and how to set up SHG | `09-whats-next.md` |
 | How small a signal we can measure | `05-results.md` — sigma = 3.57 uV at the ADC, ~11 uV from the detector, so ~120 uV for SNR 10 |
 | Why the drive frequencies are not round numbers | `03-frequency-plan.md` — the switching supply at 504.868 kHz and its harmonics |
 | Why a plan with fewer modulation cycles is better | `03-frequency-plan.md` — `mod_cycles` multiplies the generator's frequency error |

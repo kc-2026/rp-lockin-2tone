@@ -16,7 +16,7 @@ decided it did not matter" are very different things to inherit:
 - **H7.4 failed, then was fixed** — outputs used to stay on after a crash.
 
 The numbers produced here are collected in `05-results.md`. What Phase 1 could
-**not** reach is in `08-phase2-hardware.md`.
+**not** reach is in `08-the-bench.md`.
 
 ---
 

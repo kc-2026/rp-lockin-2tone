@@ -200,5 +200,5 @@ HV — which made P2 impossible to run as specified, and would have presented as
   shortened. See `planning.recommended_tail()`.
 - No averaging across sweeps yet. Straightforward to add if wanted (Q13).
 - **The largest single risk is now the Santec serial link**, which does not
-  exist yet and cannot be written from memory. See `08-phase2-hardware.md`. It is
+  exist yet and cannot be written from memory. See `08-the-bench.md`. It is
   the one subsystem whose silent failure is invisible in the output.

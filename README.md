@@ -117,7 +117,7 @@ docs/
   05-results.md            every number this project has measured
   06-phase0-offline.md     offline development — COMPLETE
   07-phase1-loopback.md    the loopback campaign, H1–H7 — COMPLETE
-  08-phase2-hardware.md    what Phase 2 needs; risks U1–U12; steps P1–P6
+  08-the-bench.md    what Phase 2 needs; risks U1–U12; steps P1–P6
   10-open-questions.md     what is undecided, and what was decided
   11-pipeline.md           the deliverable path, and where its time axis comes from
 src/rp_lockin/     the package

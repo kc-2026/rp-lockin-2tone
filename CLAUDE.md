@@ -103,10 +103,10 @@ Loopback phase only, for now. Within that:
 - **Leave outputs off when you finish.** `tests/hardware/conftest.py` does this
   automatically; preserve that behaviour.
 - **The Phase 2 planning gate is DISCHARGED as of 2026-08-28** -- its answers
-  are in `docs/09-phase2-plan.md`. **P1 and P2 are done; P3-P6 are not, and no
+  are in `docs/09-whats-next.md`. **P1 and P2 are done; P3-P6 are not, and no
   RF has ever left this board.** Follow the P-series order and its gates.
 - One item remains open: **nothing runs unattended** until Kevin says otherwise.
-  **Phase 1 is complete; what Phase 2 needs is in `docs/08-phase2-hardware.md`.**
+  **Phase 1 is complete; what Phase 2 needs is in `docs/08-the-bench.md`.**
   Do not start it unilaterally.
 - **Do not "fix" the RF drive level.** Kevin tuned it by maximising the
   diffracted light with an unmodulated carrier, and that is correct here:
@@ -308,8 +308,8 @@ traces exist.
   SHG gets separated from the AOM's own second harmonic (Q30), because silicon
   cannot see 1550 at all.
 
-Details in `docs/08-phase2-hardware.md` (what is connected) and
-`docs/09-phase2-plan.md` (what to do next).
+Details in `docs/08-the-bench.md` (what is connected) and
+`docs/09-whats-next.md` (what to do next).
 
 ### Numbers not to re-derive or guess at
 

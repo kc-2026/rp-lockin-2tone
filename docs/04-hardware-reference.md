@@ -421,7 +421,7 @@ Open questions to settle in H1/H2:
 Recorded 2026-08-14 from the **TSL-775 operation manual v1.0** (supplied by
 Kevin) and the **TSL-770 operation manual** (santec.com). Nothing here is from
 memory. Neither laser has been connected yet, so none of it is verified on the
-bench — that is P1 in `08-phase2-hardware.md`.
+bench — that is P1 in `08-the-bench.md`.
 
 ### Communication
 
@@ -590,7 +590,7 @@ deliberately at P1 rather than inheriting whatever the laser is set to.
 
 Recorded 2026-08-14 from the Thorlabs manual (Rev B, 3 January 2018) supplied by
 Kevin. Not connected yet, so nothing below is verified on the bench — that is P4
-in `08-phase2-hardware.md`.
+in `08-the-bench.md`.
 
 | | |
 |---|---|

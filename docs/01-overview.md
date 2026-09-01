@@ -193,8 +193,8 @@ the laser trigger. The planning gate was **discharged 2026-08-28**.
 ***UNDER WAY.*** The instrument runs end to end and real optical sweeps exist;
 what is left is physics waiting on hardware — there is no crystal yet, the
 second beam path is not wired, and the stepping laser has never been contacted.
-What is connected is in `08-phase2-hardware.md`; what to do next is in
-`09-phase2-plan.md`.
+What is connected is in `08-the-bench.md`; what to do next is in
+`09-whats-next.md`.
 
 **Phase 3 — usability.** A GUI or equivalent, if wanted. Deferred.
 

@@ -60,8 +60,8 @@ Simulate path. Both go through `scripts/_bench_ops.py`.
 | Want | Go to |
 |---|---|
 | What each doc is for | `docs/00-index.md` |
-| What is connected, and what is not | `docs/08-phase2-hardware.md` section 1 |
-| What to do next | `docs/09-phase2-plan.md` |
+| What is connected, and what is not | `docs/08-the-bench.md` section 1 |
+| What to do next | `docs/09-whats-next.md` |
 | The deliverable path, in code | `src/rp_lockin/pipeline.py` |
 | Any measured number | `docs/05-results.md` |
 | Board and instrument traps | `docs/04-hardware-reference.md` |
@@ -3971,8 +3971,23 @@ output and a way to demodulate the product.
   32-bit DDS accumulator predicts 0.018 Hz where 0.69 Hz was observed. The
   bench reads nothing back from the ASG — `SOUR1:FREQ:FIX?` would settle it.
 
+**Also:** `docs/08-phase2-hardware.md` and `docs/09-phase2-plan.md` were
+renamed to `08-the-bench.md` and `09-whats-next.md` and restructured. The
+P1-P6 / U1-U12 framing was an order-of-connection plan for a bench where
+nothing was plugged in; that job is done and the structure had started
+describing a workflow nobody follows. 08 is now what is connected, how a
+measurement is actually made, and the traps in the order they bite; 09 is the
+remaining work in order, starting with a ready-to-run SHG procedure. The P/U
+material survives as an appendix to 08, because the P5.1-before-P5.2 control
+ordering is still right. References were repointed everywhere except inside
+older log entries, which keep the names they were written with.
+
 **Next:**
 
+* SHG. The procedure is written up in `docs/09-whats-next.md`: silicon
+  detector, demodulate at f1 rather than 2*f1 (12 dB more signal, and the
+  fundamental is invisible to silicon anyway), 10 dB of gain, and the power-
+  scaling control that separates P^1 background from P^2 signal.
 * The crystal. Until it exists this is a transmission measurement.
 * Wire the second amplifier and AOM; then P5.1 before P5.2.
 * Read `SOUR1:FREQ:FIX?` back and measure the phase slope of a long loopback
