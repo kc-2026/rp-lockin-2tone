@@ -740,3 +740,71 @@ def test_a_cancelled_capture_reads_differently_from_a_failed_one(app):
     assert "cancelled" in joined
     assert "Arm FIRST" not in joined, "a deliberate stop is not a fault"
 
+
+# --------------------------------------------- the want / ACTUAL modulation
+# Two boxes: the wish, and what the hardware will really play. Everything
+# downstream follows the second, because it is the only one that exists.
+
+
+def test_typing_a_wish_fills_in_the_grid_point(app):
+    app.v_carrier.set("80.0")
+    app.v_mod.set("1000")
+    assert float(app.v_real.get()) == pytest.approx(1007.080078, abs=1e-4)
+
+
+def test_actual_settles_onto_the_grid_and_never_lies(app):
+    """A field called ACTUAL that sits showing 1000.0000 while the ASG plays
+    1007.0801 is worse than no field at all."""
+    app.v_carrier.set("80.0")
+    app.v_real.set("1000")
+    app._settle_actual()
+    assert float(app.v_real.get()) == pytest.approx(1007.080078, abs=1e-4)
+
+
+def test_settling_says_so_when_the_wish_was_unreachable(app):
+    lines = []
+    app.log = lambda m: lines.append(m)
+    app.v_carrier.set("80.0")
+    app.v_real.set("1000")
+    app._settle_actual()
+    joined = " ".join(lines)
+    assert "not on the ASG grid" in joined
+    assert "1007.0801" in joined
+
+
+def test_an_exact_grid_point_is_left_alone(app):
+    """976.5625 kHz is 64 grid steps exactly, so nothing should move."""
+    app.v_carrier.set("80.0")
+    app.v_real.set("976.5625")
+    app._settle_actual()
+    assert float(app.v_real.get()) == pytest.approx(976.5625, abs=1e-4)
+
+
+def test_the_drive_uses_ACTUAL_not_the_wish(app):
+    app.v_carrier.set("80.0")
+    app.v_mod.set("1000")            # ACTUAL becomes 1007.080078
+    cfg = app._drive_cfg()
+    assert cfg["modulation"] == pytest.approx(1007080.078, abs=1.0)
+
+
+def test_the_f1_button_follows_ACTUAL(app):
+    """If f_ref did not track what is really played, the lock-in would beat at
+    the difference -- which is exactly the sine wave that started all this."""
+    app.v_carrier.set("80.0")
+    app.v_real.set("976.5625")
+    app._settle_actual()
+    app.fref_from_drive(1)
+    assert float(app.v_fref.get()) == pytest.approx(976.5625, abs=1e-3)
+    app.fref_from_drive(2)
+    assert float(app.v_fref.get()) == pytest.approx(2 * 976.5625, abs=1e-3)
+
+
+def test_f1_ignores_an_unreachable_wish(app):
+    """Ask for 1000, get 1007.080 in the drive AND in f_ref -- consistent, so
+    no beat. f_ref matching the wish rather than the hardware is the bug."""
+    app.v_carrier.set("80.0")
+    app.v_mod.set("1000")
+    app.fref_from_drive(1)
+    assert float(app.v_fref.get()) == pytest.approx(1007.080078, abs=1e-3)
+    assert abs(float(app.v_fref.get()) - 1000.0) > 5.0
+

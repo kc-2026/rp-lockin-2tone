@@ -504,49 +504,126 @@ class Bench:
         f = self._panel(parent, "Drive (OUT1)")
         self.v_carrier = tk.StringVar(value="80.0")
         self.v_mod = tk.StringVar(value=f"{DEFAULT_MOD_HZ / 1e3:.4f}")
+        self.v_real = tk.StringVar(value=f"{DEFAULT_MOD_HZ / 1e3:.6f}")
         self.v_amp = tk.StringVar(value="1.0")
         fld(f, 0, "carrier", self.v_carrier, "MHz")
-        fld(f, 1, "modulation", self.v_mod, "kHz")
-        fld(f, 2, "amplitude", self.v_amp, "V")
-        # What the ASG will ACTUALLY play. Both frequencies are snapped to the
-        # 15258.789 Hz grid, and the difference is what made a hand-typed
-        # second harmonic 54.7 Hz wrong.
+        fld(f, 1, "want mod", self.v_mod, "kHz")
+        # ACTUAL: what the ASG will really play, and editable. Type a wish in
+        # the box above and this fills in; type here and it locks to the
+        # nearest grid point directly, which is how you dial a specific one in
+        # without doing the arithmetic. Everything downstream -- Drive ON, the
+        # f1 button, the sequences -- uses THIS value, because it is the only
+        # one that exists in the hardware.
+        e_real = fld(f, 2, "ACTUAL mod", self.v_real, "kHz", width=14)
+        # Settles onto the grid when you leave the box or press Return, not on
+        # every keystroke -- correcting mid-type would fight you. Deferring it
+        # is what keeps the box honest: a field called ACTUAL that could sit
+        # showing 1000.0000 while the ASG plays 1007.0801 is worse than no
+        # field at all.
+        e_real.bind("<FocusOut>", lambda _e: self._settle_actual())
+        e_real.bind("<Return>", lambda _e: self._settle_actual())
+        fld(f, 3, "amplitude", self.v_amp, "V")
         self.v_snap = tk.StringVar(value="")
         ttk.Label(f, textvariable=self.v_snap, foreground="#144",
-                  justify="left").grid(row=3, column=0, columnspan=3,
+                  justify="left").grid(row=4, column=0, columnspan=3,
                                        sticky="w", pady=(2, 2))
-        for v in (self.v_carrier, self.v_mod):
-            v.trace_add("write", lambda *_a: self._update_snap())
-        self._update_snap()
-        ttk.Label(f, text="915.527 kHz = 60 grid steps, 94 kHz clear of\n"
-                          "the 504.868 kHz switcher family. Avoid 1007.080.",
+        self._snapping = False
+        self.v_carrier.trace_add("write", lambda *_a: self._update_snap())
+        self.v_mod.trace_add("write", lambda *_a: self._mod_wanted())
+        self.v_real.trace_add("write", lambda *_a: self._mod_actual())
+        self._mod_wanted()
+        ttk.Label(f, text="The ASG can ONLY play multiples of 15258.789 Hz --\n"
+                          "off-grid glitches at every table wrap. 1.000 MHz is\n"
+                          "not available; the nearest is 1007.080. f_ref in\n"
+                          "Demodulate is software and has no such limit.",
                   foreground="#666", justify="left").grid(
-            row=4, column=0, columnspan=3, sticky="w", pady=(2, 4))
+            row=5, column=0, columnspan=3, sticky="w", pady=(2, 4))
         b = ttk.Frame(f)
-        b.grid(row=5, column=0, columnspan=3, sticky="w")
+        b.grid(row=6, column=0, columnspan=3, sticky="w")
         ttk.Button(b, text="Drive ON", command=self.drive_on).pack(side="left")
         ttk.Button(b, text="Drive OFF",
                    command=self.all_off).pack(side="left", padx=4)
+
+    def _mod_wanted(self, *_a):
+        """Typed in `want mod`: fill ACTUAL with the grid point it lands on."""
+        if self._snapping:
+            return
+        from rp_lockin.waveforms import make_am_table
+        try:
+            carrier = float(self.v_carrier.get()) * 1e6
+            t = make_am_table(carrier, float(self.v_mod.get()) * 1e3)
+        except Exception:                            # noqa: BLE001
+            return self._update_snap()
+        self._snapping = True
+        try:
+            self.v_real.set(f"{t.modulation / 1e3:.6f}")
+        finally:
+            self._snapping = False
+        self._update_snap()
+
+    def _mod_actual(self, *_a):
+        """Typed in ACTUAL: just refresh the readout while typing."""
+        if self._snapping:
+            return
+        self._update_snap()
+
+    def _settle_actual(self):
+        """Move ACTUAL onto the nearest grid point, once editing is finished.
+
+        The ASG has a 16384-entry table that must contain whole cycles, so it
+        can ONLY play multiples of 15258.789 Hz. 1.000 MHz is not one of them;
+        the nearest is 1007.080. Asking for it anyway does not produce 1 MHz,
+        it produces a table that glitches at every wrap and scatters spurs
+        across the baseband -- which is where the trace lives.
+
+        So the box lands on what the hardware will really do, and says in the
+        log when that differs from what was asked for. f_ref in Demodulate has
+        no such constraint: that one is software and can be any number at all.
+        """
+        from rp_lockin.waveforms import make_am_table
+        try:
+            carrier = float(self.v_carrier.get()) * 1e6
+            asked = float(self.v_real.get()) * 1e3
+            t = make_am_table(carrier, asked)
+        except Exception:                            # noqa: BLE001
+            return
+        if abs(t.modulation - asked) > 0.5:
+            self.log(f"{asked / 1e3:.4f} kHz is not on the ASG grid; using "
+                     f"{t.modulation / 1e3:.4f} kHz ({t.mod_cycles} cycles of "
+                     f"{ops.ASG_GRID:.3f} Hz). The table must hold whole "
+                     f"cycles, so nothing can play the number you asked for.")
+        self._snapping = True
+        try:
+            self.v_real.set(f"{t.modulation / 1e3:.6f}")
+        finally:
+            self._snapping = False
+        self._update_snap()
 
     def _update_snap(self):
         """Show what the ASG will really play, beside what was typed."""
         from rp_lockin.waveforms import make_am_table
         try:
             carrier = float(self.v_carrier.get()) * 1e6
-            mod = float(self.v_mod.get()) * 1e3
-            t = make_am_table(carrier, mod)
-        except (ValueError, ZeroDivisionError, AssertionError):
-            return self.v_snap.set("")
+            asked = float(self.v_real.get()) * 1e3
+            t = make_am_table(carrier, asked)
         except Exception:                            # noqa: BLE001
             return self.v_snap.set("")
+        off = t.modulation - asked
+        note = ""
+        if abs(off) > 0.5:
+            note = (f"  <-- {asked / 1e3:.4f} is OFF-GRID, nearest is "
+                    f"{t.modulation / 1e3:.4f}")
         self.v_snap.set(
-            f"ACTUAL: carrier {t.carrier / 1e6:.6f} MHz ({t.carrier_cycles} "
-            f"cycles)\n            mod {t.modulation / 1e3:.4f} kHz "
-            f"({t.mod_cycles} cycles), 2x = {2 * t.modulation / 1e3:.4f} kHz")
+            f"plays: carrier {t.carrier / 1e6:.6f} MHz ({t.carrier_cycles} cyc)"
+            f"\n       mod {t.modulation / 1e3:.4f} kHz ({t.mod_cycles} cyc)"
+            f"{note}\n       2x = {2 * t.modulation / 1e3:.4f} kHz   "
+            f"3x = {3 * t.modulation / 1e3:.4f} kHz")
 
     def _drive_cfg(self):
+        # ACTUAL, not the wish. It is the only one that exists in hardware, and
+        # it is what the f1 button and the sequences must agree with.
         return dict(carrier=float(self.v_carrier.get()) * 1e6,
-                    modulation=float(self.v_mod.get()) * 1e3,
+                    modulation=float(self.v_real.get()) * 1e3,
                     amplitude=float(self.v_amp.get()))
 
     def drive_on(self):
@@ -1020,7 +1097,7 @@ class Bench:
             row=2, column=0, columnspan=3, sticky="w", pady=(4, 4))
         h = ttk.Frame(f)
         h.grid(row=3, column=0, columnspan=3, sticky="w")
-        ttk.Label(h, text="set from drive:").pack(side="left")
+        ttk.Label(h, text="from ACTUAL mod:").pack(side="left")
         ttk.Button(h, text="f1", width=4,
                    command=lambda: self.fref_from_drive(1)).pack(side="left",
                                                                   padx=2)
@@ -1058,7 +1135,7 @@ class Bench:
         table = make_am_table(cfg["carrier"], cfg["modulation"])
         f = harmonic * table.modulation
         self.v_fref.set(f"{f / 1e3:.6f}")
-        self.log(f"f_ref = {harmonic} x the SNAPPED drive "
+        self.log(f"f_ref = {harmonic} x the ACTUAL drive "
                  f"({table.modulation:.4f} Hz) = {f:.4f} Hz")
 
     def _warn_if_beating(self, r):
