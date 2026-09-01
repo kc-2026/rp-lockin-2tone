@@ -13,6 +13,7 @@ knows what a widget is, which is also what makes it testable.
 """
 from __future__ import annotations
 
+import math
 import threading
 import time
 
@@ -300,14 +301,63 @@ def set_ld(laser, on: bool):
     return laser.query(":POW:STAT?").strip().lstrip("+")
 
 
-SWEEP_KEYS = (("start", ":WAV:SWE:STAR"), ("stop", ":WAV:SWE:STOP"),
-              ("speed", ":WAV:SWE:SPE"), ("cycles", ":WAV:SWE:CYCL"),
-              ("mode", ":WAV:SWE:MOD"), ("trig", ":TRIG:OUTP"),
+# SPEED FIRST, deliberately. The usable start/stop range depends on the
+# speed, so writing a wavelength before the speed it belongs to can be
+# rejected. This tuple sets the order for BOTH configure and restore.
+SWEEP_KEYS = (("speed", ":WAV:SWE:SPE"), ("start", ":WAV:SWE:STAR"),
+              ("stop", ":WAV:SWE:STOP"), ("mode", ":WAV:SWE:MOD"),
+              ("cycles", ":WAV:SWE:CYCL"), ("trig", ":TRIG:OUTP"),
               ("trigstep", ":TRIG:OUTP:STEP"))
+
+# Wavelengths arrive as metres near 1.5e-6 and the trigger step as ~2e-11, so
+# the absolute floor has to be small; the relative term carries everything
+# else. Modes and counts are small integers and compare exactly under this.
+_SWEEP_RTOL, _SWEEP_ATOL = 1e-4, 1e-13
 
 
 def read_sweep_config(laser):
     return {k: laser.query(c + "?").strip() for k, c in SWEEP_KEYS}
+
+
+def wait_sweep_stopped(laser, timeout=15.0, poll=0.1):
+    """Poll until :WAV:SWE? reads 0, and say so if it never does.
+
+    This replaces a fixed 0.5 s sleep, which is what made the SECOND run of a
+    sweep fail while the first passed. From cold the laser stops instantly and
+    every later write lands; still busy from a previous sweep it does not, and
+    the settings written into that window are DISCARDED WITHOUT AN ERROR.
+    """
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if laser.query(":WAV:SWE?").strip().lstrip("+") == "0":
+            return time.time() - t0
+        time.sleep(poll)
+    raise RuntimeError(
+        f"the sweep did not stop within {timeout:g} s (:WAV:SWE? never read "
+        f"0). Configuring now would write settings the laser discards without "
+        f"an error -- which reads back later as a sweep in the wrong mode.")
+
+
+def check_sweep_config(want, got):
+    """Which requested settings did the laser NOT take? Returns a list.
+
+    Every value is compared numerically against the read-back. The laser
+    accepts a write it is not in a state to honour and says nothing, so a
+    write-only setter here is a silent wrong answer rather than a failure.
+    """
+    bad = []
+    for key, _cmd in SWEEP_KEYS:
+        if key not in want:
+            continue
+        try:
+            g = float(got[key])
+        except (KeyError, ValueError):
+            bad.append(f"{key}: unreadable ({got.get(key)!r})")
+            continue
+        w = float(want[key])
+        if not math.isclose(g, w, rel_tol=_SWEEP_RTOL, abs_tol=_SWEEP_ATOL):
+            bad.append(f"{key}: asked {w:g}, laser holds {g:g}")
+    return bad
 
 
 def configure_sweep(laser, start_nm, stop_nm, speed_nm_s, step_nm,
@@ -325,7 +375,7 @@ def configure_sweep(laser, start_nm, stop_nm, speed_nm_s, step_nm,
     laser.write(":POW:STAT 1")
     time.sleep(2.0)
     laser.write(":WAV:SWE 0")
-    time.sleep(0.5)
+    stopped_in = wait_sweep_stopped(laser)
     laser.write(f":WAV:SWE:SPE {speed_nm_s:g}")
     laser.write(f":WAV:SWE:STAR {start_nm * 1e-9:.9E}")
     laser.write(f":WAV:SWE:STOP {stop_nm * 1e-9:.9E}")
@@ -334,18 +384,41 @@ def configure_sweep(laser, start_nm, stop_nm, speed_nm_s, step_nm,
     laser.write(":TRIG:OUTP 3")
     laser.write(f":TRIG:OUTP:STEP {step_nm * 1e-9:.9E}")
     got = read_sweep_config(laser)
-    if got["trig"].strip().lstrip("+") != "3":
-        raise RuntimeError(":TRIG:OUTP is not 3, so there would be no trigger "
-                           "train and an empty log")
-    return {"before": before, "after": got}
+    want = {"speed": speed_nm_s, "start": start_nm * 1e-9,
+            "stop": stop_nm * 1e-9, "mode": int(mode), "cycles": int(cycles),
+            "trig": 3, "trigstep": step_nm * 1e-9}
+    bad = check_sweep_config(want, got)
+    if bad:
+        # EVERY setting, not just :TRIG:OUTP. Checking one of seven is how a
+        # sweep silently reverted to step mode between the first run and the
+        # second: nothing read the mode back, so nothing noticed.
+        raise RuntimeError(
+            "the laser did not take these sweep settings:\\n  "
+            + "\\n  ".join(bad)
+            + "\\nIt accepts a write it cannot honour and reports no error. "
+              "Stop the sweep, wait for :WAV:SWE? to read 0, and configure "
+              "again.")
+    return {"before": before, "after": got, "stopped_in": stopped_in}
 
 
 def restore_sweep(laser, before):
+    """Put back what was there. Returns whatever would not go back.
+
+    Runs in a `finally`, so it must not raise -- a failure here would mask the
+    exception that got us there. It must not be SILENT either: the old version
+    swallowed every error, so a restore that did nothing looked identical to
+    one that worked. SWEEP_KEYS puts speed first for the same reason
+    configure_sweep writes it first.
+    """
+    failed = []
     for key, cmd in SWEEP_KEYS:
+        if key not in before:
+            continue
         try:
             laser.write(f"{cmd} {before[key].strip()}")
-        except Exception:                        # noqa: BLE001
-            pass
+        except Exception as exc:                 # noqa: BLE001
+            failed.append(f"{key}: {exc.__class__.__name__}: {exc}")
+    return failed
 
 
 def start_sweep(laser):

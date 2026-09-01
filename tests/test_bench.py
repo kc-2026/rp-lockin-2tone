@@ -1043,3 +1043,145 @@ def test_the_header_reports_both_outputs(app):
     'off' with light on the bench."""
     assert "OUT1" in app.h_out.get() and "OUT2" in app.h_out.get()
 
+
+# --------------------------------------------------- the sweep that reverted
+# From the bench, 2026-09-01: the first sweep+capture worked and the second
+# came back with a nearly flat IN2. The laser was holding :WAV:SWE:MOD 0
+# ("step, one way") while the panel said 1 ("continuous, one way") -- in step
+# mode it dwells at each of 5001 points instead of ramping for a second, so
+# the capture window sees almost no trigger pulses.
+#
+# It reverted because configure_sweep slept a fixed 0.5 s after :WAV:SWE 0 and
+# then verified ONLY :TRIG:OUTP. From cold the stop is instant and every write
+# lands; still busy from the previous sweep it is not, and the laser DISCARDS
+# the writes without an error. Six of the seven settings were never read back,
+# so nothing noticed.
+
+
+class _FakeLaser:
+    """Records writes; answers queries from a dict of held settings.
+
+    `ignore_writes` models the real failure: the instrument accepts a write it
+    is not in a state to honour and reports nothing.
+    """
+
+    def __init__(self, held=None, busy_polls=0, ignore_writes=()):
+        self.held = dict(held or {})
+        self.writes = []
+        self.busy_polls = busy_polls
+        self.ignore_writes = set(ignore_writes)
+
+    def write(self, cmd):
+        self.writes.append(cmd)
+        head, _, arg = cmd.partition(" ")
+        if head == ":WAV:SWE":
+            return
+        for key, c in __import__("_bench_ops").SWEEP_KEYS:
+            if c == head:
+                if key not in self.ignore_writes:
+                    self.held[key] = arg
+                return
+
+    def query(self, cmd):
+        if cmd == ":WAV:SWE?":
+            if self.busy_polls > 0:
+                self.busy_polls -= 1
+                return "+1"
+            return "+0"
+        head = cmd[:-1]
+        for key, c in __import__("_bench_ops").SWEEP_KEYS:
+            if c == head:
+                return self.held.get(key, "+0")
+        return "+0"
+
+
+def _held(mode="+1"):
+    return {"speed": "+100.0", "start": "+1.50000000E-006",
+            "stop": "+1.60000000E-006", "mode": mode, "cycles": "+1",
+            "trig": "+3", "trigstep": "+2.00000000E-011"}
+
+
+def test_a_setting_the_laser_silently_ignored_is_caught():
+    """The actual bug. The laser keeps mode 0, reports no error, and the sweep
+    then runs in step mode -- minutes long, with a flat trigger channel."""
+    import _bench_ops as ops
+    d = _FakeLaser(_held(mode="+0"), ignore_writes={"mode"})
+    with pytest.raises(RuntimeError) as e:
+        ops.configure_sweep(d, start_nm=1500, stop_nm=1600, speed_nm_s=100,
+                            step_nm=0.02, mode=1)
+    assert "mode" in str(e.value)
+    assert "did not take" in str(e.value)
+
+
+def test_a_configuration_that_lands_is_accepted():
+    import _bench_ops as ops
+    d = _FakeLaser(_held())
+    got = ops.configure_sweep(d, start_nm=1500, stop_nm=1600, speed_nm_s=100,
+                              step_nm=0.02, mode=1)
+    assert got["after"]["mode"].lstrip("+") in ("1", "1.0")
+
+
+def test_configure_waits_for_the_stop_instead_of_sleeping():
+    """A fixed sleep is what made run 2 differ from run 1. The stop is polled,
+    so a laser that takes its time is waited for rather than written over."""
+    import _bench_ops as ops
+    d = _FakeLaser(_held(), busy_polls=4)
+    got = ops.configure_sweep(d, start_nm=1500, stop_nm=1600, speed_nm_s=100,
+                              step_nm=0.02, mode=1)
+    assert got["stopped_in"] > 0.0
+    # Nothing may be written between :WAV:SWE 0 and the sweep actually being
+    # stopped -- that is the window where writes are discarded.
+    i = d.writes.index(":WAV:SWE 0")
+    assert all(w.startswith(":WAV:SWE 0") or ":SWE:" in w or ":TRIG:" in w
+               for w in d.writes[i:])
+
+
+def test_a_sweep_that_never_stops_is_reported_not_ignored():
+    import _bench_ops as ops
+    d = _FakeLaser(_held(), busy_polls=10 ** 6)
+    with pytest.raises(RuntimeError) as e:
+        ops.wait_sweep_stopped(d, timeout=0.3, poll=0.05)
+    assert "did not stop" in str(e.value)
+
+
+def test_speed_is_restored_before_the_wavelengths():
+    """The usable start/stop range depends on the speed, so the old order --
+    start, stop, then speed -- could have a wavelength rejected."""
+    import _bench_ops as ops
+    keys = [k for k, _c in ops.SWEEP_KEYS]
+    assert keys.index("speed") < keys.index("start")
+    assert keys.index("speed") < keys.index("stop")
+
+
+def test_restore_reports_what_would_not_go_back():
+    """It runs in a finally so it must not raise -- but the old version
+    swallowed every error, so a restore that did nothing looked like one that
+    worked."""
+    import _bench_ops as ops
+
+    class Refuses(_FakeLaser):
+        def write(self, cmd):
+            if cmd.startswith(":WAV:SWE:MOD"):
+                raise OSError("nope")
+            super().write(cmd)
+
+    lost = ops.restore_sweep(Refuses(_held()), _held())
+    assert lost and "mode" in lost[0]
+
+
+def test_all_seven_settings_are_verified_not_just_the_trigger():
+    """Checking one of seven is how this got through: :TRIG:OUTP was right
+    every time, and it was the mode that had reverted."""
+    import _bench_ops as ops
+    want = {"speed": 100.0, "start": 1.5e-6, "stop": 1.6e-6, "mode": 1,
+            "cycles": 1, "trig": 3, "trigstep": 2e-11}
+    assert ops.check_sweep_config(want, _held()) == []
+    for key, wrong in (("speed", "+50.0"), ("start", "+1.51000000E-006"),
+                       ("stop", "+1.59000000E-006"), ("mode", "+0"),
+                       ("cycles", "+2"), ("trig", "+0"),
+                       ("trigstep", "+4.00000000E-011")):
+        held = _held()
+        held[key] = wrong
+        bad = ops.check_sweep_config(want, held)
+        assert bad and key in bad[0], f"{key} was not checked"
+

@@ -895,10 +895,37 @@ class Bench:
                                        f"{v['after']['mode']}"))
 
     def sweep_start(self):
+        """Read the configuration back, THEN start.
+
+        A sweep started in the wrong mode still runs, still returns a log and
+        still looks like a measurement -- it just delivers its trigger train
+        over minutes instead of a second, so the capture sees a nearly flat
+        IN2. Checking costs one round trip and turns that into a refusal.
+        """
         d = self._need_laser()
         if not d:
             return
-        self.submit(self.lasw, "start sweep", lambda: ops.start_sweep(d),
+        try:
+            want = self._sweep_cfg()
+        except ValueError as e:
+            return messagebox.showerror("Sweep", f"Not a number: {e}")
+
+        def go():
+            got = ops.read_sweep_config(d)
+            bad = ops.check_sweep_config(
+                {"speed": want["speed_nm_s"], "start": want["start_nm"] * 1e-9,
+                 "stop": want["stop_nm"] * 1e-9, "mode": int(want["mode"]),
+                 "trig": 3, "trigstep": want["step_nm"] * 1e-9}, got)
+            if bad:
+                raise RuntimeError(
+                    "the laser is not configured the way the Sweep panel "
+                    "says:\\n  " + "\\n  ".join(bad)
+                    + "\\n\\nPress Configure first. Settings written while a "
+                      "previous sweep is still stopping are discarded without "
+                      "an error, so this drifts silently between runs.")
+            return ops.start_sweep(d)
+
+        self.submit(self.lasw, "start sweep", go,
                     lambda _v: self.log("sweep started"))
 
     def sweep_stop(self):
@@ -1594,7 +1621,12 @@ class Bench:
                 with self.lasw.lock:
                     ops.stop_sweep(d)
                     if restore:
-                        ops.restore_sweep(d, restore)
+                        # It reports rather than raises -- we are in a finally
+                        # and must not mask the exception that got us here --
+                        # so somebody has to read what it says.
+                        lost = ops.restore_sweep(d, restore)
+                        if lost:
+                            note("could not restore: " + "; ".join(lost))
                     if name == "control: low power" and power_before is not None:
                         ops.set_laser_power(d, power_before)
                 with self.board.lock:
