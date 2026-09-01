@@ -1,44 +1,178 @@
 # Frequency plan
 
-> **SUPERSEDED IN PART, 2026-08-12 — read this first.**
+> **CORRECTED 2026-08-28. Read this before anything below.**
 >
-> This document derives a 250-sample buffer from the assumption that the
-> generator replays exactly the N samples you load. **Measured on the board,
-> it does not.** The ASG always traverses a fixed 16384-entry table, and
-> `SOUR:FREQ:FIX` sets the traversal rate. See "The arbitrary generator does
-> not work the way waveforms.py assumes" in `04-hardware-reference.md` for the
-> evidence.
+> This document has been wrong twice, in opposite directions, and both times
+> the error was an untested assumption about the generator.
 >
-> What survives: the *reasoning* about commensurability, the lock-in cycle
-> count constraint, and the point-count constraint. All still apply.
+> **The original version** assumed the ASG replays exactly the N samples you
+> load, and derived a 250-sample buffer from it.
 >
-> What changes: buffer length is no longer a free parameter. The period is
-> fixed at 16384 samples = 65.536 µs, so every frequency must be an integer
-> multiple of **fs/16384 = 15258.7890625 Hz**. Sections below that pick N are
-> obsolete; the grid is now fixed and the frequencies move onto it.
+> **The 2026-08-12 correction** measured that a short buffer "produces no
+> output at all", concluded the ASG always traverses a fixed 16384-entry table
+> at `fs/16384`, and fixed every frequency onto a **15258.7890625 Hz grid**.
+> That is the plan the code has used since.
 >
-> **Replacement operating point — decided by Kevin and implemented
-> 2026-08-12.** Built by `plan_two_tone_grid()`, driven by
-> `make_am_table()`, and verified on the board: all three AM lines land at
-> exactly these frequencies, with sideband/carrier ratios of 0.512 and 0.488
-> against 0.500 theoretical at a 20 MHz carrier where the analog path is flat.
+> **Measured on the board 2026-08-28, with OUT2 looped to IN2, both of those
+> are wrong.** The rule is simply:
 >
-> | Quantity | Grid multiple | Frequency | Was |
-> |---|---:|---:|---:|
-> | Carrier | 5243 | 80.0018 MHz | 80 MHz |
-> | f1 | 328 | 5.004883 MHz | 5 MHz |
-> | f2 | 393 | 5.996704 MHz | 6 MHz |
-> | \|f2 − f1\| | 65 | **991.821 kHz** | 1 MHz |
+> ```
+> output frequency = cycles in the table x play rate
+> ```
 >
-> The carrier moves by 23 ppm, which is nothing to an AOM. The difference
-> frequency lands at 991.821 kHz instead of 1 MHz, giving 70 cycles per 71 µs
-> integration time instead of 71 — no material change against R4's 5–10. Being
-> exactly on the grid matters far more than being a round number: off-grid, the
-> table wraps discontinuously every 65.536 µs and sprays a 15.26 kHz spur comb
-> straight across the baseband where the trace lives.
+> and the play rate is a free setting. Evidence:
+>
+> | buffer written | output / play rate |
+> |---:|---:|
+> | 16384 | 1.00 |
+> | 4096 | 4.00 |
+> | 1024 | 16.00 |
+> | 250 | 65.54  (= 16384/250) |
+>
+> A short buffer is neither ignored nor silent: the board treats what you write
+> as the whole table, so the frequency scales as `16384/N`. And
+> `SOUR:FREQ:FIX` accepts 1 MHz and 5 MHz — **there is no 15258 Hz ceiling.**
+> That number is only the rate at which the table advances one entry per DAC
+> clock, and nothing enforces it.
+>
+> **The decisive test.** A 16384-entry table holding **one** modulation cycle
+> and **80** carrier cycles, played at **1 000 000 Hz**, gave a carrier at
+> 80.0018 MHz with sidebands at 78.995 and 80.978 MHz, at 132 counts against
+> the grid path's 124. Exactly 80 MHz amplitude-modulated at exactly 1 MHz,
+> with no loss of amplitude.
 
-Why f1 = 5 MHz, f2 = 6 MHz, and a 250-sample buffer. This is the most
-constraint-driven part of the design, and the constraints are not obvious.
+## What the generator is actually doing
+
+The obvious objection: if the table is 16384 entries and you play it at 1 MHz,
+that is 16.384 GS/s, which no converter on this board can do. So what happens?
+
+**The DAC runs at a fixed 250 MS/s and the table is DECIMATED on the fly.**
+Measured 2026-08-28:
+
+| cycles in table | played at | expected | measured | |
+|---:|---:|---:|---:|---|
+| 20 | 1 MHz | 20 MHz | 20.004 MHz | |
+| 80 | 1 MHz | 80 MHz | 80.002 MHz | |
+| 200 | 1 MHz | 200 MHz | **50.003 MHz** | folded: 250 − 200 |
+| 260 | 1 MHz | 260 MHz | **9.995 MHz** | folded: 260 − 250 |
+
+The folds land exactly where a 250 MS/s sampler puts them. That is the proof:
+the generator is a DDS, and the play rate sets how fast it walks the table, not
+how fast the converter runs.
+
+Per DAC clock the table index advances by
+
+```
+step = 16384 x play_rate / 250e6   entries
+```
+
+so each traversal emits `250e6 / play_rate` distinct samples:
+
+| play rate | step per clock | samples per period | |
+|---:|---:|---:|---|
+| 15258.789 Hz | **1.000** | 16384 | every entry used |
+| 76 250 Hz | 5.0 | 3279 | |
+| 1 MHz | 65.5 | 250 | most entries skipped |
+
+**That is all fs/16384 ever was** — the one rate at which the step is exactly
+one entry per clock. It was never a limit, just the point where nothing is
+skipped.
+
+Two consequences worth holding on to:
+
+* **Nothing is gained by a finer table at a high play rate.** With 80 carrier
+  cycles played at 1 MHz the DAC emits 250 samples per modulation period, so
+  the carrier gets 250/80 = 3.125 samples per cycle — exactly what the default
+  grid gives it too. The DAC's 250 MS/s is the limit either way.
+* **The output must stay under 125 MHz.** `carrier_cycles x play_rate` above
+  that folds, as the 200- and 260-cycle rows show. The 80 MHz carrier sits at
+  3.125 samples per cycle, which is above Nyquist but not by much.
+
+**The play rate itself clamps at 100 MHz** — asked for 130 MHz or 200 MHz, the
+board reports back 100 MHz. Not a limit anything here approaches, but it is
+there.
+
+Amplitude falls off steeply with frequency, which is the analog path rather
+than the generator: 1793 counts at 1 MHz, 844 at 60 MHz, 135 at 80 MHz, 27 at
+100 MHz. The 60 MHz analog bandwidth is a specification, and 80 MHz is
+deliberately beyond it — see `04-hardware-reference.md`.
+
+## How frequencies are chosen now
+
+Put a whole number of cycles of **both** the carrier and the modulation in the
+table, and play it at a rate that makes them come out right:
+
+```
+modulation = mod_cycles     x play_rate
+carrier    = carrier_cycles x play_rate
+```
+
+The cycle counts must be integers so the table wraps without a discontinuity —
+that part was always real, and it is the only thing that was. The play rate
+they multiply is free.
+
+So for 80 MHz with 1 MHz modulation: **1 modulation cycle, 80 carrier cycles,
+played at 1 MHz.** For a modulation that does not divide the carrier, a few
+cycles and a lower rate bring the carrier closer — 915 kHz uses 12 and 1049
+cycles at 76 250 Hz.
+
+`plan_exact_am()` does this search; `make_am_table_exact()` builds the table.
+
+### The only grid left
+
+**The play rate is quantised to 1 Hz** (measured: 1000000.5 reads back
+1000000, 15151.5152 reads back 15151). So a modulation must be a **whole number
+of hertz** to have an exact table. That is the entire remaining constraint, and
+it is fine enough that nothing you would actually ask for is excluded.
+
+The **carrier** lands on the nearest multiple of the same play rate. Its error
+is at most half a play rate — a few hundred kHz at worst — which the
+1550AOM-1's megahertz-wide acoustic passband cannot tell apart. Requiring the
+carrier exactly would rule out most modulations for no benefit.
+
+### Two things that are not free
+
+**Spurs.** Driving at a high play rate raised lines at 36.0 and 54.0 MHz to
+~6% and ~4.6% of the carrier, against ~0.2% on the default grid. They sit far
+from the modulation and an AOM will not diffract them efficiently, but they are
+real and unexplained.
+
+**Table resolution.** At least 8 table entries per carrier cycle. Nyquist alone
+is not enough: 8000 carrier cycles in 16384 entries satisfies it with 2.05
+entries per cycle and reconstructs to pure alias. The configuration that was
+measured working had 204.8.
+
+### Choosing a modulation frequency
+
+Now that every whole hertz is reachable, **the round numbers are the dangerous
+ones.** The board's switching supply puts ~32 µV — nine times the noise floor —
+at 504.868 kHz and its multiples, and a lock-in cannot tell a steady tone from
+the supply apart from a steady tone from the DUT.
+
+| Candidate | Gap to the nearest harmonic | Drift needed to land on it |
+|---|---:|---:|
+| 500 kHz | 4.9 kHz | 0.96% |
+| 1.000 MHz | 9.7 kHz | 0.96% |
+| 1.5 MHz | 14.6 kHz | 0.96% |
+| **915 kHz** | **94.7 kHz** | **9.4%** |
+
+915 kHz is the bench default for that reason. The Drive panel warns whenever
+the chosen frequency comes within 20 kHz of the family.
+
+### What still stands from the 2026-08-12 plan
+
+`plan_two_tone_grid()` — carrier 80.001831 MHz, f1 5.004883 MHz, f2
+5.996704 MHz, difference **991.821 kHz** — is still what the two-tone code
+uses, and those frequencies do work: they were verified on the board and every
+Phase 1 result rests on them. They are now needlessly constrained rather than
+wrong. **Do not hardcode 1e6 as the lock-in frequency**; that warning is
+unchanged.
+
+Everything below this line predates the correction. The reasoning about
+commensurability, the lock-in cycle count and the point count all still apply.
+Only the claim that frequencies must sit on a fixed 15258.789 Hz grid does not.
+
+---
 
 ## The commensurability constraint
 

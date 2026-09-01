@@ -59,7 +59,19 @@ from rp_lockin.hardware import RedPitaya                    # noqa: E402
 from rp_lockin.output import write_raw_npz, write_trace_csv  # noqa: E402
 from tsl775 import TSL775                                   # noqa: E402
 
-DEFAULT_MOD_HZ = 60 * ops.ASG_GRID          # 915.527 kHz -- see the Drive panel
+# A WHOLE number of hertz, because the play rate is quantised to 1 Hz and
+# only whole-hertz modulations have an exact table. 915 kHz also sits 94.7 kHz
+# clear of the 504.868 kHz switching-supply family -- which matters more now
+# than it used to, because every frequency is reachable and the round ones are
+# the dangerous ones: 1.000 MHz is 9.7 kHz from the second harmonic and
+# 500 kHz is 4.9 kHz from the fundamental.
+DEFAULT_MOD_HZ = 915000.0
+
+# The board's switching supply, measured 2026-08-12. Its harmonics appear in
+# the input at ~32 uV, which is 9x the noise floor -- and a lock-in cannot tell
+# a steady tone from the supply apart from a steady tone from the DUT.
+SWITCHER_HZ = 504.868e3
+SWITCHER_GUARD_HZ = 20e3
 
 
 @dataclass
@@ -532,10 +544,11 @@ class Bench:
         self.v_mod.trace_add("write", lambda *_a: self._mod_wanted())
         self.v_real.trace_add("write", lambda *_a: self._mod_actual())
         self._mod_wanted()
-        ttk.Label(f, text="The ASG can ONLY play multiples of 15258.789 Hz --\n"
-                          "off-grid glitches at every table wrap. 1.000 MHz is\n"
-                          "not available; the nearest is 1007.080. f_ref in\n"
-                          "Demodulate is software and has no such limit.",
+        ttk.Label(f, text="The table holds a whole number of cycles of both, "
+                          "and is played at a rate that makes them come out "
+                          "right -- so ANY whole number of hertz is exact. "
+                          "The play rate is quantised to 1 Hz; that is the "
+                          "only grid left. Avoid multiples of 504.868 kHz.",
                   foreground="#666", justify="left", wraplength=300).grid(
             row=5, column=0, columnspan=3, sticky="w", pady=(2, 4))
         b = ttk.Frame(f)
@@ -622,14 +635,27 @@ class Bench:
             return self.v_snap.set("")
         note = "" if abs(t.modulation - asked) <= 0.5 else \
             f"  (nearest reachable to {asked / 1e3:.4f})"
-        how = ("EXACT -- play rate chosen to fit" if mode == "exact"
-               else "on the default fs/16384 grid")
+        # Every frequency is reachable now, so nothing stops you landing on a
+        # switching-supply harmonic. One there reads as a strong, clean, steady
+        # optical signal and nothing in the trace would give it away.
+        k = max(1, round(t.modulation / SWITCHER_HZ))
+        gap = abs(t.modulation - k * SWITCHER_HZ)
+        warn = ""
+        if gap < SWITCHER_GUARD_HZ:
+            warn = (f"\nWARNING: {gap / 1e3:.1f} kHz from {k} x 504.868 kHz "
+                    f"(switching supply). {100 * gap / (k * SWITCHER_HZ):.2f}% "
+                    f"of drift lands it on you, as a clean steady 32 uV.")
+        how = (f"EXACT: {t.mod_cycles} modulation cycle(s) and "
+               f"{t.carrier_cycles} carrier cycles in the table, played at"
+               if mode == "exact"
+               else "fallback, on the default fs/16384 grid, play rate")
         self.v_snap.set(
             f"generates: carrier {t.carrier / 1e6:.6f} MHz "
             f"({t.carrier_cycles} cyc), mod {t.modulation / 1e3:.4f} kHz "
-            f"({t.mod_cycles} cyc){note}. {how}, play rate "
+            f"({t.mod_cycles} cyc){note}. {how} "
             f"{t.play_freq:.4f} Hz. 2x = {2 * t.modulation / 1e3:.4f} kHz, "
-            f"3x = {3 * t.modulation / 1e3:.4f} kHz.")
+            f"3x = {3 * t.modulation / 1e3:.4f} kHz."
+            f"  spur gap {gap / 1e3:.1f} kHz.{warn}")
 
     def _drive_cfg(self):
         # The GENERATED value, not the request: it is what the hardware will
