@@ -420,9 +420,11 @@ def _beating(beat_hz, seconds=1.0, fs_out=5000.0, amp=0.024,
     A REAL one, not a stand-in carrying only the attributes the detector
     happened to use when it was written. The previous version supplied
     amplitude(), t and fs_out and nothing else, so when the detector moved to
-    reading .theta the tests broke while the bench was fine -- the mirror
-    image of the _ParkLaser failure and the same root cause. LockinResult is
-    four arrays and three floats; there is no reason to imitate it.
+    reading .theta the tests broke while the bench was fine. Same root cause
+    as a fake that is too RICH, just pointed the other way: either way the
+    stand-in and the real object disagree, and the suite tests the stand-in.
+    LockinResult is four arrays and three floats; there is no reason to
+    imitate it.
     """
     from rp_lockin.dsp import LockinResult
     n = int(seconds * fs_out)
@@ -1329,4 +1331,135 @@ def test_the_carrier_error_is_traded_for_frequency_accuracy_knowingly():
     t = make_am_table_exact(80e6, 915000.0)
     assert abs(t.carrier - 80e6) == pytest.approx(395e3, abs=1e3)
     assert 16384 / t.carrier_cycles >= 8.0
+
+
+# ------------------------------------------------------- setting a wavelength
+# The Laser panel could set power and move the shutter but not set or even
+# SHOW a wavelength -- while `laser_state` was already reading :WAV? and the
+# header was throwing it away. You could not tell what colour the light was.
+
+
+class _MovingLaser:
+    """A laser that takes a few polls to reach where it is sent.
+
+    write/query ONLY, because that is all `tsl775.TSL775` has. An earlier fake
+    here carried a `set_wavelength_m` borrowed from the OTHER driver
+    (`rp_lockin.santec.SantecTSL`); the suite went green and the bench raised
+    AttributeError on the first press. See
+    test_the_fakes_offer_no_more_than_the_real_driver.
+
+    It creeps toward the target rather than arriving at once, so the "has
+    stopped moving" half of the settle test is actually exercised.
+    """
+
+    def __init__(self, at_m=1.6e-6, polls_to_arrive=2):
+        self.at = at_m
+        self.polls_to_arrive = polls_to_arrive
+        self.target = None
+        self.events = []
+
+    def query(self, cmd):
+        if cmd == ":WAV?":
+            if self.target is not None:
+                if self.polls_to_arrive > 0:
+                    self.polls_to_arrive -= 1
+                    self.at = (self.at + self.target) / 2.0
+                else:
+                    self.at = self.target
+            return f"{self.at:.9E}"
+        return "+0"
+
+    def write(self, cmd):
+        self.events.append(cmd)
+        if cmd.startswith(":WAV ") and not cmd.startswith(":WAV:"):
+            self.target = float(cmd.split(None, 1)[1])
+
+
+def test_the_fakes_offer_no_more_than_the_real_driver():
+    """The bench's laser is `tsl775.TSL775`: write/query and no setters.
+    `rp_lockin.santec.SantecTSL` has a much richer surface, and a fake built
+    from THAT produces a green suite and a bench that raises AttributeError.
+    """
+    from tsl775 import TSL775
+    real = {n for n in dir(TSL775) if not n.startswith("_")}
+    for fake in (_MovingLaser, _FakeLaser):
+        offered = {n for n in vars(fake) if not n.startswith("_")}
+        extra = offered - real
+        assert not extra, (f"{fake.__name__} offers {sorted(extra)}, which "
+                           f"TSL775 does not have")
+
+
+def test_the_header_shows_the_wavelength(app):
+    """It was being read and discarded."""
+    app._show_laser({"power_dbm": "+4.0", "shutter": "+0", "ld": "+1",
+                     "sweep": "+0", "wavelength_m": "+1.55000000E-006"})
+    assert "1550.0000 nm" in app.h_laser.get()
+
+
+def test_an_unreadable_wavelength_does_not_break_the_header(app):
+    """A dropped link answers with junk; the header must still render."""
+    app._show_laser({"power_dbm": "+4.0", "shutter": "+0", "ld": "+1",
+                     "sweep": "+0", "wavelength_m": "?(TimeoutError)"})
+    assert "? nm" in app.h_laser.get()
+
+
+def test_the_panel_offers_a_wavelength_box(app):
+    assert hasattr(app, "v_nm")
+    assert float(app.v_nm.get()) == pytest.approx(1550.0)
+
+
+def test_setting_a_wavelength_waits_for_the_read_back():
+    """The SET form of :WAVelength is not in the manuals' command tables, so
+    the read-back is what proves the command string works at all."""
+    import _bench_ops as ops
+    d = _MovingLaser(at_m=1.6e-6)
+    r = ops.set_wavelength_m(d, 1.55e-6, poll=0.01)
+    assert r["arrived_m"] == pytest.approx(1.55e-6)
+    assert d.events and d.events[0].startswith(":WAV ")
+    assert float(d.events[0].split()[1]) == pytest.approx(1.55e-6)
+
+
+def test_a_laser_that_never_arrives_raises_rather_than_reporting_success():
+    import _bench_ops as ops
+
+    class Stuck(_MovingLaser):
+        def query(self, cmd):
+            if cmd == ":WAV?":
+                return f"{self.at:.9E}"          # never moves
+            return super().query(cmd)
+
+    with pytest.raises(RuntimeError) as e:
+        ops.set_wavelength_m(Stuck(at_m=1.6e-6), 1.5e-6,
+                             timeout=0.3, poll=0.05)
+    assert "did not reach" in str(e.value)
+
+
+def test_nanometres_passed_as_metres_are_refused():
+    """1550 instead of 1.55e-6 would command the laser 10^9 out. In the Legacy
+    command set these really do take nanometres, so the confusion is live."""
+    import _bench_ops as ops
+    for bad in (1550.0, 1.55e-9, 0.0, -1.55e-6):
+        with pytest.raises(ValueError) as e:
+            ops.set_wavelength_m(_MovingLaser(), bad)
+        assert "METRES" in str(e.value)
+
+
+def test_turning_the_laser_diode_on_is_confirmed_but_off_is_not(app,
+                                                               monkeypatch):
+    """Enabling an emitter is confirmed like any other output. Disabling one
+    never is -- nothing that makes the bench safer gets a dialog."""
+    asked = []
+    monkeypatch.setattr(bench_mod().messagebox, "askokcancel",
+                        lambda *a, **k: asked.append(a) or False)
+    monkeypatch.setattr(app, "_need_laser", lambda: object())
+    app.laser_ld(True)
+    assert asked, "LD ON went out with no confirmation"
+    asked.clear()
+    app.laser_ld(False)
+    assert not asked, "LD off should not need confirming"
+
+
+def bench_mod():
+    import bench
+    return bench
 

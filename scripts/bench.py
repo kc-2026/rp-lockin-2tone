@@ -302,7 +302,12 @@ class Bench:
         ld = {"+1": "ON", "+0": "off"}.get(st.get("ld", ""), "?")
         sw = {"+0": "idle", "+1": "RUNNING", "+3": "standby",
               "+4": "preparing"}.get(st.get("sweep", ""), "?")
-        self.h_laser.set(f"laser {dbm:+.2f} dBm | LD {ld} | shutter {sh}")
+        try:
+            nm = f"{float(st.get('wavelength_m', 'nan')) * 1e9:.4f} nm"
+        except ValueError:
+            nm = "? nm"
+        self.h_laser.set(f"laser {nm} | {dbm:+.2f} dBm | LD {ld} | "
+                         f"shutter {sh}")
         self.h_sweep.set(f"sweep {sw}")
 
     # --------------------------------------------------------------- header
@@ -755,28 +760,47 @@ class Bench:
         f = self._panel(parent, "Laser")
         self.v_ip = tk.StringVar(value="10.101.0.197")
         self.v_dbm = tk.StringVar(value="4.0")
+        self.v_nm = tk.StringVar(value="1550.0000")
         fld(f, 0, "address", self.v_ip, width=18)
         fld(f, 1, "power", self.v_dbm, "dBm")
+        fld(f, 2, "wavelength", self.v_nm, "nm", width=14)
         ttk.Label(f, text="One connection is held for the whole session:\n"
                           "about one reconnect in four fails outright.",
                   foreground="#666", justify="left", wraplength=300).grid(
-            row=2, column=0, columnspan=3, sticky="w", pady=(4, 4))
+            row=3, column=0, columnspan=3, sticky="w", pady=(4, 4))
         b = ttk.Frame(f)
-        b.grid(row=3, column=0, columnspan=3, sticky="w")
+        b.grid(row=4, column=0, columnspan=3, sticky="w")
         ttk.Button(b, text="Connect", command=self.laser_connect).pack(side="left")
         ttk.Button(b, text="Disconnect",
                    command=self.laser_disconnect).pack(side="left", padx=4)
         ttk.Button(b, text="Set power",
                    command=self.laser_set_power).pack(side="left")
         b2 = ttk.Frame(f)
-        b2.grid(row=4, column=0, columnspan=3, sticky="w", pady=(4, 0))
-        ttk.Button(b2, text="Shutter CLOSE",
+        b2.grid(row=5, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        ttk.Button(b2, text="Set wavelength",
+                   command=self.laser_set_wavelength).pack(side="left")
+        ttk.Button(b2, text="Read back",
+                   command=self.laser_read_wavelength).pack(side="left", padx=4)
+        b3 = ttk.Frame(f)
+        b3.grid(row=6, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        ttk.Button(b3, text="Shutter CLOSE",
                    command=lambda: self.laser_shutter(True)).pack(side="left")
-        ttk.Button(b2, text="Shutter OPEN",
+        ttk.Button(b3, text="Shutter OPEN",
                    command=lambda: self.laser_shutter(False)).pack(side="left",
                                                                    padx=4)
-        ttk.Button(b2, text="LD off",
-                   command=lambda: self.laser_ld(False)).pack(side="left")
+        ttk.Button(b3, text="LD ON",
+                   command=lambda: self.laser_ld(True)).pack(side="left")
+        ttk.Button(b3, text="LD off",
+                   command=lambda: self.laser_ld(False)).pack(side="left",
+                                                              padx=4)
+        # Q32: a hand-set wavelength leaves the instrument unable to sweep.
+        ttk.Label(f, text="Setting a wavelength by hand stops the SWEEP from "
+                          "running -- measured, twice, with every sweep "
+                          "setting still correct. Press Sweep > Configure "
+                          "afterwards, and suspect this first if a sweep "
+                          "arms and never triggers.",
+                  foreground="#a04000", justify="left", wraplength=300).grid(
+            row=7, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
     def laser_connect(self):
         ip = self.v_ip.get().strip()
@@ -791,6 +815,51 @@ class Bench:
             self._show_laser(st)
 
         self.submit(self.lasw, "connect laser", go, done)
+
+    def laser_set_wavelength(self):
+        """Park the laser at a wavelength, and confirm it arrived.
+
+        Read back rather than assumed: the SET form of :WAVelength is not in
+        the manuals' command tables, so the read-back is what proves the
+        command string works at all.
+        """
+        d = self._need_laser()
+        if not d:
+            return
+        try:
+            nm = float(self.v_nm.get())
+        except ValueError as e:
+            return messagebox.showerror("Laser", f"Not a number: {e}")
+        if not messagebox.askokcancel(
+                "Set wavelength",
+                f"Move the laser to {nm:.4f} nm?\n\n"
+                f"The light changes wavelength, and this leaves the "
+                f"instrument unable to SWEEP until Sweep > Configure is "
+                f"pressed again (Q32)."):
+            return self.log("wavelength set cancelled")
+
+        def done(r):
+            self.log(f"laser at {r['arrived_m'] * 1e9:.4f} nm "
+                     f"(asked {nm:.4f}, took {r['waited_s']:.2f} s). "
+                     f"The sweep will not run until you press "
+                     f"Sweep > Configure.")
+
+        self.submit(self.lasw, "set wavelength",
+                    lambda: ops.set_wavelength_m(d, nm * 1e-9), done)
+
+    def laser_read_wavelength(self):
+        """Put what the laser actually holds into the box."""
+        d = self._need_laser()
+        if not d:
+            return
+
+        def done(v):
+            nm = float(v) * 1e9
+            self.v_nm.set(f"{nm:.4f}")
+            self.log(f"laser reads {nm:.4f} nm")
+
+        self.submit(self.lasw, "read wavelength",
+                    lambda: d.query(":WAV?").strip(), done)
 
     def laser_disconnect(self):
         d, self.laser = self.laser, None
@@ -832,9 +901,20 @@ class Bench:
                         f"instrument reopens it by itself when a sweep starts."))
 
     def laser_ld(self, on):
+        """Turning the LD ON emits light, so it is confirmed like an output.
+
+        Turning it OFF is not: nothing that makes the bench safer should have
+        a dialog in front of it.
+        """
         d = self._need_laser()
         if not d:
             return
+        if on and not messagebox.askokcancel(
+                "Laser diode ON",
+                "Turn the laser diode ON?\n\n"
+                "Light reaches the bench. The shutter state is separate and "
+                "the laser opens it by itself during a sweep."):
+            return self.log("LD enable cancelled")
         self.submit(self.lasw, "LD", lambda: ops.set_ld(d, on),
                     lambda v: self.log(f"LD state reads {v}"))
 

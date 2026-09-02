@@ -295,6 +295,52 @@ def set_shutter(laser, close: bool):
     return laser.query(":POW:SHUT?").strip().lstrip("+")
 
 
+def set_wavelength_m(laser, metres, tolerance=1e-12, timeout=60.0,
+                     poll=0.2):
+    """Drive the laser to `metres` and WAIT until the read-back agrees.
+
+    **METRES, and checked.** In the Legacy command set these queries answer in
+    NANOMETRES, and `:WAV 1550` would command the laser 1550 metres. A range
+    check is the only thing standing between a unit slip and that.
+
+    **Settling is decided by measurement, not a timer.** No busy flag is
+    documented for the 775, so this polls until the read-back both matches the
+    target and has stopped moving -- two consecutive on-target readings, so a
+    value caught in passing does not count as arrival. It raises if the laser
+    never converges.
+
+    That read-back is also what proves the command string at all: the SET form
+    of `:WAVelength` is not in the manuals' command tables, only the query. On
+    this instrument a wrong command returns zero bytes exactly like a right
+    one, so a write-only setter here would fail silently.
+
+    **This leaves the sweep unable to run -- see Q32.** Setting a wavelength by
+    hand and then starting a sweep produced no trigger train at all, twice,
+    with every sweep setting still correct. Re-Configure the sweep afterwards,
+    and treat a sweep that will not trigger as this having happened.
+    """
+    if not 1.0e-6 <= metres <= 2.0e-6:
+        raise ValueError(
+            f"wavelength must be in METRES, got {metres!r}. A C-band value is "
+            f"~1.55e-6, not 1550. Refusing rather than commanding the laser "
+            f"with a number that is 10^9 out.")
+    t0 = time.time()
+    laser.write(f":WAV {metres:.12E}")
+    last = None
+    while time.time() - t0 < timeout:
+        time.sleep(poll)
+        at = float(laser.query(":WAV?"))
+        if (abs(at - metres) <= tolerance and last is not None
+                and abs(at - last) <= tolerance):
+            return {"target_m": metres, "arrived_m": at,
+                    "waited_s": time.time() - t0}
+        last = at
+    raise RuntimeError(
+        f"the laser did not reach {metres * 1e9:.4f} nm within {timeout:g} s"
+        + ("" if last is None else f" (it reads {last * 1e9:.4f} nm)")
+        + ". Nothing was swept and no measurement was taken.")
+
+
 def set_ld(laser, on: bool):
     laser.write(f":POW:STAT {1 if on else 0}")
     time.sleep(2.0 if on else 0.3)
