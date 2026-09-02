@@ -1463,3 +1463,104 @@ def bench_mod():
     import bench
     return bench
 
+
+# ------------------------------------------------------ modulation 0 means CW
+# Asked for on the bench: setting the drive modulation to 0 should hold the
+# amplitude rather than refuse. That is an UNMODULATED CARRIER -- the envelope
+# is held, not the voltage. A literal DC level would do nothing at all here:
+# the AOM needs its 80 MHz acoustic drive and the ZHL-1-2W+ is AC-coupled.
+#
+# It is also the condition the drive level was tuned in (maximise diffracted
+# light with an unmodulated carrier), so it is a reference point, not a novelty.
+
+
+def _envelope(samples):
+    from scipy.signal import hilbert
+    return np.abs(hilbert(samples))[200:-200]
+
+
+def test_cw_holds_its_envelope_where_am_swings_to_zero():
+    from rp_lockin.waveforms import make_cw_table, make_am_table_exact
+    cw = _envelope(make_cw_table(80e6).samples)
+    am = _envelope(make_am_table_exact(80e6, 915000.0).samples)
+    assert cw.max() - cw.min() < 1e-6, "the CW envelope is not flat"
+    assert am.min() < 0.01 and am.max() > 0.9, \
+        "depth-1 AM should reach zero -- if it does not, the contrast is lost"
+
+
+def test_cw_emits_one_spectral_line():
+    """One line at the carrier. AM puts sidebands either side of it, and those
+    are what a lock-in would find; CW leaves it nothing."""
+    from rp_lockin.waveforms import make_cw_table
+    t = make_cw_table(80e6)
+    spectrum = np.abs(np.fft.rfft(t.samples))
+    assert int(np.argmax(spectrum)) == t.carrier_cycles
+    # everything else at least 60 dB down
+    spectrum[t.carrier_cycles] = 0.0
+    assert spectrum.max() < 1e-3 * np.abs(np.fft.rfft(t.samples)).max()
+
+
+def test_cw_reports_no_modulation():
+    """Callers key off this: mod_cycles 0 is how the bench knows to say CW
+    rather than print a modulation frequency of zero."""
+    from rp_lockin.waveforms import make_cw_table
+    t = make_cw_table(80e6)
+    assert t.mod_cycles == 0
+    assert t.modulation == 0.0
+
+
+def test_the_cw_carrier_lands_within_half_a_cycle_count():
+    """The play rate is whole hertz, so the carrier lands within cycles/2 Hz --
+    40 Hz on 80 MHz, half a part per billion."""
+    from rp_lockin.waveforms import make_cw_table
+    for want in (80e6, 79.605e6, 79.9862e6, 1e6):
+        t = make_cw_table(want)
+        assert abs(t.carrier - want) <= t.carrier_cycles / 2 + 1e-6, want
+        assert float(t.play_freq).is_integer()
+
+
+def test_a_cw_table_still_resolves_the_carrier_properly():
+    """At least 8 entries per carrier cycle, or the table reconstructs to
+    alias rather than a carrier."""
+    from rp_lockin.waveforms import make_cw_table
+    t = make_cw_table(80e6)
+    assert 16384 / t.carrier_cycles >= 8.0
+
+
+def test_the_bench_treats_zero_modulation_as_cw(app):
+    app.v_carrier.set("80.0")
+    app.v_mod.set("0")
+    table, mode = app._resolve(80e6, 0.0)
+    assert mode == "cw"
+    assert table.mod_cycles == 0
+    assert "CW" in app.v_snap.get()
+    assert "NOT a DC level" in app.v_snap.get()
+
+
+def test_a_blank_or_negative_modulation_is_cw_too(app):
+    for value in (0.0, -1.0):
+        _t, mode = app._resolve(80e6, value)
+        assert mode == "cw", value
+
+
+def test_cw_is_not_snapped_to_anything(app):
+    """_settle_mod rewrites the box to the nearest reachable frequency. There
+    is no nearest frequency to CW, and rewriting 0 to 15.259 kHz would silently
+    turn the drive back on."""
+    app.v_mod.set("0")
+    app._settle_mod(1)
+    assert float(app.v_mod.get()) == 0.0
+
+
+def test_the_f1_button_refuses_a_cw_drive(app, monkeypatch):
+    """There is no modulation to sit on. Setting f_ref to 0 would demodulate
+    at DC and return the mean of the record, which looks like a huge signal."""
+    errors = []
+    monkeypatch.setattr(bench_mod().messagebox, "showerror",
+                        lambda *a, **k: errors.append(a))
+    before = app.v_fref.get()
+    app.v_mod.set("0")
+    app.fref_from_drive(1)
+    assert errors, "the f1 button accepted a CW drive"
+    assert app.v_fref.get() == before, "f_ref was set to DC"
+

@@ -323,6 +323,49 @@ def make_am_table_exact(carrier: float, modulation: float,
                     carrier_cycles=n_c, mod_cycles=n_m)
 
 
+def make_cw_table(carrier: float, cycles: int = 80,
+                  fs: float = BASE_SAMPLE_RATE,
+                  max_play: float = 10e6) -> AsgTable:
+    """An UNMODULATED carrier: constant envelope, one spectral line.
+
+    This is what modulation = 0 means on this bench. Note it is **not** a DC
+    voltage -- the AOM needs its 80 MHz acoustic drive, and the amplifier is
+    AC-coupled, so a literal DC level would do nothing at all. What is held
+    constant is the ENVELOPE.
+
+    It is also the configuration Kevin tuned the drive level in: maximise the
+    diffracted light with an unmodulated carrier, then modulate it. See
+    `04-hardware-reference.md`, and do not add an attenuator.
+
+    **Average RF power is about 3 dB higher than depth-1 AM at the same
+    amplitude**, because the AM envelope spends half its time below full. That
+    is the condition the drive was tuned at, so it is the reference rather than
+    a new hazard -- but it is the loudest thing this generator emits.
+
+    80 carrier cycles at carrier/80 is the pairing measured working on
+    2026-08-28: 204.8 table entries per carrier cycle, well clear of the
+    8-entry floor, and a 1 MHz play rate for an 80 MHz carrier. The play rate
+    is rounded to whole hertz, which places the carrier within `cycles`/2 Hz --
+    40 Hz on 80 MHz, or half a part per billion.
+    """
+    if carrier <= 0:
+        raise ValueError("carrier must be positive")
+    n_c = max(int(np.ceil(carrier / max_play)), int(cycles))
+    if n_c > ASG_BUFFER_MAX // 8:
+        raise ValueError(
+            f"{carrier / 1e6:g} MHz needs {n_c} carrier cycles in the table, "
+            f"which leaves under 8 entries per cycle and reconstructs to "
+            f"alias rather than a carrier.")
+    play = float(round(carrier / n_c))
+    if play < 1:
+        raise ValueError(f"{carrier / 1e6:g} MHz is too low for a CW table")
+    k = np.arange(ASG_BUFFER_MAX)
+    wave = np.cos(2 * np.pi * n_c * k / ASG_BUFFER_MAX)
+    # modulation is reported as 0.0: there is none, and callers key off that.
+    return AsgTable(samples=wave, play_freq=play, carrier=n_c * play,
+                    modulation=0.0, carrier_cycles=n_c, mod_cycles=0)
+
+
 def plan_two_tone_grid(difference: float = 1e6, f1: float = 5e6,
                        carrier: float = 80e6,
                        fs: float = BASE_SAMPLE_RATE) -> GridTwoTonePlan:

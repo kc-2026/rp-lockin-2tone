@@ -642,9 +642,11 @@ class Bench:
         try:
             carrier = float(d["carrier"].get()) * 1e6
             asked = float(d["mod"].get()) * 1e3
-            t, _mode = self._resolve(carrier, asked)
+            t, mode = self._resolve(carrier, asked)
         except Exception:                            # noqa: BLE001
             return
+        if mode == "cw":
+            return                                   # nothing to snap to
         if abs(t.modulation - asked) > 0.5:
             self.log(f"{asked / 1e3:.4f} kHz cannot be generated exactly "
                      f"alongside this carrier; using {t.modulation / 1e3:.4f} "
@@ -666,7 +668,13 @@ class Bench:
         fs/16384 grid when the two are not in a ratio that fits whole cycles.
         Returns (table, "exact"|"grid").
         """
-        from rp_lockin.waveforms import make_am_table, make_am_table_exact
+        from rp_lockin.waveforms import (make_am_table, make_am_table_exact,
+                                         make_cw_table)
+        # 0 (or blank) means CW: an unmodulated carrier at constant amplitude.
+        # NOT a DC level -- the AOM needs its 80 MHz and the amplifier is
+        # AC-coupled, so DC would do nothing.
+        if mod <= 0:
+            return make_cw_table(carrier), "cw"
         try:
             return make_am_table_exact(carrier, mod), "exact"
         except ValueError:
@@ -681,6 +689,16 @@ class Bench:
             t, mode = self._resolve(carrier, asked)
         except Exception:                            # noqa: BLE001
             return d["snap"].set("")
+        if mode == "cw":
+            return d["snap"].set(
+                f"CW: unmodulated carrier {t.carrier / 1e6:.6f} MHz "
+                f"({t.carrier_cycles} cycles in the table, played at "
+                f"{t.play_freq:.0f} Hz). The envelope is held, so there is one "
+                f"spectral line and nothing for a lock-in to find.\n"
+                f"This is NOT a DC level: the AOM needs its 80 MHz and the "
+                f"amplifier is AC-coupled. It is the condition the drive level "
+                f"was tuned at, and about 3 dB more average RF power than "
+                f"depth-1 AM at the same amplitude.")
         note = "" if abs(t.modulation - asked) <= 0.5 else \
             f"  (nearest reachable to {asked / 1e3:.4f})"
         # Every frequency is reachable now, so nothing stops you landing on a
@@ -730,19 +748,25 @@ class Bench:
             cfg = self._drive_cfg(ch)
         except ValueError as e:
             return messagebox.showerror("Drive", f"Not a number: {e}")
+        cw = cfg["modulation"] <= 0
         if not messagebox.askokcancel(
                 f"Enable OUT{ch}",
                 f"Carrier      {cfg['carrier'] / 1e6:.6f} MHz\n"
-                f"Modulation   {cfg['modulation'] / 1e3:.4f} kHz (AM, depth 1)\n"
-                f"Amplitude    {cfg['amplitude']} V\n\n"
+                + ("Modulation   NONE -- CW, envelope held. About 3 dB more\n"
+                   "             average RF power than depth-1 AM.\n"
+                   if cw else
+                   f"Modulation   {cfg['modulation'] / 1e3:.4f} kHz "
+                   f"(AM, depth 1)\n")
+                + f"Amplitude    {cfg['amplitude']} V\n\n"
                 f"This reaches the amplifier and the modulator, and light "
                 f"goes somewhere. It stays on until you turn it off."):
             return self.log("drive enable cancelled")
 
         def done(table):
+            how = ("CW, no modulation" if table.mod_cycles == 0
+                   else f"modulation {table.modulation / 1e3:.4f} kHz")
             self.log(f"OUT{ch} ON: carrier {table.carrier / 1e6:.6f} MHz, "
-                     f"modulation {table.modulation / 1e3:.4f} kHz, "
-                     f"{cfg['amplitude']} V")
+                     f"{how}, {cfg['amplitude']} V")
 
         self.submit(self.board, f"drive OUT{ch} on",
                     lambda: ops.drive_on(rp, channel=ch, **cfg), done)
@@ -1345,7 +1369,14 @@ class Bench:
             cfg = self._drive_cfg()
         except ValueError as e:
             return messagebox.showerror("Drive", f"Not a number: {e}")
-        table, _mode = self._resolve(cfg["carrier"], cfg["modulation"])
+        table, mode = self._resolve(cfg["carrier"], cfg["modulation"])
+        if mode == "cw" or table.modulation <= 0:
+            return messagebox.showerror(
+                "Demodulate",
+                "The drive is CW -- an unmodulated carrier. There is no "
+                "modulation for a lock-in to sit on, so there is no f1.\n\n"
+                "Set a modulation frequency, or demodulate a capture taken "
+                "with one.")
         f = harmonic * table.modulation
         self.v_fref.set(f"{f / 1e3:.6f}")
         self.log(f"f_ref = {harmonic} x the generated drive "

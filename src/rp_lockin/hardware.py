@@ -29,7 +29,8 @@ import time
 import numpy as np
 
 from .constants import ANALOG_BANDWIDTH, BASE_SAMPLE_RATE
-from .waveforms import AsgTable, make_am_table, make_am_table_exact
+from .waveforms import (AsgTable, make_am_table, make_am_table_exact,
+                        make_cw_table)
 
 __all__ = ["RedPitaya"]
 
@@ -256,6 +257,18 @@ class RedPitaya:
         # entries like any DDS. Falls back to the grid when no integer pair
         # fits, because a refusal here would be worse than a 7 kHz offset the
         # caller can see in the returned table.
+        # modulation <= 0 is CW: hold the envelope, emit one line. Handled
+        # before the AM planners because they have nothing to plan.
+        if modulation <= 0:
+            table = make_cw_table(carrier, fs=self.base_rate)
+            data = ",".join(f"{v:.6f}" for v in table.samples)
+            self.write(f"SOUR{channel}:FUNC ARBITRARY")
+            self.write(f"SOUR{channel}:TRAC:DATA:DATA {data}")
+            self.write(f"SOUR{channel}:FREQ:FIX {table.play_freq:.4f}")
+            self.write(f"SOUR{channel}:VOLT {amplitude}")
+            self.write(f"OUTPUT{channel}:STATE ON")
+            self.write(f"SOUR{channel}:TRig:INT")
+            return table
         table = None
         if exact:
             try:
