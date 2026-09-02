@@ -354,6 +354,14 @@ class Bench:
         ttk.Button(bar, text="Fit",
                    command=lambda: self.plot.reset_view()).pack(side="left",
                                                                 padx=4)
+        # dB, because the interesting part of a sinc is the part a linear axis
+        # flattens onto the zero line.
+        self.v_logy = tk.BooleanVar(value=False)
+        ttk.Checkbutton(bar, text="dB", variable=self.v_logy,
+                        command=self.redraw).pack(side="left", padx=(10, 2))
+        self.v_floor = tk.StringVar(value="80")
+        ttk.Entry(bar, textvariable=self.v_floor, width=4).pack(side="left")
+        ttk.Label(bar, text="dB range").pack(side="left", padx=(2, 0))
         ttk.Label(bar, text="wheel = zoom X | shift+wheel = Y | "
                             "ctrl+wheel = both | drag = pan | double-click = fit",
                   foreground="#666").pack(side="left", padx=10)
@@ -416,6 +424,46 @@ class Bench:
             return 0.0, "time from RECORD start (s) -- no trigger in this record"
         return float(edge), "time from SWEEP start (s)"
 
+    def _to_db(self, y, ylabel):
+        """|y| in dB relative to its own peak, floored so log stays finite.
+
+        **The magnitude, deliberately.** A sinc's negative lobes are a real
+        180-degree phase flip, not noise, so folding them up is what shows the
+        lobe-and-null structure rather than hiding half of it. Where the trace
+        really is noise the sign is meaningless anyway.
+
+        Everything at or below the floor is pinned TO the floor rather than
+        dropped, so a null reads as "under the floor" instead of leaving a gap
+        that looks like missing data. Widen the range to see how deep it goes.
+        """
+        try:
+            span = abs(float(self.v_floor.get()))
+        except ValueError:
+            span = 80.0
+        span = max(span, 6.0)
+        mag = np.abs(np.asarray(y, dtype=float))
+        peak = float(np.nanmax(mag)) if mag.size else 0.0
+        if not np.isfinite(peak) or peak <= 0:
+            self.log("dB view: the trace is all zero, so there is no peak to "
+                     "reference. Showing it linear.")
+            return y, ylabel, None
+        floor = peak * 10 ** (-span / 20.0)
+        db = 20.0 * np.log10(np.maximum(mag, floor) / peak)
+        at_floor = int(np.count_nonzero(mag <= floor))
+        if at_floor:
+            self.log(f"dB view: {at_floor} of {mag.size} points sit at or "
+                     f"below the {span:g} dB floor and are pinned to it "
+                     f"(peak {peak:.6g}).")
+        return db, f"{ylabel} (dB re peak)", lambda v: f"{v:.0f}"
+
+    def _show(self, x, y, xlabel, ylabel, xfmt=None, yfmt=None):
+        """One place where the dB toggle is applied, so every view honours it."""
+        if self.v_logy.get():
+            y, ylabel, dbfmt = self._to_db(y, ylabel)
+            if dbfmt is not None:
+                yfmt = dbfmt
+        self.plot.show(x, y, xlabel, ylabel, xfmt=xfmt, yfmt=yfmt)
+
     def redraw(self):
         what = self.plot_what.get()
         try:
@@ -423,9 +471,9 @@ class Bench:
                 if self.ws.reduction is None:
                     return self.log("no trace: run Map first")
                 w, a = self.ws.reduction.trace.dropna()
-                self.plot.show(w * 1e9, a, "wavelength (nm)", "amplitude (V)",
-                               xfmt=lambda v: f"{v:.1f}",
-                               yfmt=lambda v: eng(v, "V"))
+                self._show(w * 1e9, a, "wavelength (nm)", "amplitude (V)",
+                           xfmt=lambda v: f"{v:.1f}",
+                           yfmt=lambda v: eng(v, "V"))
             elif what.startswith("lock-in R"):
                 # R cannot go negative and does not care where the reference
                 # phase sits, so it separates "the signal changed" from "the
@@ -434,8 +482,8 @@ class Bench:
                     return self.log("no lock-in: run Demodulate first")
                 r = self.ws.lockin
                 t0, label = self._time_origin()
-                self.plot.show(r.t - t0, r.R, label, "R (V)",
-                               yfmt=lambda v: eng(v, "V"))
+                self._show(r.t - t0, r.R, label, "R (V)",
+                           yfmt=lambda v: eng(v, "V"))
             elif what.startswith("lock-in phase"):
                 # Unwrapped, because the interesting case is phase that WINDS:
                 # wrapped into (-180, 180] a steady drift looks like a sawtooth
@@ -445,6 +493,10 @@ class Bench:
                 r = self.ws.lockin
                 t0, label = self._time_origin()
                 ph = np.degrees(np.unwrap(r.theta))
+                # Not through _show: degrees in dB is meaningless, and a
+                # toggle that silently did nothing would be worse.
+                if self.v_logy.get():
+                    self.log("dB does not apply to phase; showing degrees.")
                 self.plot.show(r.t - t0, ph, label, "phase (deg)",
                                yfmt=lambda v: f"{v:.0f}")
             elif what.startswith("lock-in"):
@@ -452,16 +504,16 @@ class Bench:
                     return self.log("no lock-in: run Demodulate first")
                 r = self.ws.lockin
                 t0, label = self._time_origin()
-                self.plot.show(r.t - t0, r.amplitude(), label, "amplitude (V)",
-                               yfmt=lambda v: eng(v, "V"))
+                self._show(r.t - t0, r.amplitude(), label, "amplitude (V)",
+                           yfmt=lambda v: eng(v, "V"))
             elif what.startswith("raw IN1"):
                 if not self.ws.capture:
                     return self.log("no capture")
                 c = self.ws.capture
                 t0, label = self._time_origin()
                 t = np.arange(c["ch1"].size) / c["fs"] - t0
-                self.plot.show(t, ops.volts(c["ch1"]), label, "IN1 (V)",
-                               yfmt=lambda v: eng(v, "V"))
+                self._show(t, ops.volts(c["ch1"]), label, "IN1 (V)",
+                           yfmt=lambda v: eng(v, "V"))
             else:
                 if not self.ws.capture:
                     return self.log("no capture")

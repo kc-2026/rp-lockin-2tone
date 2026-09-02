@@ -1564,3 +1564,72 @@ def test_the_f1_button_refuses_a_cw_drive(app, monkeypatch):
     assert errors, "the f1 button accepted a CW drive"
     assert app.v_fref.get() == before, "f_ref was set to DC"
 
+
+# ------------------------------------------------------------- the dB view
+# Asked for after SHG worked: on a linear axis the tails of the sinc-like
+# response are flattened onto the zero line. The complication is that the
+# amplitude estimator is SIGNED -- noise near zero comes out negative, and a
+# logarithm cannot take that.
+
+
+def test_db_uses_the_magnitude_so_negative_lobes_survive(app):
+    """A sinc's negative lobes are a real 180-degree phase flip, not noise.
+    Dropping them would hide half the structure the view exists to show."""
+    y = np.array([1.0, -0.5, 0.25, -0.125])
+    db, label, _fmt = app._to_db(y, "amplitude (V)")
+    assert db[0] == pytest.approx(0.0)
+    assert db[1] == pytest.approx(20 * np.log10(0.5))
+    assert db[3] == pytest.approx(20 * np.log10(0.125))
+    assert "dB re peak" in label
+
+
+def test_the_floor_pins_rather_than_drops(app):
+    """A null pinned to the floor reads as 'under the floor'. A dropped point
+    leaves a gap, and a gap looks like missing data."""
+    app.v_floor.set("40")
+    y = np.array([1.0, 0.0, -1e-9, 0.5])
+    db, _label, _fmt = app._to_db(y, "amplitude (V)")
+    assert np.all(np.isfinite(db)), "a zero produced -inf"
+    assert db[1] == pytest.approx(-40.0)
+    assert db[2] == pytest.approx(-40.0)
+    assert db.size == y.size, "points were dropped rather than floored"
+
+
+def test_the_floor_is_configurable(app):
+    y = np.array([1.0, 0.0])
+    for span in ("20", "60", "120"):
+        app.v_floor.set(span)
+        db, _l, _f = app._to_db(y, "y")
+        assert db[1] == pytest.approx(-float(span))
+
+
+def test_a_nonsense_floor_falls_back_instead_of_raising(app):
+    app.v_floor.set("banana")
+    db, _l, _f = app._to_db(np.array([1.0, 0.0]), "y")
+    assert db[1] == pytest.approx(-80.0)
+
+
+def test_an_all_zero_trace_does_not_produce_infinities(app):
+    """There is no peak to reference. Say so and stay linear rather than
+    handing the plot a column of -inf."""
+    lines = []
+    app.log = lambda m: lines.append(m)
+    y = np.zeros(8)
+    out, label, fmt = app._to_db(y, "amplitude (V)")
+    assert np.all(out == 0.0) and fmt is None
+    assert label == "amplitude (V)"
+    assert any("no peak" in m for m in lines)
+
+
+def test_the_peak_is_always_zero_db(app):
+    y = np.array([3e-6, -7e-6, 2e-6])
+    db, _l, _f = app._to_db(y, "y")
+    assert db.max() == pytest.approx(0.0)
+
+
+def test_the_toggle_exists_and_starts_off(app):
+    """Linear is the honest default: dB folds the sign away, and the sign is
+    how a phase rotation gives itself up."""
+    assert hasattr(app, "v_logy")
+    assert app.v_logy.get() is False
+
