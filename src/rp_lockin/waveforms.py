@@ -366,6 +366,47 @@ def make_cw_table(carrier: float, cycles: int = 80,
                     modulation=0.0, carrier_cycles=n_c, mod_cycles=0)
 
 
+def make_sine_table(freq: float, fs: float = BASE_SAMPLE_RATE,
+                    max_play: float = 10e6) -> AsgTable:
+    """A single clean tone -- no carrier, no modulation, one line.
+
+    This is what a carrier of 0 means on this bench: not an AM waveform with
+    the carrier removed, but a plain sine at the modulation frequency, for
+    driving something directly or for feeding a known tone into the lock-in.
+
+    **One cycle in the table, played at the frequency itself.** That makes any
+    whole number of hertz exact, which matters here more than anywhere else:
+    the lock-in will usually be told to sit on this frequency, and a few
+    hertz of error comes back as a slow beat rather than as an error. The
+    80-cycle pairing `make_cw_table` uses would round the play rate and put
+    915 kHz out by 40 Hz.
+
+    16384 entries per cycle is far more than the reconstruction needs; the DAC
+    samples the table at 250 MS/s regardless, giving 250 output samples per
+    cycle at 1 MHz.
+
+    Both `carrier` and `modulation` on the returned table are the tone itself,
+    so the Demodulate panel's f1 button lands on it.
+    """
+    f = int(round(freq))
+    if abs(f - freq) > 1e-6 or f < 1:
+        raise ValueError(
+            f"a single tone must be a whole number of hertz, got {freq!r}. "
+            f"The play rate is quantised to 1 Hz, and this table holds one "
+            f"cycle played at the frequency itself.")
+    cycles = max(1, int(np.ceil(f / max_play)))
+    play = float(f) / cycles
+    if play != int(play):
+        raise ValueError(
+            f"{f} Hz needs {cycles} cycles to stay under the {max_play:g} Hz "
+            f"play-rate ceiling, and does not divide by {cycles} exactly.")
+    k = np.arange(ASG_BUFFER_MAX)
+    wave = np.cos(2 * np.pi * cycles * k / ASG_BUFFER_MAX)
+    return AsgTable(samples=wave, play_freq=play, carrier=cycles * play,
+                    modulation=cycles * play, carrier_cycles=cycles,
+                    mod_cycles=cycles)
+
+
 def plan_two_tone_grid(difference: float = 1e6, f1: float = 5e6,
                        carrier: float = 80e6,
                        fs: float = BASE_SAMPLE_RATE) -> GridTwoTonePlan:

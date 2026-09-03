@@ -721,10 +721,17 @@ class Bench:
         Returns (table, "exact"|"grid").
         """
         from rp_lockin.waveforms import (make_am_table, make_am_table_exact,
-                                         make_cw_table)
-        # 0 (or blank) means CW: an unmodulated carrier at constant amplitude.
-        # NOT a DC level -- the AOM needs its 80 MHz and the amplifier is
-        # AC-coupled, so DC would do nothing.
+                                         make_cw_table, make_sine_table)
+        # Two degenerate cases, and they are opposite ends of the same knob.
+        # carrier 0: a plain sine at the modulation frequency, for driving
+        # something directly or feeding the lock-in a known tone.
+        # modulation 0: an unmodulated carrier at constant amplitude -- NOT a
+        # DC level, since the AOM needs its 80 MHz and the amplifier is
+        # AC-coupled.
+        if carrier <= 0 and mod <= 0:
+            raise ValueError("carrier and modulation cannot both be zero")
+        if carrier <= 0:
+            return make_sine_table(mod), "sine"
         if mod <= 0:
             return make_cw_table(carrier), "cw"
         try:
@@ -741,6 +748,10 @@ class Bench:
             t, mode = self._resolve(carrier, asked)
         except Exception:                            # noqa: BLE001
             return d["snap"].set("")
+        if mode == "sine":
+            return d["snap"].set(
+                f"plain sine at {t.modulation / 1e3:.3f} kHz. No carrier, one "
+                f"spectral line. Exact to the hertz.")
         if mode == "cw":
             return d["snap"].set(
                 f"CW: {t.carrier / 1e6:.3f} MHz, no modulation. Holds the "
@@ -794,10 +805,14 @@ class Bench:
         except ValueError as e:
             return messagebox.showerror("Drive", f"Not a number: {e}")
         cw = cfg["modulation"] <= 0
+        sine = cfg["carrier"] <= 0
         if not messagebox.askokcancel(
                 f"Enable OUT{ch}",
-                f"Carrier      {cfg['carrier'] / 1e6:.6f} MHz\n"
-                + ("Modulation   NONE -- CW, envelope held. About 3 dB more\n"
+                (f"Plain sine   {cfg['modulation'] / 1e3:.3f} kHz, no "
+                 f"carrier\n" if sine else
+                 f"Carrier      {cfg['carrier'] / 1e6:.6f} MHz\n")
+                + ("" if sine else
+                   "Modulation   NONE -- CW, envelope held. About 3 dB more\n"
                    "             average RF power than depth-1 AM.\n"
                    if cw else
                    f"Modulation   {cfg['modulation'] / 1e3:.4f} kHz "
@@ -808,6 +823,10 @@ class Bench:
             return self.log("drive enable cancelled")
 
         def done(table):
+            if sine:
+                return self.log(f"OUT{ch} ON: plain sine "
+                                f"{table.modulation / 1e3:.4f} kHz, "
+                                f"{cfg['amplitude']} V")
             how = ("CW, no modulation" if table.mod_cycles == 0
                    else f"modulation {table.modulation / 1e3:.4f} kHz")
             self.log(f"OUT{ch} ON: carrier {table.carrier / 1e6:.6f} MHz, "
@@ -1570,7 +1589,7 @@ class Bench:
         except ValueError as e:
             return messagebox.showerror("Drive", f"Not a number: {e}")
         table, mode = self._resolve(cfg["carrier"], cfg["modulation"])
-        if mode == "cw" or table.modulation <= 0:
+        if mode == "cw" or table.modulation <= 0:      # a sine HAS an f1
             return messagebox.showerror(
                 "Demodulate",
                 "The drive is CW -- an unmodulated carrier. There is no "

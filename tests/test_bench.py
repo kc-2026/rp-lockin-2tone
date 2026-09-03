@@ -2327,3 +2327,91 @@ def test_a_faster_sweep_moves_the_limit(app):
     app._update_tau()
     assert "PAST THE" in app.v_tau.get(), app.v_tau.get()
 
+
+# ------------------------------------------- carrier 0 means a plain sine
+# The mirror of modulation 0. Two degenerate settings, opposite ends of the
+# same knob:
+#   modulation 0 -> unmodulated carrier, envelope held
+#   carrier 0    -> a single tone at the modulation frequency, no carrier
+
+
+def test_a_sine_is_one_spectral_line():
+    from rp_lockin.waveforms import make_sine_table
+    t = make_sine_table(1000000.0)
+    spectrum = np.abs(np.fft.rfft(t.samples))
+    peak = int(np.argmax(spectrum))
+    assert peak == t.carrier_cycles
+    rest = spectrum.copy()
+    rest[peak] = 0.0
+    assert rest.max() < 1e-12 * spectrum[peak], "the tone is not clean"
+
+
+def test_the_sine_frequency_is_exact_to_the_hertz():
+    """It matters more here than anywhere else: the lock-in is usually told to
+    sit on this frequency, and an error comes back as a slow beat rather than
+    as an error. make_cw_table's 80-cycle pairing would round 915 kHz to
+    915040 Hz -- 40 Hz out, which over a 1 s record is 40 turns of phase."""
+    from rp_lockin.waveforms import make_sine_table, make_cw_table
+    for f in (915000.0, 1000000.0, 310000.0, 2140000.0, 999983.0):
+        t = make_sine_table(f)
+        assert t.modulation == pytest.approx(f, abs=1e-9), f
+        assert t.carrier == pytest.approx(f, abs=1e-9), f
+    assert make_cw_table(915000.0).carrier != pytest.approx(915000.0, abs=1.0)
+
+
+def test_a_fractional_hertz_tone_is_refused():
+    from rp_lockin.waveforms import make_sine_table
+    for bad in (915000.5, 0.0, -1000.0):
+        with pytest.raises(ValueError):
+            make_sine_table(bad)
+
+
+def test_both_fields_name_the_tone_so_f1_lands_on_it():
+    """The Demodulate f1 button reads table.modulation."""
+    from rp_lockin.waveforms import make_sine_table
+    t = make_sine_table(310000.0)
+    assert t.modulation == t.carrier == pytest.approx(310000.0)
+    assert t.mod_cycles == t.carrier_cycles == 1
+
+
+def test_the_bench_resolves_a_zero_carrier_as_a_sine(app):
+    app.v_carrier.set("0")
+    app.v_mod.set("1000")
+    t, mode = app._resolve(0.0, 1e6)
+    assert mode == "sine"
+    assert t.modulation == pytest.approx(1e6)
+    app._update_snap(1)
+    assert "plain sine" in app.v_snap.get()
+    assert "1000.000 kHz" in app.v_snap.get()
+
+
+def test_the_f1_button_works_for_a_sine(app):
+    """CW has no modulation to sit on and is refused. A sine IS a modulation
+    frequency, so f1 must land on it."""
+    app.v_carrier.set("0")
+    app.v_mod.set("310")
+    app.fref_from_drive(1)
+    assert float(app.v_fref.get()) == pytest.approx(310.0, abs=1e-3)
+
+
+def test_both_zero_is_refused_rather_than_silently_nothing(app):
+    """No carrier and no modulation is no output. Better to say so than to
+    arm a channel that emits a flat line."""
+    with pytest.raises(ValueError):
+        app._resolve(0.0, 0.0)
+
+
+def test_the_dialog_says_sine_rather_than_naming_a_zero_carrier(app,
+                                                                monkeypatch):
+    shown = []
+    monkeypatch.setattr(bench_mod().messagebox, "askokcancel",
+                        lambda *a, **k: shown.append(a) or False)
+    monkeypatch.setattr(app, "_need_board", lambda: object())
+    app.v_carrier.set("0")
+    app.v_mod.set("1000")
+    app.drive_on(1)
+    assert shown, "no dialog"
+    body = " ".join(str(x) for x in shown[0])
+    assert "Plain sine" in body
+    assert "0.000000 MHz" not in body, "it named a zero carrier"
+

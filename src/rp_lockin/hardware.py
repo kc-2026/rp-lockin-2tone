@@ -30,7 +30,7 @@ import numpy as np
 
 from .constants import ANALOG_BANDWIDTH, BASE_SAMPLE_RATE
 from .waveforms import (AsgTable, make_am_table, make_am_table_exact,
-                        make_cw_table)
+                        make_cw_table, make_sine_table)
 
 __all__ = ["RedPitaya"]
 
@@ -257,10 +257,18 @@ class RedPitaya:
         # entries like any DDS. Falls back to the grid when no integer pair
         # fits, because a refusal here would be worse than a 7 kHz offset the
         # caller can see in the returned table.
-        # modulation <= 0 is CW: hold the envelope, emit one line. Handled
-        # before the AM planners because they have nothing to plan.
-        if modulation <= 0:
-            table = make_cw_table(carrier, fs=self.base_rate)
+        # Two degenerate cases, both handled before the AM planners because
+        # neither has anything to plan:
+        #   carrier 0     -> a plain sine at the modulation frequency
+        #   modulation 0  -> an unmodulated carrier, envelope held
+        if carrier <= 0 and modulation <= 0:
+            raise ValueError(
+                "carrier and modulation cannot both be zero -- that is no "
+                "output at all. Set one of them.")
+        if carrier <= 0 or modulation <= 0:
+            table = (make_sine_table(modulation, fs=self.base_rate)
+                     if carrier <= 0
+                     else make_cw_table(carrier, fs=self.base_rate))
             data = ",".join(f"{v:.6f}" for v in table.samples)
             self.write(f"SOUR{channel}:FUNC ARBITRARY")
             self.write(f"SOUR{channel}:TRAC:DATA:DATA {data}")
