@@ -112,6 +112,8 @@ class Plot(tk.Canvas):
                          highlightbackground="#c0c0c0", **kw)
         self.x = np.array([])
         self.y = np.array([])
+        self.series = [(self.x, self.y)]
+        self.labels = []
         self.xlabel = ""
         self.ylabel = ""
         self.xfmt = None
@@ -138,6 +140,29 @@ class Plot(tk.Canvas):
         self.bind("<ButtonRelease-1>", lambda _e: setattr(self, "_pan", None))
         self.bind("<Double-Button-1>", lambda _e: self.reset_view())
 
+    def show_many(self, series, xlabel="", ylabel="", xfmt=None, yfmt=None,
+                  labels=None, keep_view=False):
+        """Several (x, y) pairs on one pair of axes.
+
+        For the gain waterfall: one trace per detector gain, offset so they
+        stack. The min/max reducer runs per series so narrow features survive
+        in all of them; the hover readout follows the FIRST series, because a
+        cursor cannot sensibly belong to all of them at once.
+        """
+        self.series = [(np.asarray(x, dtype=float).ravel(),
+                        np.asarray(y, dtype=float).ravel())
+                       for x, y in series]
+        if not self.series:
+            self.series = [(np.array([]), np.array([]))]
+        self.labels = list(labels or [])
+        self.x, self.y = self.series[0]
+        self.xlabel, self.ylabel = xlabel, ylabel
+        self.xfmt, self.yfmt = xfmt, yfmt
+        self._readout = ""
+        if not keep_view:
+            self.xview = self.yview = None
+        self._draw()
+
     def show(self, x, y, xlabel="", ylabel="", xfmt=None, yfmt=None,
              keep_view=False):
         """Draw new data. Resets the zoom unless `keep_view` is asked for.
@@ -148,6 +173,8 @@ class Plot(tk.Canvas):
         """
         self.x = np.asarray(x, dtype=float).ravel()
         self.y = np.asarray(y, dtype=float).ravel()
+        self.series = [(self.x, self.y)]
+        self.labels = []
         self.xlabel, self.ylabel = xlabel, ylabel
         self.xfmt, self.yfmt = xfmt, yfmt
         self._readout = ""
@@ -160,6 +187,15 @@ class Plot(tk.Canvas):
         self._draw()
 
     def _data_limits(self):
+        if len(getattr(self, "series", [])) > 1:
+            xs = np.concatenate([a for a, _b in self.series if a.size])
+            ys = np.concatenate([b for _a, b in self.series if b.size])
+            xmin, xmax = float(np.nanmin(xs)), float(np.nanmax(xs))
+            ymin, ymax = float(np.nanmin(ys)), float(np.nanmax(ys))
+            if ymin == ymax:
+                ymin, ymax = ymin - 1.0, ymax + 1.0
+            pad = 0.05 * (ymax - ymin)
+            return xmin, xmax, ymin - pad, ymax + pad
         xmin, xmax = float(np.nanmin(self.x)), float(np.nanmax(self.x))
         with np.errstate(invalid="ignore"):
             ymin, ymax = float(np.nanmin(self.y)), float(np.nanmax(self.y))
@@ -207,6 +243,8 @@ class Plot(tk.Canvas):
     def clear(self):
         self.x = np.array([])
         self.y = np.array([])
+        self.series = [(self.x, self.y)]
+        self.labels = []
         self._readout = ""
         self._draw()
 
@@ -251,12 +289,20 @@ class Plot(tk.Canvas):
             self.create_text(gx, y1 + 6, anchor="n", font=("TkDefaultFont", 7),
                              text=xf(xmin + frac * (xmax - xmin)))
 
-        coords = []
-        for px, lo, hi in self._reduce(int(x1 - x0)):
-            gx = x0 + px
-            coords.extend([gx, sy(hi), gx, sy(lo)])
-        if len(coords) >= 4:
-            self.create_line(*coords, fill="#1f5fa8")
+        palette = ("#1f5fa8", "#a83232", "#2e7d32", "#7b1fa2", "#ef6c00",
+                   "#00838f", "#5d4037", "#c2185b")
+        for i, (sx, svals) in enumerate(getattr(self, "series",
+                                                [(self.x, self.y)])):
+            coords = []
+            for px, lo, hi in self._reduce(int(x1 - x0), sx, svals):
+                gx = x0 + px
+                coords.extend([gx, sy(hi), gx, sy(lo)])
+            if len(coords) >= 4:
+                self.create_line(*coords, fill=palette[i % len(palette)])
+        for i, name in enumerate(getattr(self, "labels", [])[:len(palette)]):
+            self.create_text(x1 - 6, y0 + 6 + 12 * i, anchor="ne", text=name,
+                             font=("TkDefaultFont", 7),
+                             fill=palette[i % len(palette)])
 
         self.create_text((x0 + x1) / 2, y1 + 22, text=self.xlabel,
                          font=("TkDefaultFont", 8))
@@ -270,20 +316,21 @@ class Plot(tk.Canvas):
                              font=("TkDefaultFont", 8),
                              text="ZOOMED -- double-click to fit")
 
-    def _reduce(self, width: int):
+    def _reduce(self, width: int, xs_all=None, ys_all=None):
         """min/max per pixel column, so narrow features survive."""
         width = max(int(width), 1)
-        n = self.x.size
-        if n == 0:
+        if xs_all is None:
+            xs_all, ys_all = self.x, self.y
+        if xs_all.size == 0:
             return
         xmin, xmax = self._limits[0], self._limits[1]
         span = xmax - xmin or 1.0
         # Only what is inside the window. Without this, zooming in would keep
         # binning the whole record into the same columns and reveal nothing.
-        inside = (self.x >= xmin) & (self.x <= xmax)
+        inside = (xs_all >= xmin) & (xs_all <= xmax)
         if not inside.any():
             return
-        xs, y = self.x[inside], self.y[inside]
+        xs, y = xs_all[inside], ys_all[inside]
         col = np.clip(((xs - xmin) / span * (width - 1)).astype(int),
                       0, width - 1)
         order = np.argsort(col, kind="stable")
