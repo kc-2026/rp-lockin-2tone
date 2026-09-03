@@ -38,6 +38,7 @@ and cannot route around them.
 """
 from __future__ import annotations
 
+import math
 import os
 import queue
 import sys
@@ -1467,15 +1468,27 @@ class Bench:
         f = self._panel(parent, "Demodulate")
         self.v_fref = tk.StringVar(value=f"{DEFAULT_MOD_HZ / 1e3:.4f}")
         self.v_orate = tk.StringVar(value="5000")
+        self.v_bw = tk.StringVar(value="")
         fld(f, 0, "f_ref", self.v_fref, "kHz")
         fld(f, 1, "output rate", self.v_orate, "Sa/s")
+        # Blank means "derive it from the output rate", which is what this did
+        # before the box existed: 0.9 x the output Nyquist, the widest that
+        # does not fold noise back onto the trace.
+        fld(f, 2, "bandwidth", self.v_bw, "Hz")
+        self.v_tau = tk.StringVar(value="")
+        ttk.Label(f, textvariable=self.v_tau, foreground="#144",
+                  justify="left", wraplength=300).grid(
+            row=3, column=0, columnspan=3, sticky="w", pady=(2, 2))
+        for v in (self.v_orate, self.v_bw):
+            v.trace_add("write", lambda *_a: self._update_tau())
+        self._update_tau()
         ttk.Label(f, text="Runs on the capture in the workspace, so the\n"
                           "same record can be examined at f1 and 2*f1\n"
                           "without touching hardware.",
                   foreground="#666", justify="left", wraplength=300).grid(
-            row=2, column=0, columnspan=3, sticky="w", pady=(4, 4))
+            row=4, column=0, columnspan=3, sticky="w", pady=(4, 4))
         h = ttk.Frame(f)
-        h.grid(row=3, column=0, columnspan=3, sticky="w")
+        h.grid(row=5, column=0, columnspan=3, sticky="w")
         ttk.Button(h, text="f1", width=4,
                    command=lambda: self.fref_from_drive(1)).pack(side="left",
                                                                   padx=2)
@@ -1485,7 +1498,7 @@ class Bench:
                    command=lambda: self.fref_from_drive(3)).pack(side="left",
                                                                  padx=2)
         s = ttk.Frame(f)
-        s.grid(row=4, column=0, columnspan=3, sticky="w", pady=(2, 0))
+        s.grid(row=6, column=0, columnspan=3, sticky="w", pady=(2, 0))
         # SFG output goes as I1 x I2, so the nonlinearity lands on the SUM and
         # the DIFFERENCE and nowhere else. f2 on its own is the linear control:
         # a real SFG signal is absent there.
@@ -1503,9 +1516,9 @@ class Bench:
                           "away from its signal returns a df BEAT -- a clean\n"
                           "sine across the trace that looks like a result.",
                   foreground="#a04000", justify="left", wraplength=300).grid(
-            row=5, column=0, columnspan=3, sticky="w", pady=(4, 4))
+            row=7, column=0, columnspan=3, sticky="w", pady=(4, 4))
         ttk.Button(f, text="Demodulate capture",
-                   command=self.demod_run).grid(row=6, column=0, columnspan=3,
+                   command=self.demod_run).grid(row=8, column=0, columnspan=3,
                                                 sticky="w")
 
     def fref_from_drive(self, harmonic):
@@ -1535,6 +1548,60 @@ class Bench:
         self.v_fref.set(f"{f / 1e3:.6f}")
         self.log(f"f_ref = {harmonic} x the generated drive "
                  f"({table.modulation:.4f} Hz) = {f:.4f} Hz")
+
+    def _bandwidth(self):
+        """The bandwidth to demodulate at, or None for "derive it".
+
+        None is not a fallback -- it is the normal case, and `demodulate` then
+        takes 0.9 x the output Nyquist, the widest that does not fold noise
+        back onto the trace.
+        """
+        text = self.v_bw.get().strip()
+        if not text:
+            return None
+        return float(text)
+
+    def _update_tau(self):
+        """Say what the filter setting means, in the two other units.
+
+        The time constant, because that is what a lock-in is usually specified
+        by, and the NOISE GAIN, because it is not the bandwidth and the
+        difference is 1.9x. Sigma scales as its square root, so halving the
+        bandwidth buys 1.5 dB, not 3.
+        """
+        try:
+            orate = float(self.v_orate.get())
+            bw = self._bandwidth()
+        except ValueError:
+            return self.v_tau.set("")
+        if orate <= 0:
+            return self.v_tau.set("")
+        nyq = orate / 2.0
+        auto = bw is None
+        if auto:
+            bw = 0.9 * nyq
+        if bw <= 0:
+            return self.v_tau.set("")
+        tau = 1.0 / (2.0 * math.pi * bw)
+        # ~1.9x the nominal bandwidth, measured. See 05-results.md; using the
+        # bandwidth itself puts sigma 46% low, in the optimistic direction.
+        noise_gain = 1.88 * bw
+        try:
+            from rp_lockin.planning import settling_points
+            fs = float(self.ws.capture["fs"]) if self.ws.capture else None
+            pts, secs = (settling_points(orate, bw, fs=fs) if fs
+                         else settling_points(orate, bw))
+            settle = f", settles in {pts} points ({secs * 1e3:.1f} ms)"
+        except Exception:                                # noqa: BLE001
+            settle = ""
+        msg = (f"{'auto: ' if auto else ''}{bw:.0f} Hz "
+               f"= tau {tau * 1e6:.1f} us, noise gain ~{noise_gain:.0f} Hz"
+               f"{settle}.")
+        if bw > 0.9 * nyq + 1e-9:
+            msg += (f"\nWARNING: wider than 0.9 x the {nyq:.0f} Hz output "
+                    f"Nyquist, so noise above {nyq:.0f} Hz folds back onto "
+                    f"the trace and cannot be told from signal.")
+        self.v_tau.set(msg)
 
     def fref_from_sfg(self, kind):
         """Set f_ref to an SFG signature built from what BOTH ASGs will play.
@@ -1608,6 +1675,7 @@ class Bench:
         try:
             f_ref = float(self.v_fref.get()) * 1e3
             orate = float(self.v_orate.get())
+            bw = self._bandwidth()
         except ValueError as e:
             return messagebox.showerror("Demodulate", f"Not a number: {e}")
 
@@ -1629,7 +1697,8 @@ class Bench:
 
         self.submit(self.board, "demodulate",
                     lambda: ops.run_demodulate(self.ws.capture, f_ref,
-                                               output_rate=orate), done)
+                                               output_rate=orate,
+                                               bandwidth=bw), done)
 
     # -- Map -----------------------------------------------------------------
 
@@ -1644,6 +1713,9 @@ class Bench:
                                                              sticky="w")
 
     def map_run(self):
+        # Map re-demodulates, so it has to use the SAME bandwidth as the
+        # Demodulate panel -- otherwise the trace and the lock-in view are
+        # filtered differently and only one of them is what you tuned.
         if not self.ws.capture:
             return messagebox.showinfo("Map", "No capture in the workspace.")
         if self.ws.laser_log is None:
@@ -1651,6 +1723,7 @@ class Bench:
         try:
             f_ref = float(self.v_fref.get()) * 1e3
             orate = float(self.v_orate.get())
+            bw = self._bandwidth()
             cfg = self._sweep_cfg()
         except ValueError as e:
             return messagebox.showerror("Map", f"Not a number: {e}")
@@ -1674,6 +1747,7 @@ class Bench:
         self.submit(self.board, "map to wavelength",
                     lambda: ops.run_map(self.ws.capture, self.ws.laser_log,
                                         f_ref, output_rate=orate,
+                                        bandwidth=bw,
                                         nominal_step=cfg["step_nm"]
                                         / cfg["speed_nm_s"]), done)
 

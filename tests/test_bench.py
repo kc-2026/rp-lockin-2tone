@@ -1937,3 +1937,129 @@ def test_the_sequence_waits_before_starting_the_sweep():
     assert wait < start, "the sweep is started before the wait"
     assert "time.sleep(2.0)" not in src, "the fixed timer is still there"
 
+
+# ------------------------------------------- the output lowpass, exposed
+# It was always there -- demodulate() takes a bandwidth and run_map passes it
+# through -- but nothing on the bench could set it, so every trace was filtered
+# at 0.9 x the output Nyquist whether that suited the measurement or not.
+
+
+def test_blank_means_derive_it_from_the_output_rate(app):
+    """Not a fallback: it is the normal case, and the widest setting that does
+    not fold noise back onto the trace."""
+    app.v_bw.set("")
+    assert app._bandwidth() is None
+
+
+def test_a_bandwidth_can_be_given_in_hertz(app):
+    app.v_bw.set("500")
+    assert app._bandwidth() == pytest.approx(500.0)
+
+
+def test_the_readout_gives_the_time_constant(app):
+    """A lock-in is usually specified by tau, not by bandwidth."""
+    app.v_orate.set("5000")
+    app.v_bw.set("2250")
+    app._update_tau()
+    shown = app.v_tau.get()
+    tau_us = 1e6 / (2 * np.pi * 2250)
+    assert f"{tau_us:.1f}" in shown, shown
+    assert "tau" in shown
+
+
+def test_the_readout_names_the_noise_gain_separately(app):
+    """The noise gain is ~1.9x the bandwidth, and quoting the bandwidth
+    instead puts sigma 46% low -- in the optimistic direction."""
+    app.v_orate.set("5000")
+    app.v_bw.set("2250")
+    app._update_tau()
+    shown = app.v_tau.get()
+    assert "noise gain" in shown
+    assert "4230" in shown or "4232" in shown or "4231" in shown, shown
+
+
+def test_auto_is_nine_tenths_of_the_output_nyquist(app):
+    app.v_orate.set("5000")
+    app.v_bw.set("")
+    app._update_tau()
+    assert "auto" in app.v_tau.get()
+    assert "2250" in app.v_tau.get(), app.v_tau.get()
+
+
+def test_too_wide_a_bandwidth_is_called_out(app):
+    """Above 0.9 x the output Nyquist, noise folds back and cannot be told
+    from signal."""
+    app.v_orate.set("5000")
+    app.v_bw.set("4000")
+    app._update_tau()
+    assert "WARNING" in app.v_tau.get()
+    assert "folds" in app.v_tau.get()
+
+
+def test_a_sane_bandwidth_is_not_called_out(app):
+    app.v_orate.set("5000")
+    app.v_bw.set("500")
+    app._update_tau()
+    assert "WARNING" not in app.v_tau.get()
+
+
+def test_nonsense_does_not_raise(app):
+    for bad in ("banana", "-1", "0"):
+        app.v_bw.set(bad)
+        app._update_tau()          # must not raise
+
+
+def test_the_readout_reports_the_REAL_settling_not_an_assumed_one(app):
+    """Settling is NOT monotonic in bandwidth, which is why it is displayed
+    rather than left to intuition.
+
+    Measured at 5000 Sa/s: 2250 Hz settles in 113 points, 1000 Hz in 48, and
+    500 Hz in 70 -- it falls and then rises again. The filter's transition
+    width is floored at 0.10 x the output Nyquist, and a FIR's length goes as
+    1/transition, so below about 300 Hz the length stops growing and only the
+    passband narrows. That is deliberate: it caps what a narrow setting costs
+    in pre-roll, at the price of a less brick-wall skirt.
+
+    Anyone sizing a capture from "narrower must settle slower" would get it
+    wrong, so the box shows the number from planning.settling_points.
+    """
+    import re
+    from rp_lockin.planning import settling_points
+    app.v_orate.set("5000")
+    for bw in ("2250", "1000", "500"):
+        app.v_bw.set(bw)
+        app._update_tau()
+        m = re.search(r"settles in (\d+) points", app.v_tau.get())
+        assert m, app.v_tau.get()
+        assert int(m.group(1)) == settling_points(5000.0, float(bw))[0], bw
+
+
+def test_the_bandwidth_actually_reaches_the_filter():
+    """A box that changed nothing would be worse than no box."""
+    from rp_lockin.dsp import demodulate
+    fs, f_ref, orate = 31.25e6, 915000.0, 5000.0
+    t = np.arange(int(fs * 0.05)) / fs
+    sig = np.cos(2 * np.pi * (f_ref + 800.0) * t)
+    wide = demodulate(sig, fs=fs, f_ref=f_ref, bandwidth=2250.0,
+                      output_rate=orate)
+    narrow = demodulate(sig, fs=fs, f_ref=f_ref, bandwidth=250.0,
+                        output_rate=orate)
+    assert wide.bandwidth == pytest.approx(2250.0)
+    assert narrow.bandwidth == pytest.approx(250.0)
+    # 800 Hz off: inside the wide filter, well outside the narrow one
+    mid = slice(len(wide.R) // 4, -len(wide.R) // 4)
+    assert np.percentile(wide.R[mid], 95) > 10 * np.percentile(
+        narrow.R[mid], 95)
+
+
+def test_map_and_demodulate_use_the_same_bandwidth():
+    """Map re-demodulates. If it used a different filter the trace and the
+    lock-in view would be filtered differently and only one would be what was
+    tuned."""
+    import inspect
+    import bench
+    for fn in (bench.Bench.demod_run, bench.Bench.map_run):
+        src = inspect.getsource(fn)
+        assert "self._bandwidth()" in src, fn.__name__
+        assert "bandwidth=bw" in src, fn.__name__
+
