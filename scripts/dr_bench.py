@@ -58,8 +58,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "src"))
 
 import _bench_ops as ops                                      # noqa: E402
-from _bench_widgets import Plot, Worker, eng, field as fld    # noqa: E402
-from _bench_widgets import wheel_safe                         # noqa: E402
+from _bench_widgets import (Plot, ScrollFrame, Worker, eng,  # noqa: E402
+                            field as fld, wheel_safe)
 from tsl775 import TSL775                                     # noqa: E402
 from rp_lockin.hardware import RedPitaya                      # noqa: E402
 
@@ -74,6 +74,8 @@ class DrBench:
         self.results = queue.Queue()
         self.board = Worker(self.results, "board")
         self.lasw = Worker(self.results, "laser")
+        self.board.start()
+        self.lasw.start()
         self.points = []                 # one dict per gain setting
         self._running = False
 
@@ -94,17 +96,26 @@ class DrBench:
 
         body = ttk.Frame(self.root, padding=(8, 0))
         body.pack(fill="both", expand=True)
-        left = ttk.Frame(body, width=340)
-        left.pack(side="left", fill="y")
-        left.pack_propagate(False)
+        self.rail = ScrollFrame(body, width=345)
+        self.rail.pack(side="left", fill="y")
         right = ttk.Frame(body)
         right.pack(side="left", fill="both", expand=True, padx=(8, 0))
 
+        left = self.rail.body
         self._panel_setup(left)
         self._panel_point(left)
         self._panel_out(left)
         self._build_plot(right)
         self._build_log()
+        self._wheel_proof(self.root)
+
+    def _wheel_proof(self, widget):
+        """Take the wheel away from every Combobox, or scrolling the rail past
+        one silently changes its value."""
+        for child in widget.winfo_children():
+            if isinstance(child, ttk.Combobox):
+                wheel_safe(child)
+            self._wheel_proof(child)
 
     def _panel_setup(self, parent):
         f = ttk.LabelFrame(parent, text="Instruments", padding=8)
@@ -154,27 +165,34 @@ class DrBench:
         f.pack(fill="x", pady=4)
         self.v_gain = tk.StringVar(value="10")
         self.v_reps = tk.StringVar(value="4")
-        fld(f, 0, "APD gain (M)", self.v_gain)
+        fld(f, 0, "gain (as set)", self.v_gain)
         fld(f, 1, "sweeps", self.v_reps)
-        ttk.Label(f, text="Set the gain on the detector by hand, type what "
-                          "you set, then Run. Repeats give the noise floor: "
-                          "the scatter of one wavelength across sweeps.",
+        ttk.Label(f, text="The gain box is a LABEL -- nothing reads the "
+                          "detector. Type whatever your knob says (M, turns, "
+                          "volts); it only has to be a number, and to mean the "
+                          "same thing at every point, because it becomes the "
+                          "x axis.",
                   foreground="#666", justify="left", wraplength=300).grid(
-            row=2, column=0, columnspan=3, sticky="w", pady=(4, 4))
+            row=2, column=0, columnspan=3, sticky="w", pady=(4, 2))
+        ttk.Label(f, text="Set the gain by hand, type it, then Run. The "
+                          "repeats are the noise floor: the scatter of one "
+                          "wavelength across sweeps.",
+                  foreground="#666", justify="left", wraplength=300).grid(
+            row=3, column=0, columnspan=3, sticky="w", pady=(0, 4))
         b = ttk.Frame(f)
-        b.grid(row=3, column=0, columnspan=3, sticky="w")
+        b.grid(row=4, column=0, columnspan=3, sticky="w")
         ttk.Button(b, text="Run point", command=self.run_point).pack(side="left")
         ttk.Button(b, text="Drop last",
                    command=self.drop_last).pack(side="left", padx=4)
         ttk.Button(b, text="Clear all", command=self.clear_all).pack(side="left")
         self.v_status = tk.StringVar(value="idle")
-        ttk.Label(f, textvariable=self.v_status).grid(row=4, column=0,
+        ttk.Label(f, textvariable=self.v_status).grid(row=5, column=0,
                                                       columnspan=3, sticky="w",
                                                       pady=(4, 0))
 
     def _panel_out(self, parent):
         f = ttk.LabelFrame(parent, text="Result", padding=8)
-        f.pack(fill="both", expand=True, pady=4)
+        f.pack(fill="x", pady=4)
         self.v_view = tk.StringVar(value="waterfall")
         wheel_safe(ttk.Combobox(f, textvariable=self.v_view, width=26,
                                 state="readonly",
@@ -186,11 +204,13 @@ class DrBench:
         bb = ttk.Frame(f)
         bb.pack(fill="x", pady=(4, 4))
         ttk.Button(bb, text="Redraw", command=self.redraw).pack(side="left")
-        ttk.Button(bb, text="Export", command=self.export).pack(side="left",
-                                                                padx=4)
-        self.table = tk.Text(f, height=12, width=40,
+        ttk.Button(bb, text="Export CSV",
+                   command=self.export).pack(side="left", padx=4)
+        # Fixed height: inside a ScrollFrame there is no bottom to expand
+        # against, and an expanding Text would grow without limit.
+        self.table = tk.Text(f, height=14, width=40,
                              font=("Consolas", 8), wrap="none")
-        self.table.pack(fill="both", expand=True)
+        self.table.pack(fill="x")
 
     def _build_plot(self, parent):
         f = ttk.LabelFrame(parent, text="Plot", padding=6)
@@ -214,22 +234,41 @@ class DrBench:
         worker.submit(name, fn, done, err)
 
     def _pump(self):
+        """Drain the worker queue onto the Tk thread.
+
+        Worker posts ("busy", ...) and ("done", (job, value, exc)) tuples. An
+        earlier version of this treated the item as a Job object; the first
+        result raised AttributeError, the exception escaped the loop, and
+        `after` was never rescheduled -- so the pump died and Connect appeared
+        to do nothing at all. Hence the belt-and-braces try/finally: whatever
+        happens, this reschedules.
+        """
         try:
             while True:
-                job = self.results.get_nowait()
-                try:
-                    if job.error is not None:
-                        self.log(f"FAILED {job.name}: "
-                                 f"{job.error.__class__.__name__}: {job.error}")
-                        if job.on_error:
-                            job.on_error(job.error)
-                    elif job.on_done:
-                        job.on_done(job.value)
-                except Exception as exc:                     # noqa: BLE001
-                    self.log(f"callback for {job.name} raised: {exc}")
+                kind, payload = self.results.get_nowait()
+                if kind == "busy":
+                    who, what = payload
+                    self.v_status.set(f"{who}: {what}")
+                    continue
+                job, value, exc = payload
+                if exc is not None:
+                    self.log(f"FAILED {job.name}: "
+                             f"{exc.__class__.__name__}: {exc}")
+                    if job.on_error:
+                        try:
+                            job.on_error(exc)
+                        except Exception:                    # noqa: BLE001
+                            pass
+                elif job.on_done:
+                    job.on_done(value)
+                if not (self.board.busy or self.lasw.busy):
+                    self.v_status.set("idle")
         except queue.Empty:
             pass
-        self.root.after(80, self._pump)
+        except Exception as exc:                             # noqa: BLE001
+            self.log(f"pump: {exc.__class__.__name__}: {exc}")
+        finally:
+            self.root.after(80, self._pump)
 
     # ------------------------------------------------------------- actions
 

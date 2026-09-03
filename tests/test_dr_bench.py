@@ -212,3 +212,110 @@ def test_the_bench_builds_with_nothing_connected():
         app.redraw()                     # must not raise with no points
     finally:
         root.destroy()
+
+
+# ------------------------------------------------------------- the pump
+# "connect shows nothing on the log." The workers were never started, AND
+# _pump treated the queue items as Job objects when Worker posts
+# (kind, payload) tuples. The first result raised AttributeError, the
+# exception escaped the loop, and root.after was never rescheduled -- so the
+# pump died silently and every button after that did nothing.
+
+
+def _app():
+    import dr_bench
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:                          # pragma: no cover
+        pytest.skip(f"no display: {exc}")
+    root.withdraw()
+    return dr_bench.DrBench(root), root
+
+
+def test_the_workers_are_actually_running():
+    """A Worker that is never start()ed queues jobs forever and runs none."""
+    app, root = _app()
+    try:
+        assert app.board.is_alive(), "the board worker was never started"
+        assert app.lasw.is_alive(), "the laser worker was never started"
+    finally:
+        root.destroy()
+
+
+def test_a_job_reaches_its_callback():
+    """End to end through the real Worker and the real pump."""
+    import time as _t
+    app, root = _app()
+    got = []
+    try:
+        app.submit(app.board, "unit test", lambda: 42, lambda v: got.append(v))
+        for _ in range(200):
+            root.update()
+            if got:
+                break
+            _t.sleep(0.01)
+        assert got == [42], "the callback never fired"
+    finally:
+        root.destroy()
+
+
+def test_a_failing_job_is_logged_and_does_not_kill_the_pump():
+    """The original failure mode: one bad result and nothing works again."""
+    import time as _t
+    app, root = _app()
+    later = []
+    try:
+        def boom():
+            raise RuntimeError("expected")
+
+        app.submit(app.board, "will fail", boom)
+        for _ in range(200):
+            root.update()
+            if "will fail" in app.logbox.get("1.0", "end"):
+                break
+            _t.sleep(0.01)
+        assert "will fail" in app.logbox.get("1.0", "end")
+
+        # and the pump must still be alive afterwards
+        app.submit(app.board, "after the failure", lambda: 7,
+                   lambda v: later.append(v))
+        for _ in range(200):
+            root.update()
+            if later:
+                break
+            _t.sleep(0.01)
+        assert later == [7], "the pump stopped after a failed job"
+    finally:
+        root.destroy()
+
+
+def test_a_raising_callback_does_not_kill_the_pump():
+    import time as _t
+    app, root = _app()
+    later = []
+    try:
+        app.submit(app.board, "bad callback", lambda: 1,
+                   lambda _v: (_ for _ in ()).throw(ValueError("nope")))
+        for _ in range(100):
+            root.update()
+            _t.sleep(0.01)
+        app.submit(app.board, "still alive", lambda: 9,
+                   lambda v: later.append(v))
+        for _ in range(200):
+            root.update()
+            if later:
+                break
+            _t.sleep(0.01)
+        assert later == [9], "a raising callback killed the pump"
+    finally:
+        root.destroy()
+
+
+def test_the_rail_scrolls():
+    from _bench_widgets import ScrollFrame
+    app, root = _app()
+    try:
+        assert isinstance(app.rail, ScrollFrame)
+    finally:
+        root.destroy()
+
