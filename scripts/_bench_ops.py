@@ -710,6 +710,60 @@ def max_output_rate(fs, f_ref, min_cycles=10.0, cap=200000.0):
     return best
 
 
+# The post-filter wavelength resolution is not allowed to be worse than
+# this. It is a structural constraint, enforced on the deliverable path rather
+# than left to whoever is at the bench: a trace filtered so hard that features
+# are smeared over more than 0.1 nm still looks like a measurement, still maps
+# onto a wavelength axis, and still exports to CSV.
+RESOLUTION_LIMIT_NM = 0.1
+
+
+def wavelength_resolution(bandwidth, speed_nm_s):
+    """How finely the filtered trace can resolve wavelength, in nm.
+
+    A feature of width d nm passes the detector in d / speed seconds, and the
+    output filter can only follow changes up to `bandwidth`, so the finest
+    feature that survives is
+
+        resolution = speed / (2 x bandwidth)
+
+    Measured against the real filter chain at 100 nm/s: 2250 Hz gives a 20 pm
+    impulse FWHM against 22 pm predicted, and 1000 Hz gives 60 pm against 50
+    predicted. So this is good to about 20%, and it is the number the limit is
+    written against.
+    """
+    if bandwidth <= 0 or speed_nm_s <= 0:
+        raise ValueError("bandwidth and speed must both be positive")
+    return speed_nm_s / (2.0 * bandwidth)
+
+
+def min_bandwidth_for_resolution(speed_nm_s, limit_nm=RESOLUTION_LIMIT_NM):
+    """The narrowest filter allowed at this sweep speed."""
+    return speed_nm_s / (2.0 * limit_nm)
+
+
+def check_resolution(bandwidth, speed_nm_s, limit_nm=RESOLUTION_LIMIT_NM):
+    """Refuse a filter that smears wavelength past the limit.
+
+    Refusing rather than warning, because the failure is invisible in the
+    output: an over-filtered trace is smooth, plausible, correctly mapped onto
+    wavelength, and simply not resolving what it claims to. Narrowing the
+    bandwidth is otherwise a free win -- it is quieter and often settles
+    faster -- so nothing else in the bench pushes back on it.
+    """
+    res = wavelength_resolution(bandwidth, speed_nm_s)
+    if res > limit_nm:
+        need = min_bandwidth_for_resolution(speed_nm_s, limit_nm)
+        raise ValueError(
+            f"a {bandwidth:.0f} Hz filter at {speed_nm_s:g} nm/s resolves only "
+            f"{res * 1e3:.0f} pm, past the {limit_nm * 1e3:.0f} pm limit. "
+            f"Either widen the bandwidth to at least {need:.0f} Hz, or slow "
+            f"the sweep to {2 * bandwidth * limit_nm:g} nm/s or less. An "
+            f"over-filtered trace is smooth and plausible and simply does not "
+            f"resolve what it claims to.")
+    return res
+
+
 def run_demodulate(capture, f_ref, output_rate=5000.0, bandwidth=None,
                    gain="LV"):
     """Lock-in on IN1 alone. No wavelength axis involved."""
@@ -718,15 +772,32 @@ def run_demodulate(capture, f_ref, output_rate=5000.0, bandwidth=None,
 
 
 def run_map(capture, wavelengths, f_ref, output_rate=5000.0, bandwidth=None,
-            gain="LV", nominal_step=None):
+            gain="LV", nominal_step=None, speed_nm_s=None,
+            resolution_limit_nm=RESOLUTION_LIMIT_NM):
     """The deliverable path: capture + laser log -> amplitude vs wavelength.
 
     Goes through `reduce_sweep` rather than reusing the Demodulate panel's
     result, so the trusted, offline-tested join is the one that runs. It
     demodulates again, which costs a few seconds and buys not having a second
     reduction path that could drift from the tested one.
+
+    **Enforces the wavelength-resolution limit.** This is the deliverable
+    path, so it is where the check belongs: past this point the trace is a
+    result. The sweep speed is derived from the data when it is not given --
+    the wavelength step divided by the time step is a speed, and both are
+    already in hand.
     """
     thr, _lo, _hi = trigger_threshold(capture["ch2"])
+    if resolution_limit_nm:
+        speed = speed_nm_s
+        if speed is None and nominal_step:
+            step_nm = float(np.median(np.abs(np.diff(np.asarray(
+                wavelengths, dtype=float))))) * 1e9
+            speed = step_nm / nominal_step
+        if speed:
+            bw = (bandwidth if bandwidth
+                  else 0.9 * output_rate / 2.0)
+            check_resolution(bw, speed, resolution_limit_nm)
     return reduce_sweep(volts(capture["ch1"], gain), capture["ch2"],
                         capture["fs"], wavelengths, f_ref=f_ref,
                         output_rate=output_rate, bandwidth=bandwidth,

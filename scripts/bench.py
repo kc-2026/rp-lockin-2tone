@@ -1092,6 +1092,9 @@ class Bench:
         self._update_sweep_info()
         for v in (self.v_start, self.v_stop, self.v_speed, self.v_step):
             v.trace_add("write", lambda *_a: self._update_sweep_info())
+        # Resolution depends on the sweep SPEED and on the bandwidth, which
+        # live in different panels, so the readout has to follow both.
+        self.v_speed.trace_add("write", lambda *_a: self._update_tau())
 
     def _sweep_cfg(self):
         mode = next((k for k, v in ops.SWEEP_MODES.items()
@@ -1668,6 +1671,20 @@ class Bench:
         msg = (f"{'auto: ' if auto else ''}{bw:.0f} Hz "
                f"= tau {tau * 1e6:.1f} us, noise gain ~{noise_gain:.0f} Hz"
                f"{settle}.")
+        # Resolution needs the sweep speed, which lives in another panel.
+        try:
+            speed = float(self.v_speed.get())
+        except (AttributeError, ValueError):
+            speed = None
+        if speed:
+            res = ops.wavelength_resolution(bw, speed)
+            msg += f"\nresolves {res * 1e3:.0f} pm at {speed:g} nm/s"
+            if res > ops.RESOLUTION_LIMIT_NM:
+                need = ops.min_bandwidth_for_resolution(speed)
+                msg += (f" -- PAST THE {ops.RESOLUTION_LIMIT_NM * 1e3:.0f} pm "
+                        f"LIMIT. Map will refuse. Widen to {need:.0f} Hz, or "
+                        f"sweep at {2 * bw * ops.RESOLUTION_LIMIT_NM:g} nm/s "
+                        f"or less.")
         if bw > 0.9 * nyq + 1e-9:
             msg += (f"\nWARNING: wider than 0.9 x the {nyq:.0f} Hz output "
                     f"Nyquist, so noise above {nyq:.0f} Hz folds back onto "
@@ -1819,6 +1836,7 @@ class Bench:
                     lambda: ops.run_map(self.ws.capture, self.ws.laser_log,
                                         f_ref, output_rate=orate,
                                         bandwidth=bw,
+                                        speed_nm_s=cfg["speed_nm_s"],
                                         nominal_step=cfg["step_nm"]
                                         / cfg["speed_nm_s"]), done)
 
@@ -2042,6 +2060,7 @@ class Bench:
 
             red = ops.run_map(out, log["wavelengths"], f_ref,
                               output_rate=orate,
+                              speed_nm_s=sweep["speed_nm_s"],
                               nominal_step=sweep["step_nm"] / sweep["speed_nm_s"])
 
             def finish():

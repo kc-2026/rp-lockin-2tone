@@ -2212,3 +2212,118 @@ def test_changing_the_output_rate_updates_the_sweep_line(app):
     app.v_orate.set("10000")             # no explicit _update_sweep_info call
     assert "2.00 trace points" in app.v_sweepinfo.get()
 
+
+# ------------------------------------------ the wavelength-resolution limit
+# A structural constraint, enforced on the deliverable path: the filtered
+# trace may never resolve worse than 100 pm.
+#
+# It has to be a refusal rather than a warning because the failure is
+# invisible. An over-filtered trace is smooth, plausible, correctly mapped
+# onto wavelength, exports to CSV, and simply is not resolving what it claims.
+# Nothing else in the bench pushes back on narrowing the bandwidth either --
+# it is quieter AND often settles faster, so every other signal points the
+# wrong way.
+
+
+def test_resolution_is_speed_over_twice_the_bandwidth():
+    """Checked against the real filter chain at 100 nm/s: 2250 Hz measured a
+    20 pm impulse FWHM against 22 predicted, 1000 Hz measured 60 against 50.
+    Good to about 20%, which is what the limit is written against."""
+    import _bench_ops as ops
+    assert ops.wavelength_resolution(2250.0, 100.0) == pytest.approx(0.0222,
+                                                                     abs=1e-4)
+    assert ops.wavelength_resolution(1000.0, 100.0) == pytest.approx(0.05)
+    assert ops.wavelength_resolution(500.0, 50.0) == pytest.approx(0.05)
+
+
+def test_the_minimum_bandwidth_scales_with_speed():
+    import _bench_ops as ops
+    for speed in (10.0, 50.0, 100.0, 200.0):
+        need = ops.min_bandwidth_for_resolution(speed)
+        assert ops.wavelength_resolution(need, speed) == pytest.approx(0.1)
+        assert need == pytest.approx(5.0 * speed)
+
+
+def test_a_filter_that_smears_past_100_pm_is_refused():
+    import _bench_ops as ops
+    with pytest.raises(ValueError) as e:
+        ops.check_resolution(200.0, 100.0)          # 250 pm
+    msg = str(e.value)
+    assert "250 pm" in msg
+    assert "100 pm limit" in msg
+    assert "500 Hz" in msg, "it must say what would fix it"
+    assert "nm/s or less" in msg, "and the other way to fix it"
+
+
+def test_a_filter_inside_the_limit_is_allowed():
+    import _bench_ops as ops
+    assert ops.check_resolution(2250.0, 100.0) == pytest.approx(0.0222,
+                                                                abs=1e-4)
+    assert ops.check_resolution(500.0, 100.0) == pytest.approx(0.1)
+
+
+def test_exactly_at_the_limit_passes():
+    """A boundary that refuses its own limit would be a trap."""
+    import _bench_ops as ops
+    ops.check_resolution(ops.min_bandwidth_for_resolution(100.0), 100.0)
+
+
+def test_the_deliverable_path_enforces_it(monkeypatch):
+    """run_map is where a trace becomes a result, so that is where it binds."""
+    import _bench_ops as ops
+    called = []
+    monkeypatch.setattr(ops, "reduce_sweep",
+                        lambda *a, **k: called.append(1))
+    wl = np.linspace(1500e-9, 1600e-9, 5001)
+    cap = {"ch1": np.zeros(64), "ch2": np.zeros(64), "fs": 31.25e6}
+    with pytest.raises(ValueError) as e:
+        ops.run_map(cap, wl, 1e6, output_rate=5000.0, bandwidth=200.0,
+                    speed_nm_s=100.0, nominal_step=0.0002)
+    assert "100 pm limit" in str(e.value)
+    assert not called, "it reduced the sweep before checking"
+
+
+def test_the_speed_is_derived_when_it_is_not_given(monkeypatch):
+    """The wavelength step over the time step is a speed, and both are already
+    in hand -- so an old caller that passes only nominal_step still gets the
+    check rather than silently skipping it."""
+    import _bench_ops as ops
+    monkeypatch.setattr(ops, "reduce_sweep", lambda *a, **k: "reduced")
+    wl = np.linspace(1500e-9, 1600e-9, 5001)      # 0.02 nm steps
+    cap = {"ch1": np.zeros(64), "ch2": np.zeros(64), "fs": 31.25e6}
+    # 0.02 nm every 0.0002 s = 100 nm/s; a 200 Hz filter resolves 250 pm
+    with pytest.raises(ValueError):
+        ops.run_map(cap, wl, 1e6, output_rate=5000.0, bandwidth=200.0,
+                    nominal_step=0.0002)
+    # and the same sweep with a legal filter goes through
+    assert ops.run_map(cap, wl, 1e6, output_rate=5000.0, bandwidth=2250.0,
+                       nominal_step=0.0002) == "reduced"
+
+
+def test_the_readout_shows_the_resolution_and_the_limit(app):
+    app.v_speed.set("100")
+    app.v_orate.set("5000")
+    app.v_bw.set("2250")
+    app._update_tau()
+    assert "resolves 22 pm" in app.v_tau.get(), app.v_tau.get()
+    assert "PAST THE" not in app.v_tau.get()
+
+    app.v_bw.set("200")
+    app._update_tau()
+    shown = app.v_tau.get()
+    assert "250 pm" in shown
+    assert "PAST THE 100 pm LIMIT" in shown
+    assert "Map will refuse" in shown
+
+
+def test_a_faster_sweep_moves_the_limit(app):
+    """Resolution is speed/2B, so the same filter fails at a higher speed."""
+    app.v_orate.set("5000")
+    app.v_bw.set("2250")
+    app.v_speed.set("100")
+    app._update_tau()
+    assert "PAST THE" not in app.v_tau.get()
+    app.v_speed.set("500")
+    app._update_tau()
+    assert "PAST THE" in app.v_tau.get(), app.v_tau.get()
+
