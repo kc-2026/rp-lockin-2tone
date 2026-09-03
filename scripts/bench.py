@@ -1175,14 +1175,34 @@ class Bench:
             if bad:
                 raise RuntimeError(
                     "the laser is not configured the way the Sweep panel "
-                    "says:\\n  " + "\\n  ".join(bad)
-                    + "\\n\\nPress Configure first. Settings written while a "
+                    "says:\n  " + "\n  ".join(bad)
+                    + "\n\nPress Configure first. Settings written while a "
                       "previous sweep is still stopping are discarded without "
                       "an error, so this drifts silently between runs.")
-            return ops.start_sweep(d)
+            # Read-only, and it reports rather than waits: the manual flow
+            # is deliberately yours to time. The sequence waits, because it
+            # has nobody to wait for it.
+            off = 0.0
+            try:
+                off = abs(float(d.query(":WAV?")) - float(got["start"]))
+            except (ValueError, KeyError):
+                pass
+            return {"started": ops.start_sweep(d), "off_start_m": off,
+                    "span_nm": abs(want["stop_nm"] - want["start_nm"])}
 
-        self.submit(self.lasw, "start sweep", go,
-                    lambda _v: self.log("sweep started"))
+        def started(v):
+            off_nm = (v or {}).get("off_start_m", 0.0) * 1e9
+            span = (v or {}).get("span_nm", 0.0)
+            if off_nm > 0.01:
+                self.log(f"WARNING: the laser was {off_nm:.3f} nm from the "
+                         f"sweep start when this began, so it will cover "
+                         f"about {span - off_nm:.1f} nm rather than "
+                         f"{span:.1f} -- at the right speed and step, so the "
+                         f"trace will look normal. Allow longer after "
+                         f"Configure.")
+            self.log("sweep started")
+
+        self.submit(self.lasw, "start sweep", go, started)
 
     def sweep_stop(self):
         d = self._need_laser()
@@ -1765,10 +1785,12 @@ class Bench:
                   f"{sweep['speed_nm_s']} nm/s\n"
                   f"Demodulate at {f_ref / 1e3:.4f} kHz\n\n")
         if name.startswith("SHG"):
-            detail += ("SHG: demodulating at TWICE the drive frequency.\n"
-                       "NOTE the AOM makes 2*f1 by itself -- depth-1 AM on a\n"
-                       "sin^2 device -- so a signal here does NOT prove SHG\n"
-                       "until a crystal-out run is compared against it.\n\n")
+            # The AOM's own 2*f1 (Q30, 13.3% measured) used to be warned about
+            # here. It rides on 1550 nm light, and SHG is detected on silicon,
+            # which cannot see 1550 at all -- so it never reaches the detector
+            # and the warning was noise. It still applies to anything measured
+            # at 2*f1 on the InGaAs channel; see docs/09-whats-next.md.
+            detail += "SHG: demodulating at TWICE the drive frequency.\n\n"
         if two_tone:
             detail += ("SFG: BOTH outputs drive, at f1 and f2, and the\n"
                        "lock-in sits on f1+f2 where only a product of the\n"
@@ -1843,8 +1865,16 @@ class Bench:
                     rp, n_samples=plan["n_samples"], decimation=dec,
                     preroll=plan["preroll"], trigger="CH2_PE", level=1.0)
                 note(f"capture armed ({plan['n_samples']} samples)")
-                time.sleep(2.0)
                 with self.lasw.lock:
+                    # Wait for the laser to finish returning to its start
+                    # rather than counting to two. A fixed 2 s timer started
+                    # one SHG run at 1561 nm instead of 1500 -- right speed,
+                    # right step, 39 nm of range. Read-only: see Q32 for why
+                    # this must not command the wavelength.
+                    p = ops.wait_until_at_start(d)
+                    note(f"at start {p['start_m'] * 1e9:.4f} nm "
+                         f"(was {p['from_m'] * 1e9:.4f}), "
+                         f"waited {p['waited_s']:.1f} s")
                     ops.start_sweep(d)
                     note("sweep started")
                     w = ops.wait_for_sweep(d)
@@ -1881,10 +1911,7 @@ class Bench:
                              f"only places a product can be.")
                 if name.startswith("SHG"):
                     self.log(f"[{name}] demodulated at "
-                             f"{f_ref / 1e3:.4f} kHz = 2 x the drive. Run this "
-                             f"again with the crystal OUT: the difference is "
-                             f"the SHG, the common part is the AOM's own "
-                             f"harmonic.")
+                             f"{f_ref / 1e3:.4f} kHz = 2 x the drive.")
                 if name == "control: low power":
                     drop = power_before - ctrl_dbm
                     self.log(f"[{name}] a {drop:.1f} dB drop: an OPTICAL signal "

@@ -1814,3 +1814,94 @@ def test_the_sync_does_not_fight_an_unchanged_value(app):
     app._sync_secs(1.0)
     assert app.v_secs.get() == "1", "the box was rewritten for no change"
 
+
+# ------------------------------------- waiting for the laser to reach start
+# From the bench, 2026-09-02, the SHG sequence:
+#
+#   FAILED: ValueError: the trace runs 623.666 ms past the end of the laser's
+#   table, beyond the 16.950 ms tolerance.
+#
+# The sequence started the sweep on a fixed 2 s timer. The laser was still
+# returning from 1600 nm, so :WAV:SWE 1 began wherever it had reached: 5001
+# rows logged against a train spanning 393 ms, i.e. it swept 1561 -> 1600 nm
+# at exactly the right speed and step. reduce_sweep refused rather than
+# inventing wavelengths, which is the only reason this was visible.
+#
+# The fix must POLL, not command: writing :WAV to drive it there leaves the
+# instrument unable to sweep at all (Q32, and that change was reverted).
+
+
+class _ReturningLaser(_MovingLaser):
+    """Creeps toward the sweep start over a few polls, like the real one."""
+
+    def __init__(self, at_m=1.6e-6, start_m=1.5e-6, polls=3):
+        super().__init__(at_m=at_m)
+        self.start = start_m
+        self.remaining = polls
+
+    def query(self, cmd):
+        if cmd == ":WAV:SWE:STAR?":
+            return f"{self.start:.9E}"
+        if cmd == ":WAV?":
+            if self.remaining > 0:
+                self.remaining -= 1
+                self.at += (self.start - self.at) / 2.0
+            else:
+                self.at = self.start
+            return f"{self.at:.9E}"
+        return "+0"
+
+
+def test_it_waits_until_the_laser_is_at_the_start():
+    import _bench_ops as ops
+    d = _ReturningLaser()
+    r = ops.wait_until_at_start(d, poll=0.01)
+    assert r["start_m"] == pytest.approx(1.5e-6)
+    assert r["from_m"] == pytest.approx(1.55e-6, abs=1e-8)
+    assert d.at == pytest.approx(1.5e-6)
+
+
+def test_it_returns_at_once_when_the_laser_is_already_there():
+    import _bench_ops as ops
+    d = _ReturningLaser(at_m=1.5e-6, start_m=1.5e-6, polls=0)
+    r = ops.wait_until_at_start(d, poll=0.5)
+    assert r["waited_s"] < 0.4, "it slept when there was nothing to wait for"
+
+
+def test_it_never_commands_the_wavelength():
+    """Q32: writing :WAV leaves the instrument unable to sweep. This must
+    only ever poll."""
+    import _bench_ops as ops
+    d = _ReturningLaser()
+    ops.wait_until_at_start(d, poll=0.01)
+    assert d.events == [], f"it wrote to the laser: {d.events}"
+
+
+def test_a_laser_that_never_arrives_is_reported_not_swept():
+    import _bench_ops as ops
+
+    class Stuck(_ReturningLaser):
+        def query(self, cmd):
+            if cmd == ":WAV:SWE:STAR?":
+                return f"{self.start:.9E}"
+            if cmd == ":WAV?":
+                return f"{self.at:.9E}"     # never moves
+            return "+0"
+
+    with pytest.raises(RuntimeError) as e:
+        ops.wait_until_at_start(Stuck(), timeout=0.3, poll=0.05)
+    msg = str(e.value)
+    assert "has not reached its sweep start" in msg
+    assert "SHORT RANGE" in msg
+
+
+def test_the_sequence_waits_before_starting_the_sweep():
+    """The ordering is the whole point: wait, THEN start."""
+    import inspect
+    import bench
+    src = inspect.getsource(bench.Bench._seq_thread)
+    wait = src.index("wait_until_at_start")
+    start = src.index("ops.start_sweep(d)")
+    assert wait < start, "the sweep is started before the wait"
+    assert "time.sleep(2.0)" not in src, "the fixed timer is still there"
+

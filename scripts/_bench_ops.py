@@ -467,6 +467,44 @@ def restore_sweep(laser, before):
     return failed
 
 
+def wait_until_at_start(laser, tolerance=1e-11, timeout=60.0, poll=0.2):
+    """Block until the laser has finished returning to its sweep start.
+
+    **Read-only.** It polls `:WAV?` and never writes `:WAV` -- which matters,
+    because commanding the wavelength directly leaves the instrument unable to
+    sweep at all (Q32). Configuring a sweep already sends the laser back to its
+    start; this only waits for it to arrive.
+
+    Without the wait, `:WAV:SWE 1` starts from wherever the laser has reached
+    and sweeps a SHORT RANGE at exactly the right speed and step, so the
+    trigger train is correct in every respect except its length. Measured
+    2026-09-02 in the SHG sequence, which started the sweep on a fixed 2 s
+    timer: 5001 rows logged against a train spanning 393 ms, i.e. the sweep
+    really ran 1561 -> 1600 nm instead of 1500 -> 1600. `reduce_sweep` caught
+    it and refused rather than inventing wavelengths, which is the only reason
+    it was visible at all.
+
+    Returns how long it waited and where the laser was when first asked.
+    """
+    start = float(laser.query(":WAV:SWE:STAR?"))
+    t0 = time.time()
+    first = at = None
+    while time.time() - t0 < timeout:
+        at = float(laser.query(":WAV?"))
+        if first is None:
+            first = at
+        if abs(at - start) <= tolerance:
+            return {"start_m": start, "from_m": first,
+                    "waited_s": time.time() - t0}
+        time.sleep(poll)
+    raise RuntimeError(
+        f"the laser has not reached its sweep start {start * 1e9:.4f} nm "
+        f"after {timeout:g} s"
+        + ("" if at is None else f" (it reads {at * 1e9:.4f} nm)")
+        + ". Sweeping now would cover a SHORT RANGE at the right speed, which "
+          "comes back looking like a normal trace.")
+
+
 def start_sweep(laser):
     laser.write(":WAV:SWE 1")
     return True
