@@ -201,8 +201,13 @@ def test_sweep_info_reports_the_trigger_rate(app):
     app.v_step.set("0.02")
     app._update_sweep_info()
     info = app.v_sweepinfo.get()
-    assert "5001 points" in info
+    assert "5001 trigger points" in info
     assert "200.0 us" in info
+    # and it must say WHOSE points those are: the panel used to read
+    # "5001 points ... (5.00 kHz)" next to a 5000 Sa/s output rate, which
+    # reads as one number stated twice rather than two different rates.
+    assert "LASER" in info
+    assert "logged wavelengths" in info
 
 
 def test_a_capture_always_takes_both_channels():
@@ -2148,4 +2153,62 @@ def test_the_button_sets_the_rate_and_states_the_cost(app):
     assert "COST" in joined
     assert "3.5x" in joined, joined          # sqrt(62500/5000)
     assert "interpolated" in joined, "the wavelength caveat is not stated"
+
+
+# ------------------------------------------ two 5 kHz rates, not one
+# From the bench: "sweep still says 5000 points -- is that mislabeled or is it
+# still sampling 5 kHz?" Neither. The Sweep panel counts the LASER's trigger
+# pulses, one per logged wavelength, set by step and speed. The lock-in output
+# rate is a different number in a different panel that happens to default to
+# nearly the same value, because the two were deliberately matched at one
+# trace point per logged wavelength.
+
+
+def test_the_sweep_line_relates_the_two_rates(app):
+    app.v_start.set("1500")
+    app.v_stop.set("1600")
+    app.v_speed.set("100")
+    app.v_step.set("0.02")
+    app.v_orate.set("5000")
+    app._update_sweep_info()
+    info = app.v_sweepinfo.get()
+    assert "1.00 trace points per logged wavelength" in info, info
+    assert "interpolated" not in info, "matched rates need no caveat"
+
+
+def test_a_faster_trace_is_flagged_as_interpolated(app):
+    """The laser logs 5001 rows whatever the trace does, so the extra points
+    carry wavelengths interpolated between rows it actually reported."""
+    app.v_start.set("1500")
+    app.v_stop.set("1600")
+    app.v_speed.set("100")
+    app.v_step.set("0.02")
+    app.v_orate.set("62500")
+    app._update_sweep_info()
+    info = app.v_sweepinfo.get()
+    assert "12.50 trace points per logged wavelength" in info, info
+    assert "interpolated" in info
+
+
+def test_a_slower_trace_is_flagged_as_coarser(app):
+    app.v_start.set("1500")
+    app.v_stop.set("1600")
+    app.v_speed.set("100")
+    app.v_step.set("0.02")
+    app.v_orate.set("1000")
+    app._update_sweep_info()
+    assert "coarser than the laser" in app.v_sweepinfo.get()
+
+
+def test_changing_the_output_rate_updates_the_sweep_line(app):
+    """The Sweep panel is built before the Demodulate panel, so it has to be
+    told rather than reading the box when it happens to be looked at."""
+    app.v_start.set("1500")
+    app.v_stop.set("1600")
+    app.v_speed.set("100")
+    app.v_step.set("0.02")
+    app.v_orate.set("5000")
+    assert "1.00 trace points" in app.v_sweepinfo.get()
+    app.v_orate.set("10000")             # no explicit _update_sweep_info call
+    assert "2.00 trace points" in app.v_sweepinfo.get()
 

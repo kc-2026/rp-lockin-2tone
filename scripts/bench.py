@@ -1102,14 +1102,36 @@ class Bench:
                     step_nm=float(self.v_step.get()), mode=mode)
 
     def _update_sweep_info(self):
+        """What the LASER will do, and how that lines up with the trace.
+
+        These points are the laser's trigger pulses -- one per logged
+        wavelength -- and they are set by step and speed alone. They are NOT
+        the lock-in output rate, which is in the Demodulate panel and is a
+        different number that happens to default to nearly the same value. The
+        two were matched deliberately, at one trace point per logged
+        wavelength, and saying so here saves working out which 5 kHz is which.
+        """
         try:
             c = self._sweep_cfg()
             n = int(round(abs(c["stop_nm"] - c["start_nm"]) / c["step_nm"])) + 1
             dt = c["step_nm"] / c["speed_nm_s"]
             secs = (n - 1) * dt
             need = ops.smallest_decimation_for(secs)
-            info = (f"{n} points, {dt * 1e6:.1f} us apart "
-                    f"({1 / dt / 1e3:.2f} kHz), {secs:.3f} s")
+            info = (f"LASER: {n} trigger points = {n} logged wavelengths, "
+                    f"{dt * 1e6:.1f} us apart ({1 / dt / 1e3:.2f} kHz), "
+                    f"{secs:.3f} s")
+            try:
+                orate = float(getattr(self, "v_orate").get())
+            except (AttributeError, ValueError):
+                orate = None
+            if orate and dt > 0:
+                per = orate * dt
+                info += (f"\nLOCK-IN: {orate:.0f} Sa/s -> {per:.2f} trace "
+                         f"points per logged wavelength")
+                if per > 1.05:
+                    info += "; the extra ones are interpolated"
+                elif per < 0.95:
+                    info += "; the trace is coarser than the laser's log"
             if need is not None:
                 info += f"\nneeds decimation {need} or higher to fit in memory"
             self.v_sweepinfo.set(info)
@@ -1485,6 +1507,10 @@ class Bench:
             row=3, column=0, columnspan=3, sticky="w", pady=(2, 2))
         for v in (self.v_orate, self.v_bw):
             v.trace_add("write", lambda *_a: self._update_tau())
+        # The Sweep panel compares its trigger rate against this one, and it
+        # was built first, so it needs telling when this changes.
+        self.v_orate.trace_add("write",
+                               lambda *_a: self._update_sweep_info())
         self._update_tau()
         ttk.Label(f, text="Runs on the capture in the workspace, so the\n"
                           "same record can be examined at f1 and 2*f1\n"
