@@ -2063,3 +2063,89 @@ def test_map_and_demodulate_use_the_same_bandwidth():
         assert "self._bandwidth()" in src, fn.__name__
         assert "bandwidth=bw" in src, fn.__name__
 
+
+# --------------------------------------------- the fastest usable trace
+# "Set the sweep sample rate as high as you can acquire at." The board is not
+# what limits it -- the LOCK-IN is. Bandwidth rises with the output rate, and
+# below about 10 reference cycles per integration time the demodulator stops
+# averaging the carrier away and starts passing 1f and 2f ripple instead.
+
+
+def test_the_rate_divides_the_sample_rate_exactly():
+    """demodulate() refuses a non-integer ratio rather than resampling behind
+    your back, so a suggestion that does not divide is not a suggestion."""
+    import _bench_ops as ops
+    for fs in (31.25e6, 15.625e6, 7.8125e6):
+        best = ops.max_output_rate(fs, 1e6)
+        assert fs % best["output_rate"] == 0, (fs, best)
+
+
+def test_it_keeps_enough_reference_cycles_per_integration_time():
+    import _bench_ops as ops
+    for f_ref in (310e3, 915e3, 1e6, 2e6):
+        best = ops.max_output_rate(31.25e6, f_ref)
+        assert best["cycles_per_tau"] >= 10.0, (f_ref, best)
+
+
+def test_a_higher_reference_allows_a_faster_trace():
+    """The constraint is a ratio, so twice the reference is twice the rate."""
+    import _bench_ops as ops
+    slow = ops.max_output_rate(31.25e6, 1e6)["output_rate"]
+    fast = ops.max_output_rate(31.25e6, 2e6)["output_rate"]
+    assert fast == pytest.approx(2 * slow)
+    assert slow == pytest.approx(31250.0)
+    assert fast == pytest.approx(62500.0)
+
+
+def test_nothing_faster_would_also_satisfy_the_constraints():
+    """It really is the maximum, not merely a large value."""
+    import _bench_ops as ops
+    import math as _m
+    fs, f_ref = 31.25e6, 1e6
+    best = ops.max_output_rate(fs, f_ref)["output_rate"]
+    for n in range(1, 20000):
+        if fs % n:
+            continue
+        rate = fs / n
+        if rate <= best or rate > 200000:
+            continue
+        bw = 0.9 * rate / 2.0
+        assert f_ref / (2 * _m.pi * bw) < 10.0, (
+            f"{rate} Sa/s also qualifies and is faster than {best}")
+
+
+def test_an_impossible_reference_is_refused_with_a_reason():
+    import _bench_ops as ops
+    with pytest.raises(ValueError) as e:
+        ops.max_output_rate(31.25e6, 1.0)      # 1 Hz reference
+    assert "cycles per integration time" in str(e.value)
+
+
+def test_the_button_needs_a_capture_first(app, monkeypatch):
+    """The limit depends on the sample rate the record was taken at, so
+    guessing one would give an answer for a capture that does not exist."""
+    told = []
+    monkeypatch.setattr(bench_mod().messagebox, "showinfo",
+                        lambda *a, **k: told.append(a))
+    app.ws.capture = None
+    before = app.v_orate.get()
+    app.orate_max()
+    assert told and app.v_orate.get() == before
+
+
+def test_the_button_sets_the_rate_and_states_the_cost(app):
+    lines = []
+    app.log = lambda m: lines.append(m)
+    app.ws.capture = {"ch1": np.zeros(4), "ch2": np.zeros(4), "fs": 31.25e6,
+                      "decimation": 8, "preroll": 0, "trigger": "CH2_PE",
+                      "first_edge": None, "n_edges": 0}
+    app.v_fref.set("2000")
+    app.v_orate.set("5000")
+    app.orate_max()
+    assert float(app.v_orate.get()) == pytest.approx(62500.0)
+    assert app.v_bw.get() == "", "bandwidth should follow the new rate"
+    joined = " ".join(lines)
+    assert "COST" in joined
+    assert "3.5x" in joined, joined          # sqrt(62500/5000)
+    assert "interpolated" in joined, "the wavelength caveat is not stated"
+

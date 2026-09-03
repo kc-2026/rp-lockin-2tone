@@ -667,6 +667,49 @@ def read_log(laser):
 
 # --------------------------------------------------------------- reduction
 
+def max_output_rate(fs, f_ref, min_cycles=10.0, cap=200000.0):
+    """The fastest trace this capture and this f_ref can support.
+
+    Three things bound it, and the third is the one that binds in practice:
+
+    1. **fs / output_rate must be a whole number.** `demodulate` refuses
+       otherwise rather than resampling behind your back.
+    2. `cap`, a sanity ceiling.
+    3. **The lock-in needs enough reference cycles per integration time.**
+       Bandwidth is 0.9 x the output Nyquist, tau = 1/(2 pi BW), and below
+       roughly 10 cycles per tau the output carries 1f and 2f ripple -- the
+       demodulator stops averaging the carrier away and starts passing it.
+
+    At fs = 31.25 MS/s that gives 31250 Sa/s for a 1 MHz reference and 62500
+    for 2 MHz, both landing at 11.3 cycles per tau.
+
+    **It is not free.** Bandwidth rises with the output rate and sigma goes as
+    its square root, so 5000 -> 62500 Sa/s costs a factor 3.5 in noise -- 11 dB
+    of dynamic range. Returns the rate and what it costs, so the caller can
+    say so.
+    """
+    best = None
+    for n in range(1, 200001):
+        if fs % n:
+            continue
+        rate = fs / n
+        if rate > cap or rate < 1.0:
+            continue
+        bw = 0.9 * rate / 2.0
+        cycles = f_ref / (2.0 * math.pi * bw) if bw > 0 else float("inf")
+        if cycles < min_cycles:
+            continue
+        if best is None or rate > best["output_rate"]:
+            best = {"output_rate": float(rate), "bandwidth": bw,
+                    "cycles_per_tau": cycles, "divisor": n}
+    if best is None:
+        raise ValueError(
+            f"no output rate divides {fs / 1e6:g} MS/s exactly while keeping "
+            f"{min_cycles:g} reference cycles per integration time at "
+            f"{f_ref / 1e3:g} kHz. Lower the reference or the decimation.")
+    return best
+
+
 def run_demodulate(capture, f_ref, output_rate=5000.0, bandwidth=None,
                    gain="LV"):
     """Lock-in on IN1 alone. No wavelength axis involved."""

@@ -1470,7 +1470,11 @@ class Bench:
         self.v_orate = tk.StringVar(value="5000")
         self.v_bw = tk.StringVar(value="")
         fld(f, 0, "f_ref", self.v_fref, "kHz")
-        fld(f, 1, "output rate", self.v_orate, "Sa/s")
+        e_or = fld(f, 1, "output rate", self.v_orate, "Sa/s")
+        ttk.Button(f, text="max", width=5,
+                   command=self.orate_max).grid(row=1, column=3, sticky="w",
+                                                padx=(4, 0))
+        del e_or
         # Blank means "derive it from the output rate", which is what this did
         # before the box existed: 0.9 x the output Nyquist, the widest that
         # does not fold noise back onto the trace.
@@ -1548,6 +1552,47 @@ class Bench:
         self.v_fref.set(f"{f / 1e3:.6f}")
         self.log(f"f_ref = {harmonic} x the generated drive "
                  f"({table.modulation:.4f} Hz) = {f:.4f} Hz")
+
+    def orate_max(self):
+        """Set the output rate as high as this capture can support.
+
+        The limit is the lock-in's, not the board's: bandwidth rises with the
+        output rate, and below about 10 reference cycles per integration time
+        the demodulator stops averaging the carrier away.
+
+        It costs noise, and the log says how much -- sigma goes as the square
+        root of the bandwidth. It also does not buy WAVELENGTH resolution past
+        the laser's own trigger step; beyond one trace point per logged point
+        the extra wavelengths are interpolated between rows the laser actually
+        reported.
+        """
+        if not self.ws.capture:
+            return messagebox.showinfo(
+                "Output rate", "Capture something first -- the limit depends "
+                               "on the sample rate the record was taken at.")
+        try:
+            f_ref = float(self.v_fref.get()) * 1e3
+            fs = float(self.ws.capture["fs"])
+            was = float(self.v_orate.get())
+        except (ValueError, KeyError) as e:
+            return messagebox.showerror("Output rate", f"Not a number: {e}")
+        try:
+            best = ops.max_output_rate(fs, f_ref)
+        except ValueError as e:
+            return messagebox.showerror("Output rate", str(e))
+        self.v_orate.set(f"{best['output_rate']:.0f}")
+        self.v_bw.set("")                    # let it follow the new rate
+        cost = math.sqrt(best["output_rate"] / was) if was > 0 else float("nan")
+        self.log(f"output rate {best['output_rate']:.0f} Sa/s -- the highest "
+                 f"that divides {fs / 1e6:.3f} MS/s exactly and keeps "
+                 f"{best['cycles_per_tau']:.1f} reference cycles per "
+                 f"integration time.")
+        self.log(f"COST: bandwidth {best['bandwidth'] / 1e3:.2f} kHz, so the "
+                 f"noise floor rises about {cost:.1f}x "
+                 f"({20 * math.log10(cost):.0f} dB of dynamic range) against "
+                 f"{was:.0f} Sa/s. It buys TIME resolution; wavelength "
+                 f"resolution stops at the laser's trigger step, and points "
+                 f"beyond one per logged row are interpolated.")
 
     def _bandwidth(self):
         """The bandwidth to demodulate at, or None for "derive it".
