@@ -319,3 +319,112 @@ def test_the_rail_scrolls():
     finally:
         root.destroy()
 
+
+# ------------------------------------------------------------ the dB view
+
+def _point(gain, peak=0.134, n=2000, clipped=0):
+    """One entry shaped like _add_point stores, without touching hardware."""
+    wl = np.linspace(1500e-9, 1600e-9, n)
+    a = peak * np.sinc((wl * 1e9 - 1550.0) / 3.0)
+    return dict(gain=gain, wl=wl, mean=a, peak=float(np.max(np.abs(a))),
+                floor_single=peak / 1000.0, floor_averaged=peak / 2000.0,
+                floor_across=peak / 1000.0, floor_offregion=peak / 100.0,
+                dr_single_db=60.0, dr_averaged_db=66.0, tail_ratio=10.0,
+                clipped=clipped, n_sweeps=4, f_ref=2e6,
+                signal_points=100, noise_points=n - 100)
+
+
+def test_the_waterfall_stacks_one_trace_per_gain():
+    app, root = _app()
+    try:
+        app.points = [_point(1.0), _point(10.0), _point(100.0)]
+        app.v_view.set("waterfall (traces by gain)")
+        app.redraw()
+        assert len(app.plot.series) == 3
+        assert len(app.plot.labels) == 3
+        assert "M=10" in app.plot.labels[1]
+    finally:
+        root.destroy()
+
+
+def test_dB_turns_the_waterfall_into_decibels():
+    app, root = _app()
+    try:
+        app.points = [_point(1.0), _point(10.0)]
+        app.v_view.set("waterfall (traces by gain)")
+        app.v_floor.set("60")
+        app.v_logy.set(True)
+        app.redraw()
+        span = 60.0
+        for i, (_x, y) in enumerate(app.plot.series):
+            # each trace peaks at 0 dB then is offset by one full range
+            assert np.nanmax(y) == pytest.approx(i * span, abs=1e-6)
+            assert np.nanmin(y) >= i * span - span - 1e-6
+        assert "dB" in app.plot.ylabel
+    finally:
+        root.destroy()
+
+
+def test_the_dB_floor_is_configurable_and_finite():
+    """log10(0) at a null would hand the canvas -inf."""
+    app, root = _app()
+    try:
+        p = _point(1.0)
+        p["mean"] = np.array([0.1, 0.0, -0.05, 0.0])
+        p["wl"] = np.linspace(1500e-9, 1600e-9, 4)
+        app.points = [p]
+        app.v_logy.set(True)
+        app.v_view.set("waterfall (traces by gain)")
+        for span in ("40", "100"):
+            app.v_floor.set(span)
+            app.redraw()
+            y = app.plot.series[0][1]
+            assert np.all(np.isfinite(y)), span
+            assert np.nanmin(y) == pytest.approx(-float(span), abs=1e-6)
+    finally:
+        root.destroy()
+
+
+def test_a_bad_dB_range_falls_back_rather_than_raising():
+    app, root = _app()
+    try:
+        app.points = [_point(1.0)]
+        app.v_logy.set(True)
+        app.v_floor.set("not a number")
+        app.redraw()
+        assert app.plot.series
+    finally:
+        root.destroy()
+
+
+def test_peak_and_floor_go_to_dBV_in_log():
+    """Whether peak and floor move TOGETHER is a slope, and a slope is only
+    readable on a log axis. That comparison is the point of the view."""
+    app, root = _app()
+    try:
+        app.points = [_point(1.0), _point(10.0)]
+        app.v_view.set("peak and floor vs gain")
+        app.v_logy.set(True)
+        app.redraw()
+        assert app.plot.ylabel == "dBV"
+        assert len(app.plot.series) == 2
+        # against the point's OWN peak: the sinc maximum does not land
+        # exactly on a sample, so 0.134 is nominal rather than actual
+        assert app.plot.series[0][1][0] == pytest.approx(
+            20 * np.log10(app.points[0]['peak']), abs=1e-6)
+    finally:
+        root.destroy()
+
+
+def test_dynamic_range_view_is_already_dB_and_the_toggle_does_not_double_it():
+    app, root = _app()
+    try:
+        app.points = [_point(1.0), _point(10.0)]
+        app.v_view.set("dynamic range vs gain")
+        for log in (False, True):
+            app.v_logy.set(log)
+            app.redraw()
+            assert app.plot.y[0] == pytest.approx(60.0)
+    finally:
+        root.destroy()
+

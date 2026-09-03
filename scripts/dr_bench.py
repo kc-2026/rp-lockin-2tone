@@ -206,11 +206,31 @@ class DrBench:
         ttk.Button(bb, text="Redraw", command=self.redraw).pack(side="left")
         ttk.Button(bb, text="Export CSV",
                    command=self.export).pack(side="left", padx=4)
+        # The tails are the whole reason for a gain study, and a linear axis
+        # flattens them onto the zero line.
+        self.v_logy = tk.BooleanVar(value=False)
+        ttk.Checkbutton(bb, text="dB", variable=self.v_logy,
+                        command=self.redraw).pack(side="left", padx=(10, 2))
+        self.v_floor = tk.StringVar(value="80")
+        ttk.Entry(bb, textvariable=self.v_floor, width=4).pack(side="left")
+        ttk.Label(bb, text="dB range").pack(side="left", padx=(2, 0))
         # Fixed height: inside a ScrollFrame there is no bottom to expand
         # against, and an expanding Text would grow without limit.
         self.table = tk.Text(f, height=14, width=40,
                              font=("Consolas", 8), wrap="none")
         self.table.pack(fill="x")
+        ttk.Label(f, text=(
+            "DR    dynamic range, 20 log10(peak / floor) in dB. How far "
+            "below the peak a signal can be and still be told from noise at "
+            "this gain. The number to maximise.\n"
+            "tail  off-peak rms divided by the floor. Near 1 the trace is "
+            "empty away from the peak; well above 1 there is real structure "
+            "out in the skirts.\n"
+            "clip  raw ADC samples at the rail, summed over the sweeps. "
+            "Anything but 0 and the point is not a measurement: a flattened "
+            "peak understates DR and invents harmonics."),
+            foreground="#666", justify="left", wraplength=310).pack(
+            fill="x", pady=(4, 0))
 
     def _build_plot(self, parent):
         f = ttk.LabelFrame(parent, text="Plot", padding=6)
@@ -498,30 +518,66 @@ class DrBench:
                                yfmt=lambda v: f"{v:.0f}")
             else:
                 g = [p["gain"] for p in self.points]
-                self.plot.show_many(
-                    [(g, [p["peak"] for p in self.points]),
-                     (g, [p["floor_single"] for p in self.points])],
-                    "APD gain (M)", "volts",
-                    xfmt=lambda v: f"{v:.3g}",
-                    yfmt=lambda v: eng(v, "V"),
-                    labels=["peak", "noise floor"])
+                pk = np.array([p["peak"] for p in self.points], dtype=float)
+                fl = np.array([p["floor_single"] for p in self.points],
+                              dtype=float)
+                if self.v_logy.get():
+                    # dBV. Peak and floor span decades, and the question is
+                    # whether they move TOGETHER -- which is a slope, and a
+                    # slope is only readable on a log axis.
+                    with np.errstate(divide="ignore"):
+                        self.plot.show_many(
+                            [(g, 20 * np.log10(np.maximum(pk, 1e-12))),
+                             (g, 20 * np.log10(np.maximum(fl, 1e-12)))],
+                            "APD gain (M)", "dBV",
+                            xfmt=lambda v: f"{v:.3g}",
+                            yfmt=lambda v: f"{v:.0f}",
+                            labels=["peak", "noise floor"])
+                else:
+                    self.plot.show_many(
+                        [(g, pk), (g, fl)], "APD gain (M)", "volts",
+                        xfmt=lambda v: f"{v:.3g}",
+                        yfmt=lambda v: eng(v, "V"),
+                        labels=["peak", "noise floor"])
         except Exception as exc:                             # noqa: BLE001
             self.log(f"plot failed: {exc}")
 
+    def _db_range(self):
+        try:
+            return max(abs(float(self.v_floor.get())), 6.0)
+        except ValueError:
+            return 80.0
+
     def _plot_waterfall(self):
-        """One trace per gain, stacked. Each is normalised to its own peak so
-        the SHAPES compare; the dynamic range column is where the levels are."""
+        """One trace per gain, stacked, each normalised to its own peak.
+
+        Normalised because the SHAPES are what compare across gain settings;
+        the levels live in the DR column. In dB it plots the magnitude, which
+        is also the honest choice for a sinc -- the negative lobes are a real
+        180-degree phase flip, so folding them up shows the lobe-and-null
+        structure rather than half of it.
+        """
         series, labels = [], []
+        log = self.v_logy.get()
+        span = self._db_range()
         for i, p in enumerate(self.points):
             a = np.asarray(p["mean"], dtype=float)
-            pk = np.nanmax(np.abs(a)) or 1.0
-            series.append((np.asarray(p["wl"]) * 1e9, a / pk + i))
+            pk = float(np.nanmax(np.abs(a))) or 1.0
+            if log:
+                mag = np.abs(a) / pk
+                y = 20.0 * np.log10(np.maximum(mag, 10 ** (-span / 20.0)))
+                y = y + i * span                 # stack, one range per gain
+            else:
+                y = a / pk + i
+            series.append((np.asarray(p["wl"]) * 1e9, y))
             labels.append(f"M={p['gain']:g}  {p['dr_single_db']:.0f} dB"
                           + ("  CLIPPED" if p["clipped"] else ""))
-        self.plot.show_many(series, "wavelength (nm)",
-                            "normalised trace, offset by gain",
-                            xfmt=lambda v: f"{v:.1f}",
-                            yfmt=lambda v: f"{v:.1f}", labels=labels)
+        self.plot.show_many(
+            series, "wavelength (nm)",
+            f"dB re each peak, offset by gain" if log
+            else "normalised trace, offset by gain",
+            xfmt=lambda v: f"{v:.1f}",
+            yfmt=lambda v: f"{v:.0f}" if log else f"{v:.1f}", labels=labels)
 
     def export(self):
         if not self.points:
