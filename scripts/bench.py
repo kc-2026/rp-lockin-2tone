@@ -228,6 +228,7 @@ class Bench:
         # the wheel too -- so any box the pointer passed over changed silently.
         # A test asserts this pass covers all of them.
         self._wheel_proof(self.root)
+        self._update_sweep_info()        # seeds Acquire's sweep length
 
         self.log("Bench started. Nothing is connected.")
         self.log(f"Default modulation {DEFAULT_MOD_HZ / 1e3:.3f} kHz "
@@ -1111,8 +1112,29 @@ class Bench:
             if need is not None:
                 info += f"\nneeds decimation {need} or higher to fit in memory"
             self.v_sweepinfo.set(info)
+            self._sync_secs(secs)
         except (ValueError, ZeroDivisionError):
             self.v_sweepinfo.set("")
+
+    def _sync_secs(self, secs):
+        """Push the sweep duration into the Acquire panel.
+
+        Only while nobody has typed in that box, and only when the value has
+        really changed -- rewriting an identical string would fight the entry
+        widget for the caret.
+        """
+        if getattr(self, "_secs_manual", False):
+            return
+        want = f"{secs:.4f}".rstrip("0").rstrip(".")
+        try:
+            if abs(float(self.v_secs.get()) - secs) < 1e-9:
+                return
+        except (ValueError, AttributeError):
+            pass
+        try:
+            self.v_secs.set(want)
+        except AttributeError:
+            pass                     # the Acquire panel is not built yet
 
     def sweep_configure(self):
         d = self._need_laser()
@@ -1196,7 +1218,14 @@ class Bench:
         self.v_level = tk.StringVar(value="1.0")
         self.v_wait = tk.StringVar(value="30")
         fld(f, 0, "decimation", self.v_dec)
-        fld(f, 1, "sweep length", self.v_secs, "s")
+        # Follows the Sweep panel, because there is no reason for the same
+        # number to be typed twice and every reason for the two not to drift.
+        # Typing in it takes it over -- a longer record than the sweep is a
+        # legitimate thing to want, and an auto-update that silently undid it
+        # would be worse than no auto-update.
+        self._secs_manual = False
+        e_secs = fld(f, 1, "sweep length", self.v_secs, "s")
+        e_secs.bind("<Key>", lambda _e: setattr(self, "_secs_manual", True))
         ttk.Label(f, text="trigger").grid(row=2, column=0, sticky="w")
         # PE is POSITIVE EDGE: "when this input crosses the level going up".
         # The NE (negative edge) variants are gone -- the Santec trigger is a

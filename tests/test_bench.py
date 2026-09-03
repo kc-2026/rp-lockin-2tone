@@ -1758,3 +1758,59 @@ def test_read_back_fills_the_boxes_from_the_instrument(app):
                      "sweep": "+0", "wavelength_m": "+1.55000000E-006"})
     assert "1550.0000 nm" in app.h_laser.get()
 
+
+# ------------------------------------------- the sweep length types itself
+# The Sweep panel already knows how long the sweep takes -- (n-1) x step/speed.
+# Having to retype it in Acquire was two places for one number to drift, and
+# a capture shorter than its sweep still maps onto the full wavelength table
+# and looks like a measurement.
+
+
+def test_the_sweep_length_follows_the_sweep_panel(app):
+    app.v_start.set("1500")
+    app.v_stop.set("1600")
+    app.v_speed.set("100")
+    app.v_step.set("0.02")
+    app._update_sweep_info()
+    assert float(app.v_secs.get()) == pytest.approx(1.0, abs=1e-6)
+
+    # halve the speed and it should double, without anyone retyping
+    app.v_speed.set("50")
+    app._update_sweep_info()
+    assert float(app.v_secs.get()) == pytest.approx(2.0, abs=1e-6)
+
+
+def test_a_shorter_range_gives_a_shorter_record(app):
+    app.v_start.set("1550")
+    app.v_stop.set("1560")
+    app.v_speed.set("100")
+    app.v_step.set("0.02")
+    app._update_sweep_info()
+    assert float(app.v_secs.get()) == pytest.approx(0.1, abs=1e-6)
+
+
+def test_typing_in_the_box_takes_it_over(app):
+    """A record LONGER than the sweep is a legitimate thing to want. An
+    auto-update that silently undid it would be worse than no auto-update."""
+    app.v_start.set("1500")
+    app.v_stop.set("1600")
+    app.v_speed.set("100")
+    app.v_step.set("0.02")
+    app._update_sweep_info()
+    assert float(app.v_secs.get()) == pytest.approx(1.0, abs=1e-6)
+
+    app._secs_manual = True          # what the <Key> binding sets
+    app.v_secs.set("3.0")
+    app.v_speed.set("50")
+    app._update_sweep_info()
+    assert float(app.v_secs.get()) == pytest.approx(3.0), \
+        "a hand-typed record length was overwritten"
+
+
+def test_the_sync_does_not_fight_an_unchanged_value(app):
+    """Rewriting an identical string fights the entry widget for the caret."""
+    app.v_secs.set("1")
+    app._secs_manual = False
+    app._sync_secs(1.0)
+    assert app.v_secs.get() == "1", "the box was rewritten for no change"
+
