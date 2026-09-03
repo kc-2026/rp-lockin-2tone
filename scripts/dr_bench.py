@@ -159,6 +159,21 @@ class DrBench:
                                 values=("1", "2", "3"))).grid(row=8, column=1,
                                                               sticky="w")
         ttk.Label(g, text="x f1").grid(row=8, column=2, sticky="w")
+        self.v_dbm = tk.StringVar(value="4.0")
+        self.v_setpwr = tk.BooleanVar(value=True)
+        fld(g, 9, "laser power", self.v_dbm, "dBm")
+        ttk.Checkbutton(g, text="set it at every point",
+                        variable=self.v_setpwr).grid(row=10, column=0,
+                                                     columnspan=3, sticky="w")
+        # Constant optical power is what makes the gain comparison mean
+        # anything. If the laser drifts between points the peak moves for
+        # reasons that have nothing to do with the detector, and the
+        # DR-against-gain curve quietly stops being about gain.
+        ttk.Label(g, text="Set at every point so each gain sees the same "
+                          "light. Untick to leave the laser alone. The "
+                          "readback is recorded either way.",
+                  foreground="#666", justify="left", wraplength=300).grid(
+            row=11, column=0, columnspan=3, sticky="w", pady=(2, 0))
 
     def _panel_point(self, parent):
         f = ttk.LabelFrame(parent, text="Take a point", padding=8)
@@ -341,6 +356,8 @@ class DrBench:
             harmonic=int(self.v_harm.get()),
             reps=int(self.v_reps.get()),
             gain=float(self.v_gain.get()),
+            dbm=float(self.v_dbm.get()),
+            set_power=bool(self.v_setpwr.get()),
         )
 
     def run_point(self):
@@ -364,6 +381,9 @@ class DrBench:
                 f"detector.\n\n"
                 f"{c['reps']} sweeps, {c['start_nm']:g}-{c['stop_nm']:g} nm "
                 f"at {c['speed_nm_s']:g} nm/s\n"
+                + (f"Laser        {c['dbm']:+.2f} dBm\n"
+                   if c["set_power"] else "Laser        left as it is\n")
+                +
                 f"OUT1 {c['carrier'] / 1e6:.3f} MHz AM "
                 f"{c['modulation'] / 1e3:.1f} kHz @ {c['amplitude']} V\n\n"
                 f"Light goes somewhere. Continue?"):
@@ -379,8 +399,23 @@ class DrBench:
 
         rp, d = self.rp, self.laser
         traces, wl, clipped, restore = [], None, 0, None
+        power = float("nan")
         try:
             with self.lasw.lock:
+                if c["set_power"]:
+                    pr = ops.set_laser_power(d, c["dbm"])
+                    power = float(pr["readback"])
+                    if pr["clamped"]:
+                        note(f"WARNING: {c['dbm']:+.2f} dBm is outside the "
+                             f"laser's {pr['min']:+.2f} to {pr['max']:+.2f} "
+                             f"range; it applied {pr['applied']:+.2f}. Every "
+                             f"point must see the SAME power or the gain "
+                             f"comparison is not one.")
+                    else:
+                        note(f"laser at {power:+.2f} dBm")
+                else:
+                    power = float(ops.laser_state(d).get("power_dbm", "nan"))
+                    note(f"laser left as it is, reading {power:+.2f} dBm")
                 cfg = ops.configure_sweep(
                     d, start_nm=c["start_nm"], stop_nm=c["stop_nm"],
                     speed_nm_s=c["speed_nm_s"], step_nm=c["step_nm"], mode=1)
@@ -430,7 +465,7 @@ class DrBench:
             n = min(t.size for t in traces)
             stats = ops.trace_dynamic_range([t[:n] for t in traces])
             point = dict(gain=c["gain"], wl=wl[:n], clipped=clipped,
-                         f_ref=f_ref, **stats)
+                         f_ref=f_ref, power_dbm=power, **stats)
             self.root.after(0, lambda: self._add_point(point))
         except Exception as exc:                             # noqa: BLE001
             self.root.after(0, lambda: self.log(
@@ -451,6 +486,14 @@ class DrBench:
     def _add_point(self, p):
         self.points.append(p)
         self.points.sort(key=lambda q: q["gain"])
+        powers = [q.get("power_dbm") for q in self.points
+                  if q.get("power_dbm") is not None
+                  and np.isfinite(q.get("power_dbm", float("nan")))]
+        if len(powers) > 1 and max(powers) - min(powers) > 0.05:
+            self.log(f"WARNING: these points were taken between "
+                     f"{min(powers):+.2f} and {max(powers):+.2f} dBm. Gain "
+                     f"and optical power both move the peak, so the "
+                     f"DR-against-gain curve is not about gain alone.")
         if p["clipped"]:
             self.log(f"WARNING: {p['clipped']} samples at the ADC rail at "
                      f"M={p['gain']:g}. This point is not a measurement -- "
@@ -608,12 +651,13 @@ class DrBench:
         base = os.path.join(os.getcwd(), f"dr_gain_{stamp}")
         with open(base + ".csv", "w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh)
-            w.writerow(["gain_M", "n_sweeps", "peak_V", "floor_single_V",
-                        "floor_averaged_V", "dr_single_dB", "dr_averaged_dB",
-                        "tail_ratio", "clipped_samples", "f_ref_Hz"])
+            w.writerow(["gain", "laser_dBm", "n_sweeps", "peak_V",
+                        "floor_single_V", "floor_averaged_V", "dr_single_dB",
+                        "dr_averaged_dB", "tail_ratio", "clipped_samples",
+                        "f_ref_Hz"])
             for p in self.points:
-                w.writerow([p["gain"], p["n_sweeps"], p["peak"],
-                            p["floor_single"], p["floor_averaged"],
+                w.writerow([p["gain"], p.get("power_dbm", ""), p["n_sweeps"],
+                            p["peak"], p["floor_single"], p["floor_averaged"],
                             p["dr_single_db"], p["dr_averaged_db"],
                             p["tail_ratio"], p["clipped"], p["f_ref"]])
         np.savez_compressed(

@@ -322,7 +322,7 @@ def test_the_rail_scrolls():
 
 # ------------------------------------------------------------ the dB view
 
-def _point(gain, peak=0.134, n=2000, clipped=0):
+def _point(gain, peak=0.134, n=2000, clipped=0, power_dbm=4.0):
     """One entry shaped like _add_point stores, without touching hardware."""
     wl = np.linspace(1500e-9, 1600e-9, n)
     a = peak * np.sinc((wl * 1e9 - 1550.0) / 3.0)
@@ -330,7 +330,7 @@ def _point(gain, peak=0.134, n=2000, clipped=0):
                 floor_single=peak / 1000.0, floor_averaged=peak / 2000.0,
                 floor_across=peak / 1000.0, floor_offregion=peak / 100.0,
                 dr_single_db=60.0, dr_averaged_db=66.0, tail_ratio=10.0,
-                clipped=clipped, n_sweeps=4, f_ref=2e6,
+                clipped=clipped, n_sweeps=4, f_ref=2e6, power_dbm=power_dbm,
                 signal_points=100, noise_points=n - 100)
 
 
@@ -462,4 +462,66 @@ def test_the_axis_survives_an_empty_stack():
         assert fmt(0.5) == "0.5", "with no points it falls back to numbers"
     finally:
         root.destroy()
+
+
+# --------------------------------------------------------- the laser power
+# Constant optical power is what makes the gain comparison mean anything. Gain
+# and power both move the peak, so a curve taken across drifting power is not
+# a curve about gain.
+
+
+def test_the_power_is_part_of_the_configuration(app_cfg):
+    app, root = app_cfg
+    try:
+        app.v_dbm.set("6.5")
+        app.v_setpwr.set(True)
+        c = app._cfg()
+        assert c["dbm"] == pytest.approx(6.5)
+        assert c["set_power"] is True
+        app.v_setpwr.set(False)
+        assert app._cfg()["set_power"] is False
+    finally:
+        root.destroy()
+
+
+def test_points_taken_at_different_powers_are_called_out():
+    app, root = _app()
+    try:
+        app.points = [_point(1.0, power_dbm=4.0)]
+        app._add_point(_point(10.0, power_dbm=9.0))
+        text = app.logbox.get("1.0", "end")
+        assert "not about gain alone" in text, text
+    finally:
+        root.destroy()
+
+
+def test_one_power_throughout_says_nothing():
+    """It must not cry wolf on the run that is set up correctly."""
+    app, root = _app()
+    try:
+        app.points = [_point(1.0, power_dbm=4.0)]
+        app._add_point(_point(10.0, power_dbm=4.0))
+        assert "not about gain alone" not in app.logbox.get("1.0", "end")
+    finally:
+        root.destroy()
+
+
+def test_the_power_reaches_the_csv(tmp_path, monkeypatch):
+    app, root = _app()
+    try:
+        app.points = [_point(1.0, power_dbm=4.0), _point(10.0, power_dbm=4.0)]
+        monkeypatch.chdir(tmp_path)
+        app.export()
+        csvs = list(tmp_path.glob("dr_gain_*.csv"))
+        assert csvs, "no CSV was written"
+        head, first = csvs[0].read_text().splitlines()[:2]
+        assert "laser_dBm" in head
+        assert "4.0" in first
+    finally:
+        root.destroy()
+
+
+@pytest.fixture
+def app_cfg():
+    return _app()
 
