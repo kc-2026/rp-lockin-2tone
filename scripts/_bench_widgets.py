@@ -369,6 +369,34 @@ class ScrollFrame(ttk.Frame):
         self.canvas.itemconfigure(self._win, width=e.width)
 
 
+def wheel_safe(widget):
+    """Stop the mouse wheel changing a Combobox's SELECTION.
+
+    ttk.Combobox has a class binding for the wheel that steps its value, and
+    the panel rail grabs the wheel with bind_all to scroll. Widget bindings run
+    before bind_all, so scrolling the rail with the pointer over a combobox
+    silently picked a different value -- which is how the sweep mode kept
+    changing while other settings were being edited.
+
+    The rail still scrolls: this forwards to the enclosing ScrollFrame's canvas
+    and then returns "break" to kill the class binding.
+    """
+    def go(event, delta=None):
+        node = widget
+        while node is not None:
+            if isinstance(node, ScrollFrame):
+                d = event.delta if delta is None else delta
+                node.canvas.yview_scroll(-1 if d > 0 else 1, "units")
+                break
+            node = getattr(node, "master", None)
+        return "break"
+
+    widget.bind("<MouseWheel>", go)
+    widget.bind("<Button-4>", lambda e: go(e, 120))
+    widget.bind("<Button-5>", lambda e: go(e, -120))
+    return widget
+
+
 def field(parent, row, label, var, unit="", width=12):
     """One labelled entry on a grid row. Returns the Entry."""
     ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=1)

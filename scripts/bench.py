@@ -54,7 +54,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "src"))
 
 import _bench_ops as ops                                    # noqa: E402
-from _bench_widgets import Plot, ScrollFrame, Worker, eng, field as fld  # noqa: E402
+from _bench_widgets import (Plot, ScrollFrame, Worker, eng, field as fld,
+                            wheel_safe)  # noqa: E402
 from rp_lockin.hardware import RedPitaya                    # noqa: E402
 from rp_lockin.output import write_raw_npz, write_trace_csv  # noqa: E402
 from tsl775 import TSL775                                   # noqa: E402
@@ -216,12 +217,17 @@ class Bench:
         self._build_workspace(right)
         self._build_log()
 
-        for build in (self._panel_board, self._panel_drive,
-                      self._panel_drive2, self._panel_laser,
+        for build in (self._panel_board, self._panel_laser,
+                      self._panel_drive, self._panel_drive2,
                       self._panel_sweep, self._panel_acquire,
                       self._panel_demod, self._panel_map, self._panel_export,
                       self._panel_sequences):
             build(self.rail.body)
+        # Every Combobox, not the ones I remembered. ttk gives them a class
+        # binding that steps the value on the wheel, and the rail scrolls on
+        # the wheel too -- so any box the pointer passed over changed silently.
+        # A test asserts this pass covers all of them.
+        self._wheel_proof(self.root)
 
         self.log("Bench started. Nothing is connected.")
         self.log(f"Default modulation {DEFAULT_MOD_HZ / 1e3:.3f} kHz "
@@ -340,14 +346,14 @@ class Bench:
         bar.pack(fill="x")
         self.plot_what = tk.StringVar(value="trace")
         ttk.Label(bar, text="show:").pack(side="left")
-        cb = ttk.Combobox(bar, textvariable=self.plot_what, width=28,
+        cb = wheel_safe(ttk.Combobox(bar, textvariable=self.plot_what, width=28,
                           state="readonly",
                           values=("trace (amplitude vs wavelength)",
                                   "lock-in (amplitude vs time)",
                                   "lock-in R (magnitude vs time)",
                                   "lock-in phase (degrees vs time)",
                                   "raw IN1 (volts vs time)",
-                                  "raw IN2 (counts vs time)"))
+                                  "raw IN2 (counts vs time)")))
         cb.pack(side="left", padx=6)
         cb.set("trace (amplitude vs wavelength)")
         ttk.Button(bar, text="Redraw", command=self.redraw).pack(side="left")
@@ -527,6 +533,13 @@ class Bench:
 
     # ---------------------------------------------------------------- panels
 
+    def _wheel_proof(self, widget):
+        """Take the mouse wheel away from every Combobox in the tree."""
+        for child in widget.winfo_children():
+            if isinstance(child, ttk.Combobox):
+                wheel_safe(child)
+            self._wheel_proof(child)
+
     def _panel(self, parent, title):
         f = ttk.LabelFrame(parent, text=title, padding=8)
         f.pack(fill="x", pady=4, padx=2)
@@ -643,13 +656,6 @@ class Bench:
             "snap": tk.StringVar(value=""),
         }
         fld(f, 0, "carrier", d["carrier"], "MHz")
-        # ONE box. There used to be a second showing what the ASG would snap
-        # to, back when frequencies had to sit on the fs/16384 grid. That grid
-        # turned out to be an artefact of leaving the play rate at its default
-        # (measured 2026-08-28), so any whole number of hertz is now exact and
-        # the two boxes agreed for every sane input. The readout below still
-        # reports what will actually be generated, because "any whole hertz"
-        # is not "anything".
         e_mod = fld(f, 1, "modulation", d["mod"], "kHz", width=14)
         e_mod.bind("<FocusOut>", lambda _e: self._settle_mod(ch))
         e_mod.bind("<Return>", lambda _e: self._settle_mod(ch))
@@ -663,14 +669,6 @@ class Bench:
         d["carrier"].trace_add("write", lambda *_a: self._update_snap(ch))
         d["mod"].trace_add("write", lambda *_a: self._update_snap(ch))
         self._update_snap(ch)
-        ttk.Label(f, text="The table holds a whole number of cycles of both "
-                          "and is played at a rate that makes them come out "
-                          "right, so any WHOLE NUMBER OF HERTZ is exact -- the "
-                          "play rate is quantised to 1 Hz and that is the only "
-                          "grid left. Roughly 39 kHz to 10 MHz with an 80 MHz "
-                          "carrier. Avoid multiples of 504.868 kHz.",
-                  foreground="#666", justify="left", wraplength=300).grid(
-            row=4, column=0, columnspan=3, sticky="w", pady=(2, 4))
         bar = ttk.Frame(f)
         bar.grid(row=5, column=0, columnspan=3, sticky="w")
         # Per-channel, not all_off: turning OUT2 off has to leave OUT1 driving
@@ -743,16 +741,11 @@ class Bench:
             return d["snap"].set("")
         if mode == "cw":
             return d["snap"].set(
-                f"CW: unmodulated carrier {t.carrier / 1e6:.6f} MHz "
-                f"({t.carrier_cycles} cycles in the table, played at "
-                f"{t.play_freq:.0f} Hz). The envelope is held, so there is one "
-                f"spectral line and nothing for a lock-in to find.\n"
-                f"This is NOT a DC level: the AOM needs its 80 MHz and the "
-                f"amplifier is AC-coupled. It is the condition the drive level "
-                f"was tuned at, and about 3 dB more average RF power than "
-                f"depth-1 AM at the same amplitude.")
+                f"CW: {t.carrier / 1e6:.3f} MHz, no modulation. Holds the "
+                f"ENVELOPE, not a DC voltage. ~3 dB more average RF than "
+                f"depth-1 AM.")
         note = "" if abs(t.modulation - asked) <= 0.5 else \
-            f"  (nearest reachable to {asked / 1e3:.4f})"
+            f" -- nearest to {asked / 1e3:.1f}"
         # Every frequency is reachable now, so nothing stops you landing on a
         # switching-supply harmonic. One there reads as a strong, clean, steady
         # optical signal and nothing in the trace would give it away.
@@ -760,20 +753,18 @@ class Bench:
         gap = abs(t.modulation - k * SWITCHER_HZ)
         warn = ""
         if gap < SWITCHER_GUARD_HZ:
-            warn = (f"\nWARNING: {gap / 1e3:.1f} kHz from {k} x 504.868 kHz "
-                    f"(switching supply). {100 * gap / (k * SWITCHER_HZ):.2f}% "
-                    f"of drift lands it on you, as a clean steady 32 uV.")
-        how = (f"EXACT: {t.mod_cycles} modulation cycle(s) and "
-               f"{t.carrier_cycles} carrier cycles in the table, played at"
-               if mode == "exact"
-               else "fallback, on the default fs/16384 grid, play rate")
+            warn = (f"\nWARNING: only {gap / 1e3:.1f} kHz from the switching "
+                    f"supply ({k} x 504.868 kHz), which reads as a clean "
+                    f"steady signal. Move it.")
+        # Short on purpose. The carrier is worth showing because it MOVES:
+        # both frequencies are integer multiples of one play rate, so pinning
+        # the modulation exactly puts the carrier on the nearest multiple of
+        # it. 915 kHz at one cycle lands the carrier on 87 x 915 kHz.
+        off = (t.carrier - float(d["carrier"].get()) * 1e6) / 1e6
         d["snap"].set(
-            f"generates: carrier {t.carrier / 1e6:.6f} MHz "
-            f"({t.carrier_cycles} cyc), mod {t.modulation / 1e3:.4f} kHz "
-            f"({t.mod_cycles} cyc){note}. {how} "
-            f"{t.play_freq:.4f} Hz. 2x = {2 * t.modulation / 1e3:.4f} kHz, "
-            f"3x = {3 * t.modulation / 1e3:.4f} kHz."
-            f"  spur gap {gap / 1e3:.1f} kHz.{warn}")
+            f"generates {t.carrier / 1e6:.3f} MHz carrier "
+            f"({off:+.3f} MHz), AM at {t.modulation / 1e3:.1f} kHz"
+            f"{note}.{warn}")
 
     def _drive_cfg(self, ch=1):
         # _resolve() turns this into the table that will really be played, and
@@ -840,8 +831,8 @@ class Bench:
         fld(f, 0, "address", self.v_ip, width=18)
         fld(f, 1, "power", self.v_dbm, "dBm")
         fld(f, 2, "wavelength", self.v_nm, "nm", width=14)
-        ttk.Label(f, text="One connection is held for the whole session:\n"
-                          "about one reconnect in four fails outright.",
+        ttk.Label(f, text="One connection, held all session. Do not retry a "
+                          "failed connect -- power cycle instead.",
                   foreground="#666", justify="left", wraplength=300).grid(
             row=3, column=0, columnspan=3, sticky="w", pady=(4, 4))
         b = ttk.Frame(f)
@@ -849,14 +840,12 @@ class Bench:
         ttk.Button(b, text="Connect", command=self.laser_connect).pack(side="left")
         ttk.Button(b, text="Disconnect",
                    command=self.laser_disconnect).pack(side="left", padx=4)
-        ttk.Button(b, text="Set power",
-                   command=self.laser_set_power).pack(side="left")
         b2 = ttk.Frame(f)
         b2.grid(row=5, column=0, columnspan=3, sticky="w", pady=(4, 0))
-        ttk.Button(b2, text="Set wavelength",
-                   command=self.laser_set_wavelength).pack(side="left")
+        ttk.Button(b2, text="Configure",
+                   command=self.laser_configure).pack(side="left")
         ttk.Button(b2, text="Read back",
-                   command=self.laser_read_wavelength).pack(side="left", padx=4)
+                   command=self.laser_read_back).pack(side="left", padx=4)
         b3 = ttk.Frame(f)
         b3.grid(row=6, column=0, columnspan=3, sticky="w", pady=(4, 0))
         ttk.Button(b3, text="Shutter CLOSE",
@@ -870,11 +859,8 @@ class Bench:
                    command=lambda: self.laser_ld(False)).pack(side="left",
                                                               padx=4)
         # Q32: a hand-set wavelength leaves the instrument unable to sweep.
-        ttk.Label(f, text="Setting a wavelength by hand stops the SWEEP from "
-                          "running -- measured, twice, with every sweep "
-                          "setting still correct. Press Sweep > Configure "
-                          "afterwards, and suspect this first if a sweep "
-                          "arms and never triggers.",
+        ttk.Label(f, text="Setting a wavelength stops the laser sweeping until "
+                          "Sweep > Configure is pressed again.",
                   foreground="#a04000", justify="left", wraplength=300).grid(
             row=7, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
@@ -891,6 +877,71 @@ class Bench:
             self._show_laser(st)
 
         self.submit(self.lasw, "connect laser", go, done)
+
+    def laser_configure(self):
+        """Apply wavelength AND power in one go, then read both back.
+
+        They were separate buttons for no reason: nothing sets one without
+        caring about the other, and a half-configured laser is a state worth
+        not having. Order is wavelength first -- it is the slow one, and the
+        power setpoint survives the move.
+        """
+        d = self._need_laser()
+        if not d:
+            return
+        try:
+            nm = float(self.v_nm.get())
+            dbm = float(self.v_dbm.get())
+        except ValueError as e:
+            return messagebox.showerror("Laser", f"Not a number: {e}")
+        if not messagebox.askokcancel(
+                "Configure laser",
+                f"Wavelength   {nm:.4f} nm\n"
+                f"Power        {dbm:+.2f} dBm\n\n"
+                f"The light changes, and setting a wavelength stops the laser "
+                f"sweeping until Sweep > Configure is pressed again."):
+            return self.log("laser configure cancelled")
+
+        def go():
+            moved = ops.set_wavelength_m(d, nm * 1e-9)
+            power = ops.set_laser_power(d, dbm)
+            return moved, power
+
+        def done(v):
+            moved, power = v
+            self.log(f"laser configured: {moved['arrived_m'] * 1e9:.4f} nm "
+                     f"in {moved['waited_s']:.1f} s, "
+                     f"{float(power['readback']):+.2f} dBm. Press "
+                     f"Sweep > Configure before sweeping.")
+
+        self.submit(self.lasw, "configure laser", go, done)
+
+    def laser_read_back(self):
+        """What the instrument actually holds, into the boxes.
+
+        The boxes are a REQUEST until this is pressed. The laser clamps a power
+        below its floor silently, and a wavelength it will not reach fails
+        loudly -- but either way the box and the instrument can disagree, and
+        this is how you find out which.
+        """
+        d = self._need_laser()
+        if not d:
+            return
+
+        def done(st):
+            try:
+                self.v_nm.set(f"{float(st['wavelength_m']) * 1e9:.4f}")
+            except (KeyError, ValueError):
+                pass
+            try:
+                self.v_dbm.set(f"{float(st['power_dbm']):.2f}")
+            except (KeyError, ValueError):
+                pass
+            self._show_laser(st)
+            self.log(f"laser reads {self.v_nm.get()} nm, "
+                     f"{self.v_dbm.get()} dBm")
+
+        self.submit(self.lasw, "read back", lambda: ops.laser_state(d), done)
 
     def laser_set_wavelength(self):
         """Park the laser at a wavelength, and confirm it arrived.
@@ -1008,17 +1059,21 @@ class Bench:
         # Discrete, not continuous (manual p.87). Anything else is rejected by
         # the instrument, so a free-text box could only ever produce a refusal.
         ttk.Label(f, text="speed").grid(row=2, column=0, sticky="w")
-        ttk.Combobox(f, textvariable=self.v_speed, width=10, state="readonly",
-                     values=tuple(("%g" % v) for v in ops.SWEEP_SPEEDS_NM_S)
-                     ).grid(row=2, column=1, sticky="w")
+        wheel_safe(ttk.Combobox(
+            f, textvariable=self.v_speed, width=10, state="readonly",
+            values=tuple(("%g" % v) for v in ops.SWEEP_SPEEDS_NM_S)
+        )).grid(row=2, column=1, sticky="w")
         ttk.Label(f, text="nm/s").grid(row=2, column=2, sticky="w")
         fld(f, 3, "trigger step", self.v_step, "nm")
         # Two-way is a trap: the return pass overwrites the log, so the run
         # comes back with only the descending half.
         ttk.Label(f, text="mode").grid(row=4, column=0, sticky="w")
-        ttk.Combobox(f, textvariable=self.v_mode, width=28, state="readonly",
-                     values=tuple(ops.SWEEP_MODES.values())).grid(
-            row=4, column=1, columnspan=2, sticky="w")
+        # wheel_safe, or scrolling the rail past this box silently changes
+        # the sweep mode -- which is exactly how a run ended up in step mode.
+        wheel_safe(ttk.Combobox(
+            f, textvariable=self.v_mode, width=28, state="readonly",
+            values=tuple(ops.SWEEP_MODES.values())
+        )).grid(row=4, column=1, columnspan=2, sticky="w")
         self.v_sweepinfo = tk.StringVar(value="")
         ttk.Label(f, textvariable=self.v_sweepinfo, foreground="#666",
                   justify="left").grid(row=5, column=0, columnspan=3,
@@ -1141,28 +1196,28 @@ class Bench:
         self.v_level = tk.StringVar(value="1.0")
         self.v_wait = tk.StringVar(value="30")
         fld(f, 0, "decimation", self.v_dec)
-        fld(f, 1, "cover", self.v_secs, "s")
+        fld(f, 1, "sweep length", self.v_secs, "s")
         ttk.Label(f, text="trigger").grid(row=2, column=0, sticky="w")
-        # PE is POSITIVE EDGE (NE negative), so CH2_PE means "when analog
-        # channel 2 crosses the level going up". NOW is gone from this list:
-        # it captures immediately and produces a record with no time origin,
-        # which cannot carry a wavelength axis. The Snapshot button below is
-        # the deliberate way to take one.
-        ttk.Combobox(f, textvariable=self.v_trig, width=10, state="readonly",
-                     values=("CH2_PE", "CH2_NE", "CH1_PE", "EXT_PE")).grid(
+        # PE is POSITIVE EDGE: "when this input crosses the level going up".
+        # The NE (negative edge) variants are gone -- the Santec trigger is a
+        # positive 3.3 V pulse, so NE would latch the FALLING edge of the first
+        # pulse, 25 us late, offsetting every wavelength by an eighth of a step
+        # with nothing in the trace to show it. NOW is gone for the same class
+        # of reason: no time origin, so no wavelength axis. Snapshot is the
+        # deliberate way to take an untriggered look.
+        wheel_safe(ttk.Combobox(f, textvariable=self.v_trig, width=10,
+                                state="readonly",
+                                values=("CH2_PE", "CH1_PE", "EXT_PE"))).grid(
             row=2, column=1, sticky="w")
         fld(f, 3, "level", self.v_level, "V")
         fld(f, 6, "wait up to", self.v_wait, "s")
-        ttk.Label(f, text="Always captures IN1 AND IN2 together. Not\n"
-                          "optional: the wavelength axis is only valid if\n"
-                          "the detector and the trigger share one record,\n"
-                          "and one time base.",
+        ttk.Label(f, text="Sweep length is the sweep itself; pre-roll and "
+                          "tail are added on top. Both inputs are always "
+                          "captured together.",
                   foreground="#666", justify="left", wraplength=300).grid(
             row=4, column=0, columnspan=3, sticky="w", pady=(4, 2))
-        ttk.Label(f, text="ORDER: Capture FIRST -- it arms and waits --\n"
-                          "then Start in the Sweep panel above. The laser has\n"
-                          "its own worker, so it is not stuck behind the\n"
-                          "waiting capture.",
+        ttk.Label(f, text="ORDER: Capture first (it arms and waits), then "
+                          "Sweep > Start.",
                   foreground="#144", justify="left", wraplength=300).grid(
             row=5, column=0, columnspan=3, sticky="w", pady=(0, 4))
         b = ttk.Frame(f)
@@ -1372,7 +1427,6 @@ class Bench:
             row=2, column=0, columnspan=3, sticky="w", pady=(4, 4))
         h = ttk.Frame(f)
         h.grid(row=3, column=0, columnspan=3, sticky="w")
-        ttk.Label(h, text="from the drive:").pack(side="left")
         ttk.Button(h, text="f1", width=4,
                    command=lambda: self.fref_from_drive(1)).pack(side="left",
                                                                   padx=2)
@@ -1386,7 +1440,6 @@ class Bench:
         # SFG output goes as I1 x I2, so the nonlinearity lands on the SUM and
         # the DIFFERENCE and nowhere else. f2 on its own is the linear control:
         # a real SFG signal is absent there.
-        ttk.Label(s, text="SFG:").pack(side="left")
         ttk.Button(s, text="f2", width=4,
                    command=lambda: self.fref_from_sfg("f2")).pack(side="left",
                                                                   padx=2)
@@ -1621,13 +1674,14 @@ class Bench:
                   foreground="#666", justify="left", wraplength=300).grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
         self.v_seq = tk.StringVar(value="linear sweep")
-        ttk.Combobox(f, textvariable=self.v_seq, width=26, state="readonly",
-                     values=("linear sweep",
-                             "SHG (demodulate at 2*f1)",
-                             "SFG (two tones, demodulate at f1+f2)",
-                             "control: no drive",
-                             "control: low power")).grid(row=1, column=0,
-                                                         sticky="w")
+        wheel_safe(ttk.Combobox(
+            f, textvariable=self.v_seq, width=26, state="readonly",
+            values=("linear sweep",
+                    "SHG (demodulate at 2*f1)",
+                    "SFG (two tones, demodulate at f1+f2)",
+                    "control: no drive",
+                    "control: low power")
+        )).grid(row=1, column=0, sticky="w")
         ttk.Button(f, text="Run", command=self.seq_run).grid(row=1, column=1,
                                                              sticky="w", padx=4)
         self.v_seqstat = tk.StringVar(value="idle")

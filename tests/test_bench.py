@@ -537,15 +537,35 @@ def test_a_snapshot_is_still_available_for_alignment(app):
 # -------------------------------------------------------------- the snap view
 
 def test_the_drive_panel_shows_what_the_asg_will_actually_play(app):
-    """What is typed and what is generated differ by up to half a grid step,
-    and that difference is what made a hand-typed second harmonic 54.7 Hz out."""
+    """What is typed and what is GENERATED are different numbers, and the
+    panel must show the second one.
+
+    The readout is deliberately short now -- carrier, its offset from what was
+    asked, and the modulation -- but it still has to be the generated values.
+    The carrier is the interesting one because it MOVES: both frequencies are
+    integer multiples of one play rate, so pinning the modulation exactly puts
+    the carrier on the nearest multiple of it.
+    """
     app.v_carrier.set("80.0")
-    app.v_mod.set("915.5273")
+    app.v_mod.set("915")
     app._update_snap()
     shown = app.v_snap.get()
-    assert "915.5273" in shown
-    assert "1831.0547" in shown, f"the 2x harmonic should be shown: {shown}"
-    assert "60 cycles" in shown or "(60" in shown
+
+    from rp_lockin.waveforms import make_am_table_exact
+    t = make_am_table_exact(80e6, 915000.0)
+    assert f"{t.carrier / 1e6:.3f}" in shown, shown
+    assert f"{t.modulation / 1e3:.1f}" in shown, shown
+    # and the offset from the 80 MHz that was asked for, signed
+    assert f"{(t.carrier - 80e6) / 1e6:+.3f}" in shown, shown
+
+
+def test_the_readout_stays_short(app):
+    """It sits in a 300 px column beside the entry boxes. A paragraph there
+    pushes the whole rail wider, which is what it used to do."""
+    app.v_carrier.set("80.0")
+    app.v_mod.set("915")
+    app._update_snap()
+    assert len(app.v_snap.get()) < 120, app.v_snap.get()
 
 
 # ------------------------------------------------ the time-axis convention
@@ -1534,7 +1554,7 @@ def test_the_bench_treats_zero_modulation_as_cw(app):
     assert mode == "cw"
     assert table.mod_cycles == 0
     assert "CW" in app.v_snap.get()
-    assert "NOT a DC level" in app.v_snap.get()
+    assert "not a DC voltage" in app.v_snap.get()
 
 
 def test_a_blank_or_negative_modulation_is_cw_too(app):
@@ -1632,4 +1652,109 @@ def test_the_toggle_exists_and_starts_off(app):
     how a phase rotation gives itself up."""
     assert hasattr(app, "v_logy")
     assert app.v_logy.get() is False
+
+
+# ------------------------------------------------- the wheel ate the combobox
+# From the bench: "sometimes changing other settings changes the sweep mode."
+# ttk.Combobox has a CLASS binding for the mouse wheel that steps its value,
+# and the panel rail grabs the wheel with bind_all to scroll. Widget and class
+# bindings run before bind_all, so scrolling the rail with the pointer over a
+# combobox silently picked a different value. That is how a run ended up in
+# step mode -- which then swept ~2000x slow with a nearly flat trigger channel.
+
+
+def _comboboxes(widget):
+    import tkinter.ttk as ttk_
+    found = []
+
+    def walk(w):
+        for c in w.winfo_children():
+            if isinstance(c, ttk_.Combobox):
+                found.append(c)
+            walk(c)
+
+    walk(widget)
+    return found
+
+
+def test_no_combobox_changes_its_value_on_the_wheel(app):
+    """Every one of them, not just the sweep mode: the same class binding
+    applies to the speed, the trigger, the sequence and the plot picker."""
+    boxes = _comboboxes(app.root)
+    assert boxes, "no comboboxes found -- the walk is broken, not the fix"
+    for cb in boxes:
+        bound = cb.bind("<MouseWheel>")
+        assert bound, (f"a combobox with values {cb.cget('values')!r} still "
+                       f"takes the wheel from its class binding")
+
+
+def test_the_sweep_mode_survives_a_wheel_event(app):
+    """The specific failure, end to end."""
+    import tkinter.ttk as ttk_
+    before = app.v_mode.get()
+    for cb in _comboboxes(app.root):
+        if isinstance(cb, ttk_.Combobox) and cb.cget("textvariable"):
+            cb.event_generate("<MouseWheel>", delta=-120)
+    assert app.v_mode.get() == before, "the wheel changed the sweep mode"
+
+
+def test_the_sweep_mode_only_changes_when_it_is_set(app):
+    """It must still be settable -- a box nothing can change is not a fix."""
+    app.v_mode.set("step, one way")
+    assert app._sweep_cfg()["mode"] == 0
+    app.v_mode.set("continuous, one way")
+    assert app._sweep_cfg()["mode"] == 1
+
+
+# --------------------------------------------------- one Configure, not two
+
+
+def test_the_laser_configures_wavelength_and_power_together(app, monkeypatch):
+    """They were separate buttons for no reason. Nothing sets one without
+    caring about the other, and a half-configured laser is a state worth not
+    having."""
+    calls = []
+    monkeypatch.setattr(app, "_need_laser", lambda: object())
+    monkeypatch.setattr(bench_mod().messagebox, "askokcancel",
+                        lambda *a, **k: True)
+    monkeypatch.setattr(bench_mod().ops, "set_wavelength_m",
+                        lambda d, m, **k: calls.append(("wav", m))
+                        or {"arrived_m": m, "waited_s": 0.1})
+    monkeypatch.setattr(bench_mod().ops, "set_laser_power",
+                        lambda d, p, **k: calls.append(("pwr", p))
+                        or {"readback": p})
+    app.v_nm.set("1545.0")
+    app.v_dbm.set("6.0")
+    app.laser_configure()
+    app.board.join(timeout=2.0) if hasattr(app.board, "join") else None
+    for _ in range(200):
+        if len(calls) >= 2:
+            break
+        app.root.update()
+        time.sleep(0.01)
+    assert [c[0] for c in calls] == ["wav", "pwr"], calls
+    assert calls[0][1] == pytest.approx(1545e-9)
+    assert calls[1][1] == pytest.approx(6.0)
+
+
+def test_configure_is_confirmed_before_the_light_moves(app, monkeypatch):
+    asked = []
+    monkeypatch.setattr(app, "_need_laser", lambda: object())
+    monkeypatch.setattr(bench_mod().messagebox, "askokcancel",
+                        lambda *a, **k: asked.append(a) or False)
+    moved = []
+    monkeypatch.setattr(bench_mod().ops, "set_wavelength_m",
+                        lambda *a, **k: moved.append(a))
+    app.laser_configure()
+    assert asked and not moved, "the laser moved without confirmation"
+
+
+def test_read_back_fills_the_boxes_from_the_instrument(app):
+    """The boxes are a REQUEST until this is pressed. The laser clamps a power
+    below its floor silently, so the box and the instrument can disagree."""
+    app.v_nm.set("1500.0")
+    app.v_dbm.set("-10.0")
+    app._show_laser({"power_dbm": "+4.0", "shutter": "+0", "ld": "+1",
+                     "sweep": "+0", "wavelength_m": "+1.55000000E-006"})
+    assert "1550.0000 nm" in app.h_laser.get()
 
