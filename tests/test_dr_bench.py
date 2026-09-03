@@ -342,7 +342,8 @@ def test_the_waterfall_stacks_one_trace_per_gain():
         app.redraw()
         assert len(app.plot.series) == 3
         assert len(app.plot.labels) == 3
-        assert "M=10" in app.plot.labels[1]
+        assert app.plot.labels[1].startswith("10:")
+        assert app.plot.ylabel == "detector gain"
     finally:
         root.destroy()
 
@@ -360,7 +361,12 @@ def test_dB_turns_the_waterfall_into_decibels():
             # each trace peaks at 0 dB then is offset by one full range
             assert np.nanmax(y) == pytest.approx(i * span, abs=1e-6)
             assert np.nanmin(y) >= i * span - span - 1e-6
-        assert "dB" in app.plot.ylabel
+        # the axis reads in GAIN, not in stack offsets -- an axis labelled
+        # 0, 60, 120 is an artefact of how the rows are drawn
+        assert app.plot.ylabel == "detector gain"
+        fmt = app.plot.yfmt
+        assert fmt(0.0) == "1"
+        assert fmt(span) == "10"
     finally:
         root.destroy()
 
@@ -425,6 +431,35 @@ def test_dynamic_range_view_is_already_dB_and_the_toggle_does_not_double_it():
             app.v_logy.set(log)
             app.redraw()
             assert app.plot.y[0] == pytest.approx(60.0)
+    finally:
+        root.destroy()
+
+
+def test_the_y_axis_names_the_gain_each_row_belongs_to():
+    """Rows sit at multiples of the pitch, so a tick between two of them
+    belongs to the nearer row. Interpolating would invent a gain setting that
+    was never measured."""
+    app, root = _app()
+    try:
+        app.points = [_point(2.0), _point(20.0), _point(200.0)]
+        app.v_view.set("waterfall (traces by gain)")
+        app.v_logy.set(False)
+        app.redraw()
+        fmt = app.plot.yfmt
+        assert fmt(0.0) == "2"
+        assert fmt(1.0) == "20"
+        assert fmt(2.0) == "200"
+        assert fmt(1.2) == "20", "a tick inside a row takes that row's gain"
+        assert fmt(9.0) == "", "off the end of the stack names no gain"
+    finally:
+        root.destroy()
+
+
+def test_the_axis_survives_an_empty_stack():
+    app, root = _app()
+    try:
+        fmt = app._gain_axis(1.0)
+        assert fmt(0.5) == "0.5", "with no points it falls back to numbers"
     finally:
         root.destroy()
 

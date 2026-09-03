@@ -560,24 +560,46 @@ class DrBench:
         series, labels = [], []
         log = self.v_logy.get()
         span = self._db_range()
+        # One row per gain either way, so the y axis can read in gain rather
+        # than in stack offsets -- the offsets are an artefact of drawing,
+        # and nobody wants an axis labelled 0, 80, 160.
+        pitch = span if log else 1.0
         for i, p in enumerate(self.points):
             a = np.asarray(p["mean"], dtype=float)
             pk = float(np.nanmax(np.abs(a))) or 1.0
             if log:
                 mag = np.abs(a) / pk
                 y = 20.0 * np.log10(np.maximum(mag, 10 ** (-span / 20.0)))
-                y = y + i * span                 # stack, one range per gain
             else:
-                y = a / pk + i
-            series.append((np.asarray(p["wl"]) * 1e9, y))
-            labels.append(f"M={p['gain']:g}  {p['dr_single_db']:.0f} dB"
+                y = a / pk
+            series.append((np.asarray(p["wl"]) * 1e9, y + i * pitch))
+            labels.append(f"{p['gain']:g}: {p['dr_single_db']:.0f} dB"
                           + ("  CLIPPED" if p["clipped"] else ""))
         self.plot.show_many(
-            series, "wavelength (nm)",
-            f"dB re each peak, offset by gain" if log
-            else "normalised trace, offset by gain",
+            series, "wavelength (nm)", "detector gain",
             xfmt=lambda v: f"{v:.1f}",
-            yfmt=lambda v: f"{v:.0f}" if log else f"{v:.1f}", labels=labels)
+            yfmt=self._gain_axis(pitch), labels=labels)
+
+    def _gain_axis(self, pitch):
+        """A y formatter that names the gain each row belongs to.
+
+        Rows are drawn at multiples of `pitch`, so the row index is
+        round(y / pitch). Gridlines land at quarters of the view and will not
+        sit exactly on a row, so this reports the row a tick FALLS IN rather
+        than pretending to interpolate between two gain settings -- which
+        would be a meaningless number.
+        """
+        gains = [p["gain"] for p in self.points]
+
+        def fmt(v):
+            if not gains or pitch <= 0:
+                return f"{v:.1f}"
+            i = int(round(v / pitch))
+            if 0 <= i < len(gains):
+                return f"{gains[i]:g}"
+            return ""
+
+        return fmt
 
     def export(self):
         if not self.points:
