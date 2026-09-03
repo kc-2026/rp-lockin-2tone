@@ -385,7 +385,11 @@ class DrBench:
                         rp, n_samples=plan["n_samples"], decimation=c["dec"],
                         preroll=plan["preroll"], trigger="CH2_PE", level=1.0)
                     with self.lasw.lock:
-                        ops.wait_until_at_start(d)
+                        at = ops.wait_until_at_start(d, timeout=10.0)
+                        if not at["arrived"]:
+                            note(f"WARNING: laser at {at['at_m'] * 1e9:.3f} "
+                                 f"nm, not the start "
+                                 f"{at['start_m'] * 1e9:.3f}; sweeping anyway")
                         ops.start_sweep(d)
                         ops.wait_for_sweep(d)
                     th.join(timeout=180.0)

@@ -1877,7 +1877,19 @@ def test_it_never_commands_the_wavelength():
     assert d.events == [], f"it wrote to the laser: {d.events}"
 
 
-def test_a_laser_that_never_arrives_is_reported_not_swept():
+def test_a_laser_that_never_arrives_is_REPORTED_not_refused():
+    """It reports rather than raising, and that is a correction.
+
+    The first version raised, assuming Configure sends the laser back to its
+    start. Measured 2026-09-02: it does not -- the laser sat at 1600 nm for a
+    full 60 s after configuring, so the wait blocked on something that was
+    never going to happen and killed the run. Whatever returns the laser to
+    its start, it is not Configure.
+
+    So the caller decides, and every caller must say so out loud: sweeping
+    from the wrong place covers a SHORT RANGE at exactly the right speed and
+    step, which comes back looking like a normal trace.
+    """
     import _bench_ops as ops
 
     class Stuck(_ReturningLaser):
@@ -1888,11 +1900,31 @@ def test_a_laser_that_never_arrives_is_reported_not_swept():
                 return f"{self.at:.9E}"     # never moves
             return "+0"
 
-    with pytest.raises(RuntimeError) as e:
-        ops.wait_until_at_start(Stuck(), timeout=0.3, poll=0.05)
-    msg = str(e.value)
-    assert "has not reached its sweep start" in msg
-    assert "SHORT RANGE" in msg
+    r = ops.wait_until_at_start(Stuck(at_m=1.6e-6), timeout=0.3, poll=0.05)
+    assert r["arrived"] is False
+    assert r["at_m"] == pytest.approx(1.6e-6)
+    assert r["short_by_m"] == pytest.approx(0.1e-6)
+    assert r["waited_s"] >= 0.3
+
+
+def test_arriving_is_reported_too():
+    import _bench_ops as ops
+    r = ops.wait_until_at_start(_ReturningLaser(), poll=0.01)
+    assert r["arrived"] is True
+    assert r["at_m"] == pytest.approx(1.5e-6)
+
+
+def test_both_benches_warn_when_the_laser_is_not_at_the_start():
+    """A silent short sweep is the failure this whole thread is about."""
+    import inspect
+    import bench
+    import dr_bench
+    for src in (inspect.getsource(bench.Bench._seq_thread),
+                inspect.getsource(dr_bench.DrBench._point_thread)):
+        i = src.index("wait_until_at_start")
+        after = src[i:i + 700]
+        assert "arrived" in after, "the result is not checked"
+        assert "WARNING" in after, "an unarrived laser is not called out"
 
 
 def test_the_sequence_waits_before_starting_the_sweep():

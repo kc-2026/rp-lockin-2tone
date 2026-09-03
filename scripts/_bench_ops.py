@@ -589,16 +589,24 @@ def wait_until_at_start(laser, tolerance=1e-11, timeout=60.0, poll=0.2):
     sweep at all (Q32). Configuring a sweep already sends the laser back to its
     start; this only waits for it to arrive.
 
-    Without the wait, `:WAV:SWE 1` starts from wherever the laser has reached
-    and sweeps a SHORT RANGE at exactly the right speed and step, so the
-    trigger train is correct in every respect except its length. Measured
-    2026-09-02 in the SHG sequence, which started the sweep on a fixed 2 s
-    timer: 5001 rows logged against a train spanning 393 ms, i.e. the sweep
-    really ran 1561 -> 1600 nm instead of 1500 -> 1600. `reduce_sweep` caught
-    it and refused rather than inventing wavelengths, which is the only reason
-    it was visible at all.
+**It REPORTS, it does not insist.** An earlier version raised on
+    timeout, on the assumption that configuring a sweep sends the laser back
+    to its start. Measured 2026-09-02: it does not. After `configure_sweep`
+    the laser sat at 1600 nm for the full 60 s, so the wait was waiting for
+    something that was never going to happen and the run failed instead of
+    proceeding. Whatever returns the laser to its start, it is not Configure.
 
-    Returns how long it waited and where the laser was when first asked.
+    So this polls for up to `timeout`, then returns either way with `arrived`
+    saying which. The caller decides -- and every caller should say so out
+    loud, because starting from the wrong wavelength sweeps a SHORT RANGE at
+    exactly the right speed and step: the trigger train is correct in every
+    respect except its length. Measured the same day, 5001 rows logged against
+    a train spanning 393 ms, i.e. 1561 -> 1600 nm instead of 1500 -> 1600.
+    `reduce_sweep` refused rather than inventing wavelengths, which is the only
+    reason it was visible.
+
+    Returns where the laser was, where it ended up, whether it arrived, and how
+    long it took.
     """
     start = float(laser.query(":WAV:SWE:STAR?"))
     t0 = time.time()
@@ -608,15 +616,12 @@ def wait_until_at_start(laser, tolerance=1e-11, timeout=60.0, poll=0.2):
         if first is None:
             first = at
         if abs(at - start) <= tolerance:
-            return {"start_m": start, "from_m": first,
-                    "waited_s": time.time() - t0}
+            return {"start_m": start, "from_m": first, "at_m": at,
+                    "arrived": True, "waited_s": time.time() - t0}
         time.sleep(poll)
-    raise RuntimeError(
-        f"the laser has not reached its sweep start {start * 1e9:.4f} nm "
-        f"after {timeout:g} s"
-        + ("" if at is None else f" (it reads {at * 1e9:.4f} nm)")
-        + ". Sweeping now would cover a SHORT RANGE at the right speed, which "
-          "comes back looking like a normal trace.")
+    return {"start_m": start, "from_m": first, "at_m": at, "arrived": False,
+            "short_by_m": abs((at if at is not None else start) - start),
+            "waited_s": time.time() - t0}
 
 
 def start_sweep(laser):

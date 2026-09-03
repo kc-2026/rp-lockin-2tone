@@ -1871,10 +1871,16 @@ class Bench:
                     # one SHG run at 1561 nm instead of 1500 -- right speed,
                     # right step, 39 nm of range. Read-only: see Q32 for why
                     # this must not command the wavelength.
-                    p = ops.wait_until_at_start(d)
-                    note(f"at start {p['start_m'] * 1e9:.4f} nm "
-                         f"(was {p['from_m'] * 1e9:.4f}), "
-                         f"waited {p['waited_s']:.1f} s")
+                    p = ops.wait_until_at_start(d, timeout=10.0)
+                    if p["arrived"]:
+                        note(f"at start {p['start_m'] * 1e9:.4f} nm, "
+                             f"waited {p['waited_s']:.1f} s")
+                    else:
+                        note(f"WARNING: the laser is at "
+                             f"{p['at_m'] * 1e9:.3f} nm, not the sweep start "
+                             f"{p['start_m'] * 1e9:.3f}. Sweeping anyway -- "
+                             f"expect about {p['short_by_m'] * 1e9:.1f} nm "
+                             f"less range, at the right speed and step.")
                     ops.start_sweep(d)
                     note("sweep started")
                     w = ops.wait_for_sweep(d)
