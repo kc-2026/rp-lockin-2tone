@@ -867,23 +867,28 @@ class Bench:
                    command=self.laser_configure).pack(side="left")
         ttk.Button(b2, text="Read back",
                    command=self.laser_read_back).pack(side="left", padx=4)
+        # The SHUTTER is the light gate here, and the only one exposed.
+        # The laser diode is left ON: it is enabled by Sweep > Configure
+        # (:POW:STAT 1) and there is no reason for the bench to switch an
+        # emitter off and on around it. The header still reports LD state, so
+        # an instrument that comes up with emission disabled is visible.
+        # OPEN before CLOSE, because that is the order they get pressed in.
         b3 = ttk.Frame(f)
         b3.grid(row=6, column=0, columnspan=3, sticky="w", pady=(4, 0))
-        ttk.Button(b3, text="Shutter CLOSE",
-                   command=lambda: self.laser_shutter(True)).pack(side="left")
         ttk.Button(b3, text="Shutter OPEN",
-                   command=lambda: self.laser_shutter(False)).pack(side="left",
-                                                                   padx=4)
-        ttk.Button(b3, text="LD ON",
-                   command=lambda: self.laser_ld(True)).pack(side="left")
-        ttk.Button(b3, text="LD off",
-                   command=lambda: self.laser_ld(False)).pack(side="left",
-                                                              padx=4)
+                   command=lambda: self.laser_shutter(False)).pack(side="left")
+        ttk.Button(b3, text="Shutter CLOSE",
+                   command=lambda: self.laser_shutter(True)).pack(side="left",
+                                                                  padx=4)
         # Q32: a hand-set wavelength leaves the instrument unable to sweep.
+        ttk.Label(f, text="The laser diode is left ON; Sweep > Configure "
+                          "enables it. Use the shutter to gate the light.",
+                  foreground="#666", justify="left", wraplength=300).grid(
+            row=7, column=0, columnspan=3, sticky="w", pady=(4, 0))
         ttk.Label(f, text="Setting a wavelength stops the laser sweeping until "
                           "Sweep > Configure is pressed again.",
                   foreground="#a04000", justify="left", wraplength=300).grid(
-            row=7, column=0, columnspan=3, sticky="w", pady=(4, 0))
+            row=8, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
     def laser_connect(self):
         ip = self.v_ip.get().strip()
@@ -1048,24 +1053,6 @@ class Bench:
                         f"({'closed' if v == '1' else 'open'}). NOTE: the "
                         f"instrument reopens it by itself when a sweep starts."))
 
-    def laser_ld(self, on):
-        """Turning the LD ON emits light, so it is confirmed like an output.
-
-        Turning it OFF is not: nothing that makes the bench safer should have
-        a dialog in front of it.
-        """
-        d = self._need_laser()
-        if not d:
-            return
-        if on and not messagebox.askokcancel(
-                "Laser diode ON",
-                "Turn the laser diode ON?\n\n"
-                "Light reaches the bench. The shutter state is separate and "
-                "the laser opens it by itself during a sweep."):
-            return self.log("LD enable cancelled")
-        self.submit(self.lasw, "LD", lambda: ops.set_ld(d, on),
-                    lambda v: self.log(f"LD state reads {v}"))
-
     # -- Sweep ---------------------------------------------------------------
 
     def _panel_sweep(self, parent):
@@ -1138,7 +1125,6 @@ class Bench:
             n = int(round(abs(c["stop_nm"] - c["start_nm"]) / c["step_nm"])) + 1
             dt = c["step_nm"] / c["speed_nm_s"]
             secs = (n - 1) * dt
-            need = ops.smallest_decimation_for(secs)
             info = (f"LASER: {n} trigger points = {n} logged wavelengths, "
                     f"{dt * 1e6:.1f} us apart ({1 / dt / 1e3:.2f} kHz), "
                     f"{secs:.3f} s")
@@ -1154,8 +1140,6 @@ class Bench:
                     info += "; the extra ones are interpolated"
                 elif per < 0.95:
                     info += "; the trace is coarser than the laser's log"
-            if need is not None:
-                info += f"\nneeds decimation {need} or higher to fit in memory"
             self.v_sweepinfo.set(info)
             self._sync_secs(secs)
         except (ValueError, ZeroDivisionError):
@@ -1164,12 +1148,10 @@ class Bench:
     def _sync_secs(self, secs):
         """Push the sweep duration into the Acquire panel.
 
-        Only while nobody has typed in that box, and only when the value has
-        really changed -- rewriting an identical string would fight the entry
-        widget for the caret.
+        ALWAYS -- the box is readonly and exists to display this. Only when
+        the value has really changed, though: rewriting an identical string
+        fights the entry widget for the caret.
         """
-        if getattr(self, "_secs_manual", False):
-            return
         want = f"{secs:.4f}".rstrip("0").rstrip(".")
         try:
             if abs(float(self.v_secs.get()) - secs) < 1e-9:
@@ -1288,9 +1270,14 @@ class Bench:
         # Typing in it takes it over -- a longer record than the sweep is a
         # legitimate thing to want, and an auto-update that silently undid it
         # would be worse than no auto-update.
-        self._secs_manual = False
+        # READONLY, and always equal to the Sweep panel. It used to be
+        # typable, with a <Key> binding that latched "the user owns this now"
+        # -- but <Key> fires on Tab and on the arrow keys, so merely moving
+        # through the field stopped it following, permanently and silently,
+        # with no way back. Pre-roll and tail are added on top of this number
+        # anyway, so a longer record is not something to type here.
         e_secs = fld(f, 1, "sweep length", self.v_secs, "s")
-        e_secs.bind("<Key>", lambda _e: setattr(self, "_secs_manual", True))
+        e_secs.configure(state="readonly")
         ttk.Label(f, text="trigger").grid(row=2, column=0, sticky="w")
         # PE is POSITIVE EDGE: "when this input crosses the level going up".
         # The NE (negative edge) variants are gone -- the Santec trigger is a
@@ -1304,18 +1291,29 @@ class Bench:
                                 values=("CH2_PE", "CH1_PE", "EXT_PE"))).grid(
             row=2, column=1, sticky="w")
         fld(f, 3, "level", self.v_level, "V")
-        fld(f, 6, "wait up to", self.v_wait, "s")
-        ttk.Label(f, text="Sweep length is the sweep itself; pre-roll and "
-                          "tail are added on top. Both inputs are always "
-                          "captured together.",
+        # Row 4. This used to be row 6, which the button frame also claimed --
+        # two widgets in one grid cell.
+        fld(f, 4, "wait up to", self.v_wait, "s")
+        ttk.Label(f, text="Sweep length follows the Sweep panel. It is the "
+                          "sweep itself; pre-roll and tail are added on top. "
+                          "Both inputs are always captured together.",
                   foreground="#666", justify="left", wraplength=300).grid(
-            row=4, column=0, columnspan=3, sticky="w", pady=(4, 2))
+            row=5, column=0, columnspan=3, sticky="w", pady=(4, 2))
         ttk.Label(f, text="ORDER: Capture first (it arms and waits), then "
                           "Sweep > Start.",
                   foreground="#144", justify="left", wraplength=300).grid(
-            row=5, column=0, columnspan=3, sticky="w", pady=(0, 4))
+            row=6, column=0, columnspan=3, sticky="w", pady=(0, 4))
+        # The memory ceiling belongs next to the decimation box that sets it,
+        # not in the Sweep panel where it used to live.
+        self.v_acqinfo = tk.StringVar(value="")
+        ttk.Label(f, textvariable=self.v_acqinfo, foreground="#a04000",
+                  justify="left", wraplength=300).grid(
+            row=7, column=0, columnspan=3, sticky="w", pady=(0, 4))
+        self.v_dec.trace_add("write", lambda *_a: self._update_acq_info())
+        self.v_secs.trace_add("write", lambda *_a: self._update_acq_info())
+        self._update_acq_info()
         b = ttk.Frame(f)
-        b.grid(row=6, column=0, columnspan=3, sticky="w")
+        b.grid(row=8, column=0, columnspan=3, sticky="w")
         ttk.Button(b, text="Capture (arms and waits)",
                    command=self.acquire_now).pack(side="left")
         ttk.Button(b, text="Snapshot (no trigger)",
@@ -1323,6 +1321,33 @@ class Bench:
         self.b_stop = ttk.Button(b, text="STOP waiting",
                                  command=self.acquire_stop, state="disabled")
         self.b_stop.pack(side="left")
+
+    def _update_acq_info(self):
+        """Does this record fit in the DMA region at this decimation?
+
+        Lower decimation is FASTER sampling and therefore a SHORTER record for
+        the same memory, which is the opposite of the intuition, so the
+        readout says which way to move.
+        """
+        try:
+            secs = float(self.v_secs.get())
+            dec = int(self.v_dec.get())
+        except (ValueError, AttributeError):
+            return self.v_acqinfo.set("")
+        try:
+            plan = ops.capture_plan(secs, decimation=dec)
+        except (ValueError, ZeroDivisionError):
+            return self.v_acqinfo.set("")
+        if not plan.get("truncated"):
+            return self.v_acqinfo.set(
+                f"fits: {plan['max_sweep_s']:.2f} s available at decimation "
+                f"{dec}")
+        need = ops.smallest_decimation_for(secs)
+        self.v_acqinfo.set(
+            f"WILL NOT FIT: {secs:.3f} s needs more than the region holds at "
+            f"decimation {dec} ({plan['max_sweep_s']:.2f} s max). "
+            + (f"Use decimation {need} or higher."
+               if need else "No decimation up to 64 is enough."))
 
     def _check_train(self, cap):
         """Compare the recorded train against the sweep that was requested."""
@@ -1514,11 +1539,15 @@ class Bench:
         self.v_orate = tk.StringVar(value="5000")
         self.v_bw = tk.StringVar(value="")
         fld(f, 0, "f_ref", self.v_fref, "kHz")
-        e_or = fld(f, 1, "output rate", self.v_orate, "Sa/s")
-        ttk.Button(f, text="max", width=5,
-                   command=self.orate_max).grid(row=1, column=3, sticky="w",
-                                                padx=(4, 0))
-        del e_or
+        fld(f, 1, "output rate", self.v_orate)
+        # Column 3 is off the end of the rail, so the unit and the button
+        # share column 2. "max" sets the highest output rate this f_ref can
+        # support -- see orate_max.
+        u = ttk.Frame(f)
+        u.grid(row=1, column=2, sticky="w")
+        ttk.Label(u, text="Sa/s").pack(side="left")
+        ttk.Button(u, text="max", width=5,
+                   command=self.orate_max).pack(side="left", padx=(4, 0))
         # Blank means "derive it from the output rate", which is what this did
         # before the box existed: 0.9 x the output Nyquist, the widest that
         # does not fold noise back onto the trace.

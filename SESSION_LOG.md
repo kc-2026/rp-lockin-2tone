@@ -4365,3 +4365,71 @@ README, in each case naming which detector it belongs to.
 
 **Next:** unchanged -- the SHG numbers, the power-scaling slope, the detector
 label (Q38), and now the optical ceiling (Q39).
+---
+
+## 2026-09-04 (night) — Claude (Claude Code) — five bench UI fixes, and a grid collision found on the way
+
+**Goal:** Kevin's list after using the bench.
+
+**Did:**
+
+* **The Laser panel keeps the LD ON and exposes only the SHUTTER**, with
+  **OPEN before CLOSE** since that is the order they get pressed in. The LD
+  buttons and `laser_ld` are gone. `configure_sweep` already writes
+  `:POW:STAT 1`, so nothing is lost — and a bench that switches an emitter off
+  and on around a measurement is one more state to get wrong. The header still
+  REPORTS the LD, so an instrument that came up with emission disabled stays
+  visible rather than mysterious.
+* **The memory / decimation warning moved from the Sweep panel to Acquire**,
+  where the decimation box that sets it actually lives. It now also reports the
+  good case ("fits: N s available at decimation 8"), and follows both the
+  decimation and the sweep length.
+* **Sweep length is read-only and always follows the Sweep panel.** See below.
+* **The `max` button beside the output rate is no longer clipped.** It was
+  gridded at **column 3** of a panel whose fields use columns 0-2, inside a
+  340 px rail, so it hung off the right-hand edge and could not be clicked. The
+  unit label and the button now share a frame in column 2.
+* README updated for all of it. 458 passed, 1 skipped, up from 451.
+
+**Found while reading the panel, not reported:**
+
+**`wait up to` and the button row were both gridded at row 6 of the Acquire
+panel.** Tk permits two widgets in one cell and simply stacks them, so it
+presents as a rendering oddity rather than a mistake. Renumbered, and there is
+now a test that walks every panel and asserts no two children share a
+(row, column) — it fails against the old code with
+`overlapping grid cells: ['!labelframe6 row 6 col 0']`.
+
+**Why the sweep length "was not automatic" — the interesting one.**
+
+It was meant to follow the Sweep panel until somebody typed in it, guarded by a
+`_secs_manual` flag set from `e_secs.bind("<Key>", ...)`. **`<Key>` fires on
+Tab and on the arrow keys.** So tabbing through the field — or clicking in and
+pressing Home — latched "the user owns this now" **permanently and silently**,
+with no way back short of restarting the bench. From then on the box kept
+whatever number it had while the Sweep panel moved underneath it, and **a
+capture shorter than its sweep still maps onto the full wavelength table and
+looks like a perfectly good measurement.**
+
+Made read-only instead. Pre-roll and tail are added on top of this number
+anyway, so a longer record was never something to type here.
+
+**Testing note.** All eight new tests were run against the old `bench.py` and
+seen to fail first. One of them initially failed for the *wrong* reason — an
+`AttributeError` from walking past the rail to the Tk root, which has no
+`grid_info` — and was hardened until it failed with the message it is meant to
+produce. A test that fails for an incidental reason is only accidentally a
+regression test.
+
+**Answered, no change made:** the OUT1 message Kevin asked about is the
+switching-supply guard in `_update_snap` — *"WARNING: only N kHz from the
+switching supply (k x 504.868 kHz), which reads as a clean steady signal. Move
+it."* It fires when the modulation lands within `SWITCHER_GUARD_HZ` = 20 kHz of
+a multiple of 504.868 kHz. It is advisory and the drive still goes out. Neither
+bench default trips it: 915 kHz is 94.7 kHz clear and 1225 kHz is 215.3 kHz
+clear. The same check runs on the SFG products in `fref_from_sfg` and logs
+there instead.
+
+**Broke / still broken:** nothing. **Next:** unchanged — the SHG numbers, the
+power-scaling slope, Q36 (0.400 V), Q38 (detector label), Q39 (optical
+ceiling).

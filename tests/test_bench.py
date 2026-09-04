@@ -1469,19 +1469,33 @@ def test_nanometres_passed_as_metres_are_refused():
         assert "METRES" in str(e.value)
 
 
-def test_turning_the_laser_diode_on_is_confirmed_but_off_is_not(app,
-                                                               monkeypatch):
-    """Enabling an emitter is confirmed like any other output. Disabling one
-    never is -- nothing that makes the bench safer gets a dialog."""
+def test_the_bench_does_not_switch_the_laser_diode(app):
+    """The LD is left ON and only the SHUTTER is exposed (Kevin,
+    2026-09-04). Sweep > Configure writes :POW:STAT 1, so nothing here
+    needs to toggle an emitter, and a bench that switches one off and on
+    around a measurement is one more state to get wrong. The header still
+    REPORTS the LD, so an instrument that came up with emission disabled
+    is visible rather than mysterious."""
+    assert not hasattr(app, "laser_ld"), \
+        "the LD control came back; the shutter is the light gate"
+    app._show_laser({"power_dbm": "+4.0", "shutter": "+0", "ld": "+1",
+                     "sweep": "+0", "wavelength_m": "1.55e-06"})
+    assert "LD ON" in app.h_laser.get(), "the header must still report LD"
+
+
+def test_opening_the_shutter_is_confirmed_but_closing_is_not(app,
+                                                            monkeypatch):
+    """Letting light out is confirmed like any other emission. Shutting it
+    in never is -- nothing that makes the bench safer gets a dialog."""
     asked = []
     monkeypatch.setattr(bench_mod().messagebox, "askokcancel",
                         lambda *a, **k: asked.append(a) or False)
     monkeypatch.setattr(app, "_need_laser", lambda: object())
-    app.laser_ld(True)
-    assert asked, "LD ON went out with no confirmation"
+    app.laser_shutter(False)                      # False = OPEN
+    assert asked, "the shutter opened with no confirmation"
     asked.clear()
-    app.laser_ld(False)
-    assert not asked, "LD off should not need confirming"
+    app.laser_shutter(True)                       # True = CLOSE
+    assert not asked, "closing the shutter should not need confirming"
 
 
 def bench_mod():
@@ -1794,9 +1808,12 @@ def test_a_shorter_range_gives_a_shorter_record(app):
     assert float(app.v_secs.get()) == pytest.approx(0.1, abs=1e-6)
 
 
-def test_typing_in_the_box_takes_it_over(app):
-    """A record LONGER than the sweep is a legitimate thing to want. An
-    auto-update that silently undid it would be worse than no auto-update."""
+def test_nothing_can_latch_the_sweep_length_away_from_the_sweep_panel(app):
+    """It used to be typable, guarded by a `_secs_manual` flag set from a
+    <Key> binding -- and <Key> fires on Tab and on the arrow keys, so merely
+    moving through the field stopped it following FOREVER, silently, with no
+    way back. A capture shorter than its sweep still maps onto the full
+    wavelength table and looks like a measurement."""
     app.v_start.set("1500")
     app.v_stop.set("1600")
     app.v_speed.set("100")
@@ -1804,18 +1821,18 @@ def test_typing_in_the_box_takes_it_over(app):
     app._update_sweep_info()
     assert float(app.v_secs.get()) == pytest.approx(1.0, abs=1e-6)
 
-    app._secs_manual = True          # what the <Key> binding sets
+    # whatever ends up in the variable, the next recompute wins
     app.v_secs.set("3.0")
+    app._secs_manual = True          # the flag the old code honoured
     app.v_speed.set("50")
     app._update_sweep_info()
-    assert float(app.v_secs.get()) == pytest.approx(3.0), \
-        "a hand-typed record length was overwritten"
+    assert float(app.v_secs.get()) == pytest.approx(2.0, abs=1e-6), \
+        "the sweep length did not follow the Sweep panel"
 
 
 def test_the_sync_does_not_fight_an_unchanged_value(app):
     """Rewriting an identical string fights the entry widget for the caret."""
     app.v_secs.set("1")
-    app._secs_manual = False
     app._sync_secs(1.0)
     assert app.v_secs.get() == "1", "the box was rewritten for no change"
 
@@ -2415,3 +2432,104 @@ def test_the_dialog_says_sine_rather_than_naming_a_zero_carrier(app,
     assert "Plain sine" in body
     assert "0.000000 MHz" not in body, "it named a zero carrier"
 
+
+# ------------------------------------ the memory ceiling belongs on Acquire
+# It used to be a line in the SWEEP panel's readout, three panels away from
+# the decimation box that sets it. Moved 2026-09-04 at Kevin's request.
+
+
+def test_the_memory_warning_is_on_acquire_not_on_sweep(app):
+    app.v_start.set("1500")
+    app.v_stop.set("1600")
+    app.v_speed.set("100")
+    app.v_step.set("0.02")
+    app.v_dec.set("4")                 # 1 s does not fit at decimation 4
+    app._update_sweep_info()
+    assert "decimation" not in app.v_sweepinfo.get().lower(), (
+        "the memory warning is still in the Sweep panel")
+    assert "WILL NOT FIT" in app.v_acqinfo.get()
+    assert "decimation 8" in app.v_acqinfo.get(), "it must say what to use"
+
+
+def test_a_record_that_fits_says_how_much_room_is_left(app):
+    app.v_dec.set("8")
+    app.v_secs.set("1.0")
+    app._update_acq_info()
+    shown = app.v_acqinfo.get()
+    assert shown.startswith("fits:")
+    assert "decimation 8" in shown
+
+
+def test_the_acquire_readout_follows_both_boxes(app):
+    """Decimation and sweep length each change the answer, so both have to
+    retrigger it -- the readout is wrong the moment either drifts."""
+    app.v_dec.set("8")
+    app.v_secs.set("1.0")
+    assert "fits" in app.v_acqinfo.get()
+    app.v_dec.set("4")
+    assert "WILL NOT FIT" in app.v_acqinfo.get(), "decimation did not retrigger"
+    app.v_dec.set("8")
+    app.v_secs.set("8.0")
+    assert "WILL NOT FIT" in app.v_acqinfo.get(), "the length did not retrigger"
+
+
+def test_a_junk_value_blanks_the_readout_rather_than_raising(app):
+    app.v_dec.set("")
+    app._update_acq_info()
+    assert app.v_acqinfo.get() == ""
+
+
+# --------------------------------------------- the "max" button is reachable
+# It was gridded at column 3 of a panel whose fields use columns 0-2, inside a
+# 340 px rail, so it was clipped off the right-hand edge and unclickable.
+
+
+def test_the_max_button_sits_inside_the_panel_columns(app):
+    from tkinter import ttk
+    found = []
+
+    def walk(w):
+        for child in w.winfo_children():
+            if isinstance(child, ttk.Button) and child.cget("text") == "max":
+                found.append(child)
+            walk(child)
+
+    walk(app.rail.body)
+    assert found, "the max button is gone"
+    for b in found:
+        # Walk out to the nearest gridded ancestor, stopping at the rail --
+        # the Tk root has no grid_info at all, and an AttributeError there
+        # would fail this test for the wrong reason.
+        holder, info = b, {}
+        while holder is not None and holder is not app.rail.body:
+            info = getattr(holder, "grid_info", dict)() or {}
+            if info:
+                break
+            holder = holder.master
+        assert info, "the max button is not inside any gridded container"
+        col = int(info.get("column", 0))
+        span = int(info.get("columnspan", 1))
+        assert col + span - 1 <= 2, (
+            f"max reaches column {col + span - 1}, off the end of the rail")
+
+
+# ------------------------------------------ two widgets in one grid cell
+# `wait up to` and the button row were both gridded at row 6 of the Acquire
+# panel. Tk allows it and stacks them, so it looked like a rendering glitch
+# rather than a mistake.
+
+
+def test_no_two_widgets_share_a_grid_cell_in_any_panel(app):
+    seen = {}
+    clashes = []
+    for panel in app.rail.body.winfo_children():
+        for child in panel.winfo_children():
+            info = child.grid_info()
+            if not info:
+                continue
+            key = (str(panel), int(info["row"]), int(info["column"]))
+            if key in seen:
+                clashes.append(f"{panel.winfo_name()} row {info['row']} "
+                               f"col {info['column']}")
+            seen[key] = child
+    assert not clashes, f"overlapping grid cells: {clashes}"

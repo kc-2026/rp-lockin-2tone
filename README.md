@@ -130,9 +130,11 @@ Leave IN1 on **LV / AC** and IN2 on **HV / DC**. Press **Configure** after
 connecting; it also applies the decimation from the Acquire panel.
 
 **Laser** — `address`, `power` (dBm), `wavelength` (nm), then `Connect`,
-`Configure`, `Read back`, `Shutter CLOSE`/`OPEN`, `LD ON`/`off`.
+`Disconnect`, `Configure`, `Read back`, `Shutter OPEN` / `Shutter CLOSE`.
 `Configure` sets wavelength and power together and reads both back. **Setting a
 wavelength stops the laser sweeping** until you press Sweep → Configure again.
+**The shutter is the only light control.** The laser diode is left on — Sweep →
+Configure enables it — and the header reports its state.
 
 **Drive (OUT1)** and **Drive (OUT2)** — `carrier` (MHz), `modulation` (kHz),
 `amplitude` (V), then `OUTn ON` / `OUTn OFF` / `ALL OFF`.
@@ -141,18 +143,25 @@ enabled without a dialog naming the channel, frequencies and amplitude. OUT2 is
 only needed for SFG.
 Two special values: **modulation 0** gives an unmodulated carrier (CW);
 **carrier 0** gives a plain sine at the modulation frequency.
+That same line turns into a **WARNING** if the modulation lands within 20 kHz
+of the switching supply — see §7.4.
 
 **Sweep** — `start` / `stop` (nm), `speed` (dropdown — the laser only accepts
 0.5, 1, 2, 5, 10, 20, 50, 100, 200 nm/s), `trigger step` (nm), `mode`, then
 `Configure` / `Start` / `Stop` / `Read log`.
 
-**Acquire** — `decimation`, `sweep length` (follows the Sweep panel until you
-type in it), `trigger` (**CH2_PE**), `level`, `wait up to`, then
+**Acquire** — `decimation`, `sweep length` (**read-only; always follows the
+Sweep panel**), `trigger` (**CH2_PE**), `level`, `wait up to`, then
 `Capture (arms and waits)` / `Snapshot (no trigger)` / `STOP waiting`.
 Pre-roll and tail are added on top automatically. Both inputs are always
 recorded together.
+Underneath, a line says whether the record **fits in the board's memory at the
+chosen decimation**, and which decimation to use if not. Lower decimation is
+*faster* sampling and so a *shorter* record for the same memory, which is the
+opposite of the intuition.
 
-**Demodulate** — `f_ref` (kHz), `output rate` with a `max` button, `bandwidth`
+**Demodulate** — `f_ref` (kHz), `output rate` with a **`max`** button next to
+its units (it sets the highest output rate this `f_ref` supports), `bandwidth`
 (leave blank to derive it), the frequency buttons, then `Demodulate capture`.
 **The buttons are the point: `f1`, `2 × f1`, `3 × f1`, `f2`, `f1+f2`,
 `|f1−f2|`.** Press one instead of typing a number. The readout underneath gives
@@ -203,6 +212,12 @@ part way through on a timing overrun. Every result so far came from the panels.
 4. **Use the frequency buttons, not typed numbers.** A lock-in sitting a few
    hertz from its signal returns a slow beat — a clean sine across the trace
    that looks exactly like a measurement.
+   Related: the Drive panel warns **"only N kHz from the switching supply
+   (k x 504.868 kHz)"** whenever the modulation lands within 20 kHz of that
+   family. It is advisory, not an error, and the drive still goes out — but a
+   lock-in sitting there reads the board's own power supply as a strong,
+   clean, steady optical signal. Move the frequency. The same check runs on
+   the SFG products and logs to the Log pane.
 5. **A negative trace is the maths, not the light.** Switch the plot to
    **lock-in R**. If R is flat while the trace swings through zero, you are
    looking at a phase rotation, not a signal.
