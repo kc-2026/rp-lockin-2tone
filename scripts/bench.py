@@ -233,7 +233,7 @@ class Bench:
 
         self.log("Bench started. Nothing is connected.")
         self.log(f"Default modulation {DEFAULT_MOD_HZ / 1e3:.3f} kHz "
-                 f"= 60 ASG grid steps.")
+                 f"-- exact, and 94.7 kHz clear of the 504.868 kHz switcher.")
         self.root.after(80, self._pump)
         self.root.after(600, self._poll)
 
@@ -1576,13 +1576,19 @@ class Bench:
     def fref_from_drive(self, harmonic):
         """Set f_ref to an exact harmonic of what the ASG is ACTUALLY playing.
 
-        Not of what is typed in the Drive box. Both frequencies are snapped to
-        the 15258.789 Hz grid, so 915.5273 kHz becomes 915.52734375 and its
-        second harmonic is 1831.0547 kHz, not 1831. Entering the round number
-        leaves f_ref 54.7 Hz off, and a lock-in demodulating 54.7 Hz away from
-        its signal returns a 54.7 Hz BEAT -- which, after amplitude() projects
-        onto a common phase, is a clean sine wave across the trace. It looks
-        like a measurement. It is a typo.
+        Not of what is typed in the Drive box, which is a REQUEST.
+
+        There is no frequency grid -- any whole number of hertz is exact. What
+        remains is that a table is `mod_cycles x play_rate`, so `_resolve`
+        either finds an exact table or falls back to the fs/16384 one, and in
+        the fallback 915.5273 kHz really is 915.52734375, whose second harmonic
+        is 1831.0547 kHz rather than 1831.
+
+        Either way, entering the round number by hand can leave f_ref tens of
+        hertz out, and a lock-in demodulating df away from its signal returns a
+        df BEAT -- which, after amplitude() projects onto a common phase, is a
+        clean sine wave across the trace. It looks like a measurement. It is a
+        typo.
         """
         try:
             cfg = self._drive_cfg()

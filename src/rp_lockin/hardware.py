@@ -235,9 +235,14 @@ class RedPitaya:
         and played at 5 MHz on the assumption that the generator replays only
         what you write -- measured output was min -2, max +4 counts. Nothing.
 
-        Both frequencies are snapped to the fs/16384 grid by make_am_table;
-        the returned AsgTable reports what will actually be emitted, which is
-        not exactly what was asked for. Check it if the exact value matters.
+        This method takes the fs/16384 DEFAULT path, where make_am_table
+        snaps both frequencies onto that grid, so the returned AsgTable reports
+        something other than what was asked for. **That grid is not a hardware
+        limit** -- the play rate is free and quantised to 1 Hz, so any whole
+        number of hertz is exactly generatable (corrected on the board
+        2026-08-28; see docs/03-frequency-plan.md). For an exact table use
+        make_am_table_exact / plan_exact_am, which is what the bench does.
+        Either way, read the returned table rather than trusting the request.
 
         The carrier is deliberately allowed above the board's 60 MHz spec --
         with downstream amplification and filtering that is a legitimate

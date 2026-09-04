@@ -43,16 +43,26 @@ __all__ = ["AsgTable", "GridTwoTonePlan", "TwoTonePlan", "asg_grid",
 # at 0.0153, 80.0018 and 0.9918 MHz, each dominant with the next line >=53 dB
 # down.
 #
-# The consequence is that the table period is fixed at 16384 samples =
-# 65.536 us, so every frequency must be an integer multiple of fs/16384. Buffer
-# length is no longer something to choose -- see make_am_waveform's note.
+# The consequence drawn from that in 2026-08-12 -- that every frequency must
+# therefore be an integer multiple of fs/16384 -- was WRONG, and was corrected
+# on the board 2026-08-28. The play rate is a free setting quantised to 1 Hz,
+# so any whole number of hertz is exactly generatable. The fs/16384 figure is
+# only the rate at which the table advances exactly one entry per DAC clock.
+# It survives here as the DEFAULT path (make_am_table, plan_two_tone_grid) and
+# as the fallback when make_am_table_exact cannot fit both frequencies.
+# See docs/03-frequency-plan.md.
 
 def asg_grid(fs: float = BASE_SAMPLE_RATE) -> float:
     """Frequency spacing the ASG can actually emit: fs / 16384.
 
-    At 250 MS/s this is 15258.7890625 Hz. Any drive frequency must be an
-    integer multiple of it, or the table wraps discontinuously every 65.536 us
-    and scatters a spur comb across the baseband.
+    At 250 MS/s this is 15258.7890625 Hz.
+
+    **This is NOT a hardware limit** -- that was a wrong model, corrected on
+    the board 2026-08-28. It is the play rate at which the table advances
+    exactly one entry per DAC clock, and it is the DEFAULT path: a frequency
+    snapped onto this grid is guaranteed to wrap without a discontinuity. Any
+    whole number of hertz is reachable at some other play rate; see
+    `plan_exact_am`.
     """
     return fs / ASG_BUFFER_MAX
 

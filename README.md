@@ -316,9 +316,23 @@ harmonic, 500 kHz sits 4.9 kHz from the fundamental. 915 kHz clears the family
 by 94.7 kHz, which is why it is the default. For SFG, **four** frequencies have
 to clear it — f1, f2, f1+f2 and |f1−f2| — not the two being driven.
 
-**Never hardcode `1e6` as the lock-in frequency.** Use the bench's buttons, or
-`plan_two_tone_grid().difference`. Typing a round number produces a flat trace
-and no error.
+**There is no frequency grid.** Any whole number of hertz is exactly
+generatable — the play rate is quantised to 1 Hz and that is the only
+constraint. An older 15258.789 Hz "ASG grid" was a wrong model of the
+generator, corrected on the board 2026-08-28; if you find a document, comment
+or log line still asserting it, it is stale. `03-frequency-plan.md` has the
+measurement.
+
+**So round numbers are reachable — they are just bad choices**, because of the
+switching supply above, not because the hardware cannot make them.
+
+**Still use the bench's f1 / f2 / f1+f2 / |f1−f2| buttons rather than typing a
+harmonic.** The reason is no longer snapping. It is that the table is built
+from a whole number of modulation cycles times a play rate, so whatever
+rounding is left gets multiplied by the cycle count and lands on the
+modulation — and a lock-in sitting even a fraction of a hertz from its signal
+returns a beat: a clean sine across the trace that looks like a result. The
+buttons read the table the ASG will actually play.
 
 ---
 
