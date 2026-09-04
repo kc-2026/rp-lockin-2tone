@@ -24,14 +24,17 @@ runs end to end: drive on, capture armed, laser sweeps, 5001 trigger pulses on
 IN2, demodulate at f1, wavelength axis from the measured edges, CSV out. Real
 optical amplitude-against-wavelength traces exist.
 
-**What Phase 2 has left is physics, not instrumentation.**
+**SHG WORKS. Measured 2026-09-03** — crystal in the beam path, the APD on IN1,
+demodulating at **2 x f1**, a clear peak at **~1559 nm** where phase matching
+was expected. **That is what this instrument was built to do, and it did it.**
 
 | | |
 |---|---|
-| **No crystal yet** | Nothing SHG or SFG has ever been looked for. This is the experiment; everything else is the instrument |
-| **Second beam path not wired** | The second ZHL-1-2W+ and second AOM exist but are not connected, so nothing two-tone has been driven. U2 stays open |
+| **The SHG numbers are not recorded** | Peak amplitude, off-peak level, peak width, laser power, detector gain. Highest-value thing anybody could add; they belong in `docs/06-results.md` |
+| **No power-scaling control yet** | The peak sits where phase matching predicts, and the AOM's own 2*f1 (Q30) follows the broad transmission envelope so cannot make a narrow peak there. But P^1-against-P^2 has not been measured. Do not overstate the result past that |
+| **Detector model unconfirmed** | Q38. APD410A is InGaAs, APD410A2 is silicon, and it decides how the SHG result reads |
+| **Second beam path not wired** | The second ZHL-1-2W+ and second AOM exist but are not connected, so nothing two-tone has been driven. SFG needs them |
 | **TSL-770 never contacted** | Half the deliverable — the 11 in the 11 x 5000 map. Parked at Kevin's request |
-| **PDA100A2 not installed** | The silicon detector that separates real SHG from the AOM's own second harmonic (Q30), because silicon cannot see 1550 at all |
 
 **The working tool is `scripts/bench.py`.** Panel GUI, independent operations
 that compose into a sweep. `bench_gui.py` is the older tabbed one, kept for its
@@ -40,9 +43,10 @@ three go through `scripts/_bench_ops.py`. **`README.md` documents every
 control**, panel by panel.
 
 **The detector on IN1 changed on 2026-09-03** — it is now a Thorlabs
-APD410-series unit on minimum gain, not the PDA05CF2 that most of the
-documentation still describes. **Read its label for the model suffix** (Q38):
-APD410A is InGaAs, APD410A2 is silicon, and that decides the SHG plan.
+APD410-series unit, not the PDA05CF2 that the noise predictions in
+`06-results.md` describe. **Read its label for the model suffix** (Q38):
+APD410A is InGaAs, APD410A2 is silicon, and that decides how the SHG result
+should be read.
 
 **Three small things are open and cheap** — Q36 (one 0.400 V scope reading to
 confirm the output's peak-to-peak factor is linear), Q37 (two known labelling
@@ -4227,3 +4231,81 @@ touched, and the offline suite passes unchanged at 450.
 * Run the gain study. `dr_bench.py` is written and tested and has produced no
   results yet.
 * A single-instance lock on the bench.
+---
+
+## 2026-09-04 (later) — Claude (Claude Code) — SHG recorded; README simplified
+
+**Goal:** Kevin flagged two errors in yesterday's documentation clean, then
+asked for the docs to be made unambiguous and the README simplified.
+
+**Two things I got wrong, and how:**
+
+1. **SHG has been measured, successfully, and every document said it never
+   had.** Kevin: crystal in the path, the APD on IN1, demodulated at **2 x f1**,
+   **a good peak at ~1559 nm, which is what was expected**, on 2026-09-03.
+   Every source in the repo said "no crystal yet, nothing SHG has ever been
+   looked for", dated 2026-09-01, and I propagated the repo's own state instead
+   of asking the person using the bench daily. **The docs described a bench
+   nobody had been at for three days.**
+2. **The 15258.789 Hz "ASG grid" was still asserted in five places.** It was
+   corrected on the board 2026-08-28 and applied to docs 03 and 04 only. I swept
+   the repo for FILENAMES and not for CLAIMS -- which is the first habit in the
+   `11-mistakes.md` I had just written. The README's closing advice told the
+   reader round numbers are unreachable; they are reachable, they are just bad
+   choices. Also stale: `waveforms.asg_grid`'s docstring ("any drive frequency
+   MUST be an integer multiple"), `hardware.setup_am_generator`,
+   `bench.fref_from_drive`, and a module comment.
+
+   Plus one live defect: **the bench printed "Default modulation 915.000 kHz
+   = 60 ASG grid steps" at every startup.** 60 grid steps is 915527.34 Hz.
+   `DEFAULT_MOD_HZ` moved to a whole-hertz 915000 and the log line never
+   followed, so the bench asserted something false on line two of every session.
+
+**Did:**
+
+* **Fixed the grid claims** in all five places (`36c7b04`).
+* **Recorded SHG** in `06-results.md`, `08-the-bench.md`, `09-whats-next.md`,
+  `00-index.md`, `01-overview.md`, `CLAUDE.md` and the HANDOFF block. 09's
+  lead section went from "Next: SHG -- what the bench does not yet have" to
+  "SHG WORKS".
+* **Q30 largely answered** by the measurement itself, and the argument written
+  down explicitly: the AOM's own 2*f1 has **the same wavelength shape as f1**,
+  so its wavelength dependence is the broad transmission envelope of the path
+  and **it cannot make a narrow peak at a predicted phase-matching
+  wavelength**. That is a much stronger discriminator than "clear 13.3%".
+  Q17 moved from "waits on the crystal" to "now answerable".
+* **README rewritten and simplified** -- roughly halved, and reordered so
+  starting the GUI is section 1 and proving the software with no hardware is
+  section 2. Added an ASCII map of the window, a table of the six plot views,
+  and a panel-by-panel list written for somebody who has never opened it.
+  Install moved down to section 8, where a person who already has a working
+  machine never has to read it.
+
+**Deliberately NOT claimed:** that SHG is confirmed beyond doubt. Two things
+are missing and both are cheap, and every document says so in the same words:
+
+* **The numbers.** Peak amplitude, off-peak level, peak width, laser power,
+  detector gain. The result currently exists in this repo as "a good peak at
+  ~1559 nm" and nothing else. This is the highest-value thing anybody could add.
+* **The power-scaling control.** The artefact goes as P^1, SHG as P^2, and the
+  laser's -5 to +13 dBm range is an 18 dB lever arm. It works with the crystal
+  left in.
+
+**One thing worth a physicist's eye, raised not settled (Q38).** The detector
+model decides how the result reads, and it is a label on a box: **APD410A is
+InGaAs (~900-1700 nm), APD410A2 is silicon (~200-1000 nm)**. If silicon, it
+cannot see 1550 at all and the Q30 confound never arrives -- the cleanest
+possible outcome. If InGaAs, it cannot see the ~780 nm product either, so what
+reaches it at 2*f1 is worth stating explicitly, and the wavelength-shape
+argument is carrying the interpretation alone. **The observation stands either
+way; only the explanation depends on it.**
+
+**Broke / still broken:** nothing. 450 passed, 2 skipped.
+
+**Next:**
+
+1. **Write the SHG numbers into `06-results.md`.**
+2. **Measure the power-scaling slope at the 1559 nm peak.**
+3. **Read the detector's label** (Q38).
+4. The 0.400 V scope reading (Q36); the two labelling defects (Q37).
+5. Wire the second amplifier and AOM, then SFG -- one-tone control first.

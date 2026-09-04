@@ -425,6 +425,32 @@ average away; the projection is unbiased and can go negative.
 
 ## Measured 2026-09-03
 
+### SHG — the first nonlinear signal
+
+| | |
+|---|---|
+| Crystal | an SHG crystal, in the beam path |
+| Detector | the **APD on IN1** |
+| Demodulated at | **2 x f1** |
+| Result | **a clear peak at ~1559 nm**, the expected phase-matching wavelength |
+
+**The quantitative detail is not recorded.** Peak amplitude, off-peak level,
+peak width, laser power and detector gain all still need to come off the bench
+log or a saved CSV and be written in here. Until they are, this is the only
+line in this document without numbers, and it is the most important one.
+
+**Why the peak is the convincing part, and what it does not yet prove.** The
+known confound is the AOM's own second harmonic (Q30) — 13.3%, -17.5 dB, and
+**the same wavelength shape as f1**, because it is linear optics riding the
+same light through the same fibre. Its wavelength dependence is therefore the
+broad transmission envelope of the path, and **it cannot produce a narrow peak
+at a predicted phase-matching wavelength.** That is a far stronger
+discriminator than "clear 13.3%".
+
+What would finish it is the **power-scaling slope at the peak** — the artefact
+goes as P^1 and SHG as P^2, the laser's -5 to +13 dBm range is an 18 dB lever
+arm, and it works with the crystal left in. Not yet measured.
+
 ### The output lowpass, characterised
 
 The bench now exposes the lock-in's output filter directly (bandwidth, or the

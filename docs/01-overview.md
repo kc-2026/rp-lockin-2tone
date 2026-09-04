@@ -15,12 +15,14 @@ Which frequency that is depends on which nonlinearity is being looked for:
 | | Modulate | Detect at | Because |
 |---|---|---|---|
 | **Two-tone intermodulation** | two beams, f1 and f2 | **\|f2 − f1\|** | the mixing product; neither beam alone produces it |
-| **SHG** (second harmonic) | one beam at f1 | **f1** on a silicon detector | `P_2ω ∝ P_ω²`, and silicon cannot see the 1550 nm fundamental at all |
+| **SHG** (second harmonic) | one beam at f1 | **2 × f1** — what was used | `P_2ω ∝ P_ω²`, so a square law puts a component at twice the modulation. On a detector blind to the fundamental, f1 works too and is 12 dB bigger |
 | **SFG** (sum frequency) | two beams, f1 and f2 | **f1 + f2** or **\|f1 − f2\|** | output goes as I1·I2 |
 
 The original plan was two-tone intermodulation at |f2 − f1|. The instrument is
-built and works; the physics currently in front of it is **SHG first, then
-SFG** — see `09-whats-next.md`.
+built and works, and **SHG was measured on 2026-09-03** — a clear peak at
+~1559 nm, the expected phase-matching wavelength, with the crystal in and the
+lock-in at 2 × f1. **SFG is next**, and it needs the second beam path wired.
+See `09-whats-next.md`.
 
 ## The 80 MHz belongs to the AOM, not to the sample
 
@@ -184,9 +186,14 @@ Both campaigns are recorded in full in `12-test-campaigns.md`. **The phase
 framing is history**; what the bench is today is `08-the-bench.md`, and what is
 left is `09-whats-next.md`.
 
-**Phase 2 success criteria are still not set** (Q17). They now wait on the
-crystal, since what counts as a detection depends on what the sample gives. The
-single most useful number to set them against: the noise floor is **σ = 3.57 µV
-per trace point** at the ADC, so a response of **≥36 µV** is clearly visible in
-a single sweep and anything below ~4 µV is not visible at all. With the
-photodetector's own noise included, expect nearer **~11 µV** and **~120 µV**.
+**Phase 2 delivered its first physics on 2026-09-03: SHG, seen as a clear peak
+at ~1559 nm** with the crystal in, the APD on IN1 and the lock-in at 2 × f1.
+See `06-results.md` and `09-whats-next.md`.
+
+**Phase 2 success criteria (Q17) are still not formally set, and are now
+answerable** — "what counts as a detection" stopped being hypothetical the
+moment the peak appeared. The most useful number to set them against: the noise
+floor is **σ = 3.57 µV per trace point** at the ADC, so a response of **≥36 µV**
+is clearly visible in a single sweep and anything below ~4 µV is not visible at
+all. With a photodetector's own noise included, expect nearer **~11 µV** and
+**~120 µV**.

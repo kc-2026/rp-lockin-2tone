@@ -323,19 +323,32 @@ land on IN2, the capture demodulates at f1, and the wavelength axis is built
 from the measured trigger edges. Real optical amplitude-against-wavelength
 traces exist.
 
-**What Phase 2 has left is physics, not instrumentation:**
+**SHG WORKS, measured 2026-09-03.** Crystal in the beam path, the APD on IN1,
+demodulating at **2 x f1**: a clear peak at **~1559 nm**, the expected
+phase-matching wavelength. **This is the thing the instrument was built to
+do.** Two things about it:
 
-- **There is no crystal yet.** No SHG or SFG signal has ever been looked for.
+- **The numbers are not written down.** Peak amplitude, off-peak level, peak
+  width, laser power, detector gain. They belong in `docs/06-results.md` and
+  are the highest-value thing anybody could add.
+- **There is no recorded control yet.** The peak sits where phase matching
+  predicts, and the AOM's own second harmonic (Q30) follows the broad
+  transmission envelope so cannot make a narrow peak there — but the
+  **power-scaling slope** (P^1 artefact against P^2 signal) has not been
+  measured. Do not upgrade the wording past what the evidence supports.
+
+**What is left:**
+
 - **The second beam path is not wired** — the second ZHL-1-2W+ and second AOM
-  exist but are not connected, so nothing two-tone has been driven.
+  exist but are not connected, so nothing two-tone has been driven. SFG needs
+  them.
 - **The stepping laser (TSL-770) has never been contacted**, so the deliverable
   is a 1 x 5000 sweep rather than the 11 x 5000 map. Parked at Kevin's request.
-- **The PDA100A2 silicon detector is on the bench, not installed.** It is how
-  SHG gets separated from the AOM's own second harmonic (Q30), because silicon
-  cannot see 1550 at all.
-- **The detector on IN1 is now an APD410-series unit**, not the PDA05CF2 that
-  most of the documentation describes. **Read the label for the model suffix**
-  before relying on any spectral claim (Q38).
+- **The detector on IN1 is an APD410-series unit**, not the PDA05CF2 that most
+  of the documentation's noise predictions describe. **Read the label for the
+  model suffix** (Q38): APD410A is InGaAs, APD410A2 is silicon, and that
+  decides how the SHG result should be read.
+- **The PDA100A2 silicon detector is on the bench, not installed.**
 
 Details in `docs/08-the-bench.md` (what is connected) and
 `docs/09-whats-next.md` (what to do next).

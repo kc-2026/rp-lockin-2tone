@@ -14,12 +14,12 @@ For what to do next, `09-whats-next.md`. For every measured number,
 ## 1. What is on the bench
 
 ```
-  TSL-775 --> AOM (1550AOM-1) --> 90/10 --> 50/50 --> detector --> IN1
+  TSL-775 --> AOM (1550AOM-1) --> 90/10 --> 50/50 --> CRYSTAL --> APD --> IN1
      |              ^
      |              | 80 MHz AM at f1
      |        ZHL-1-2W+ <-- OUT1
      |
-     +-- trigger BNC ------------------------------------------> IN2
+     +-- trigger BNC -------------------------------------------------> IN2
 ```
 
 | | State |
@@ -31,9 +31,9 @@ For what to do next, `09-whats-next.md`. For every measured number,
 | **Thorlabs APD410-series detector** | **connected to IN1** as of 2026-09-03, on its minimum gain. `scripts/dr_bench.py` exists to characterise the gain knob. **Read the label for the model suffix** — it decides whether it is InGaAs or silicon (Q38) |
 | PDA05CF2 (InGaAs, 800–1700 nm) | the original detector; specifications and all the noise predictions in `06-results.md` are its |
 | ZHL-1-2W+ #2, AOM #2 | exist, **not wired**. Needed for SFG |
-| PDA100A2 (Si, 320–1100 nm) | **on the bench, not installed.** For the SHG product near 775 nm |
+| **SHG crystal** | **in the beam path, and working** — see below |
+| PDA100A2 (Si, 320–1100 nm) | on the bench, not installed |
 | TSL-770 stepping laser | **never contacted.** Parked at Kevin's request |
-| Nonlinear crystal | **not yet acquired** |
 
 ---
 
@@ -135,6 +135,11 @@ panel reports; do not model it.
 
 ## 4. What is proven
 
+- **SHG WORKS, measured 2026-09-03.** Crystal in the path, the APD on IN1,
+  demodulating at **2 × f1**: a clear peak at **~1559 nm**, which is where
+  phase matching was expected. **This is what the instrument was built to do.**
+  The quantitative detail is not written down yet and should be — see
+  `09-whats-next.md`.
 - **The optical chain works.** 289 mV swing on IN1 with the beam on, nanovolts
   with OUT1 disarmed, and a 9 dB laser drop giving a measured 8.67× against a
   predicted 7.94× — 0.38 dB. The signal tracks optical power while the RF drive
@@ -148,12 +153,16 @@ panel reports; do not model it.
 
 ## 5. What is not
 
-- **No crystal**, so no nonlinear signal has ever been looked for.
+- **The SHG result has no recorded control yet.** The peak sits where phase
+  matching predicts, and the known confound — the AOM's own second harmonic at
+  −17.5 dB (Q30) — follows the broad transmission envelope and so cannot make a
+  narrow peak at a predicted wavelength. That argument is doing the work on its
+  own until the **power-scaling slope** is measured: the artefact goes as P¹,
+  SHG as P².
+- **The detector model is not confirmed** (Q38), and it decides how to read the
+  result. APD410A is InGaAs, APD410A2 is silicon.
 - **Nothing two-tone has been driven**, so amplifier intermodulation at
   \|f2 − f1\| is untested. It would look exactly like a real signal.
-- **The AOM makes its own second harmonic** at −17.5 dB with the same
-  wavelength shape, so any SHG measurement on the InGaAs detector must clear
-  13.3% before it has said anything (Q30).
 - **The stepping laser has never been contacted**, so the output is a 1 × 5000
   sweep, not the 11 × 5000 map.
 

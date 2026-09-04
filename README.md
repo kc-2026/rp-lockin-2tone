@@ -3,351 +3,294 @@
 Lock-in detection of a nonlinear optical signal against laser wavelength, on a
 Red Pitaya SIGNALlab 250-12.
 
-**Repository:** <https://github.com/kc-2026/rp-lockin-2tone>
-**Lives at:** `C:\dev\rp-lockin-2tone` on the bench PC.
+An AOM chops 1550 nm laser light at f1 (default **915 kHz**). A crystal in the
+beam does something nonlinear. A detector on IN1 sees the result; the laser's
+trigger on IN2 says where in the recording each wavelength sits. One laser
+sweep in, one **amplitude-against-wavelength** trace out, as CSV.
 
-**This file is how to USE it.** The reasoning, the reference material and every
-measured number are in `docs/` — start at `docs/00-index.md`. The current state
-of the work is the HANDOFF block at the top of `SESSION_LOG.md`.
+**It works.** SHG was measured on 2026-09-03 — a clear peak at ~1559 nm.
 
----
-
-## What it does, in one paragraph
-
-An AOM gates 1550 nm laser light on and off at f1 (default **915 kHz**), by
-amplitude-modulating the 80 MHz acoustic drive the AOM needs. **The 80 MHz is
-the AOM's requirement — the sample only ever sees light varying in
-brightness.** A photodetector on IN1 returns the response; the laser's trigger
-output on IN2 says where in the record each logged wavelength sits. One laser
-sweep is captured, demodulated in software, and delivered as a 5000-point trace
-of amplitude against wavelength, as CSV.
+- **Repository:** <https://github.com/kc-2026/rp-lockin-2tone>
+- **Lives at:** `C:\dev\rp-lockin-2tone` on the bench PC
+- **Everything else:** `docs/` — start at `docs/00-index.md`
 
 ---
 
-## 1. Install
+## 1. Start the GUI
 
-Needs **Python ≥ 3.10** (3.13 is what the bench PC runs). Everything else comes
-from the venv.
+Double-click **`run_bench.cmd`**, or from a terminal in the project folder:
 
 ```bash
-git clone https://github.com/kc-2026/rp-lockin-2tone.git C:\dev\rp-lockin-2tone
-cd C:\dev\rp-lockin-2tone
-python -m venv .venv
-.venv\Scripts\python -m pip install -e ".[dev]"
+.venv\Scripts\python.exe scripts\bench.py
 ```
 
-On Linux the last line is `.venv/bin/python -m pip install -e ".[dev]"`.
+That is the whole thing. If it opens, you are ready.
 
-Check it:
-
-```bash
-.venv\Scripts\python -m pytest -q
-```
-
-Expect **450 passed, 2 skipped, 11 deselected**, in about four minutes. The
-deselected ones need the board.
-
-Optional extras: `.[laser]` adds `pyserial`, `.[laser-d2xx]` adds the D2XX probe
-used by `scripts/laser_comms_diag.py`, `.[plot]` adds matplotlib. **None of
-them are needed for the bench**, which talks to the laser over TCP and draws on
-a Tk canvas.
-
-### Two rules about where you run it from
-
-- **Do not put the project in a OneDrive folder.** OneDrive scanning a `.venv`
-  is slow, and a nested-repo incident started that way.
-- **Do not run from a copy on the Desktop.** A snapshot at
-  `Desktop\rp-lockin-2tone-main` has no `.venv` and falls further behind every
-  commit. Starting the GUI from it fails with `ModuleNotFoundError: No module
-  named 'numpy'`, which names the interpreter but not the real problem, which
-  is the folder.
+**If it does not open**, the machine has not been set up — go to §7.
 
 ---
 
-## 2. Before you connect anything
+## 2. Try it with no hardware, right now
 
-| | |
-|---|---|
-| **Power the board** and start its SCPI server | Web interface → Development → SCPI server → **Run**. Port 5000. **It does not auto-start after a reboot.** Do not restart it yourself if it is already running — that is Kevin's, by request |
-| **Start the deep-capture helper** | Two commands, below. It lives in RAM and **dies on every board reboot** |
-| **Power the laser** and check its LAN | `10.101.0.197:5000`. If it does not answer, reapply the LAN settings on the front panel: Other → Communication → LAN |
-| **Check the laser's power setpoint** | It has been found at 12 dBm ≈ 15.8 mW. **Keep it at or under 0 dBm (1 mW)** — the detector saturates near 0.96 mW |
-| **Connect the AOM before applying RF** | The amplifier is not to be powered into an open port |
+Before touching the bench, prove the software works:
 
-The deep-capture helper:
+```bash
+run_gui.cmd
+```
+
+In the window that opens: **Acquire** tab → **Simulate**, then **Demodulate**
+tab → **Demodulate**. You will get a trace. That runs the whole chain —
+capture, demodulation, trigger edges, the laser log, the wavelength mapping —
+with nothing plugged in.
+
+(`run_gui.cmd` is the older tabbed GUI, kept only because it has that Simulate
+path. For real work use `run_bench.cmd`.)
+
+---
+
+## 3. Before you plug into real hardware
+
+Five things, in this order:
+
+1. **Board on**, and start its SCPI server: web interface → Development → SCPI
+   server → **Run**. It does **not** auto-start after a reboot. If it is
+   already running, leave it alone.
+2. **Start the deep-capture helper** (see below). It lives in RAM and **dies
+   on every board reboot**, so this is a routine, not a one-off.
+3. **Laser on**, and check it answers at `10.101.0.197:5000`. If not, reapply
+   the LAN settings on its front panel: Other → Communication → LAN.
+4. **Check the laser's power setpoint.** It has been found at 12 dBm ≈ 15.8 mW.
+   **Keep it at or under 0 dBm (1 mW).**
+5. **Connect the AOM before applying RF.** Never power the amplifier into an
+   open port.
+
+The helper:
 
 ```bash
 scp scripts/rp_fastread.py root@rp-fffe42.local:/dev/shm/
 ssh -n root@rp-fffe42.local "nohup setsid python3 /dev/shm/rp_fastread.py > /dev/shm/rp_fastread.log 2>&1 < /dev/null &"
 ```
 
-`setsid` and the redirects matter — without them it dies when the SSH session
-closes, which looks exactly like never having started it. The bench prints
-`fast-read helper running` or `NOT RUNNING` when you press Connect; if it says
-NOT RUNNING, read `/dev/shm/rp_fastread.log`.
+The bench prints `fast-read helper running` or `NOT RUNNING` when you press
+Connect. If NOT RUNNING, read `/dev/shm/rp_fastread.log`.
 
 ---
 
-## 3. Start the bench
+## 4. What is on screen
 
-```bash
-run_bench.cmd
+```
++--------------------------------------------------------------+
+| board | OUT1 OUT2 | laser | sweep |        [ALL OUTPUTS OFF]  |  header: live state
++-----------------+--------------------------------------------+
+|  Board          |                                            |
+|  Laser          |                                            |
+|  Drive (OUT1)   |                  PLOT                      |
+|  Drive (OUT2)   |                                            |
+|  Sweep          |                                            |
+|  Acquire        +--------------------------------------------+
+|  Demodulate     |  Workspace: capture / laser log /          |
+|  Map            |             lock-in / trace                |
+|  Export         +--------------------------------------------+
+|  Sequences      |                                            |
++-----------------+--------------------------------------------+
+|  Log                                                          |
++--------------------------------------------------------------+
 ```
 
-Double-clickable. Or, from a terminal:
+**The header** shows what the instruments actually report — board, both
+outputs, laser wavelength and power, LD, shutter, sweep state. It is polled,
+never remembered, so it cannot lie about a live output.
 
-```bash
-.venv\Scripts\python.exe scripts\bench.py
-```
+**The workspace** holds four results: `capture`, `laser log`, `lock-in`,
+`trace`. Panels write to these slots instead of calling each other, which is
+why you can capture once and then demodulate the same recording three different
+ways without touching hardware.
 
-There are three programs. **`bench.py` is the one you want.**
+**The plot** shows one of six things, chosen in the `show:` dropdown:
 
-| Program | Command | For |
-|---|---|---|
-| **The bench** | `run_bench.cmd` | **Everything.** Panel GUI; each panel does one thing, and a sweep is those things in order |
-| Gain study | `run_dr.cmd` | Characterising the detector's gain knob against dynamic range. A one-off tool |
-| Old tabbed GUI | `run_gui.cmd` | Kept only because it has a **Simulate** path that needs no hardware at all |
+| View | What it is |
+|---|---|
+| **trace** | amplitude vs wavelength — **the deliverable** |
+| lock-in | amplitude vs time |
+| **lock-in R** | magnitude vs time — check this whenever the trace goes negative |
+| lock-in phase | unwrapped degrees; a frequency error shows as a straight slope |
+| raw IN1 | volts vs time — the detector |
+| raw IN2 | counts vs time — the trigger train |
+
+`dB` re-plots in decibels. Wheel = zoom X, shift+wheel = Y, ctrl+wheel = both,
+drag = pan, double-click = fit.
 
 ---
 
-## 4. Using the bench
+## 5. The panels
 
-The window is a **rail of panels down the left**, a **plot**, a **workspace**
-and a **log**. Panels are independent: they read and write four named slots —
-`capture`, `laser log`, `lock-in`, `trace` — rather than calling each other. So
-you can arm a capture, fire a sweep by hand, read the log ten minutes later,
-and demodulate the same record three times at different frequencies without
-touching hardware.
+Each does one thing. Top to bottom is roughly the order you use them.
 
-The **header** always shows measured state (board, OUT1/OUT2, laser wavelength
-and power, LD, shutter, sweep) and an **ALL OUTPUTS OFF** button. State is
-polled from the instruments, never remembered from which buttons you pressed.
-
-### The panels
-
-**Board** — `host`, `IN1` and `IN2` coupling/gain, `Connect` / `Disconnect` /
+**Board** — `host`, `IN1` and `IN2` settings, then `Connect` / `Disconnect` /
 `Configure`.
-IN1 defaults to **LV / AC** (the detector is unipolar with a DC pedestal); IN2
-to **HV / DC** (the 3.3 V trigger clips to a flat line on LV, which reads as
-"the laser is not triggering"). Press **Configure** after Connect; it also
-applies the decimation from the Acquire panel.
+Leave IN1 on **LV / AC** and IN2 on **HV / DC**. Press **Configure** after
+connecting; it also applies the decimation from the Acquire panel.
 
 **Laser** — `address`, `power` (dBm), `wavelength` (nm), then `Connect`,
-`Disconnect`, `Configure`, `Read back`, `Shutter CLOSE`/`OPEN`, `LD ON`/`off`.
-`Configure` sets wavelength and power together and reads both back.
-**Setting a wavelength stops the laser sweeping** until Sweep → Configure is
-pressed again (Q32) — the panel says so in orange.
+`Configure`, `Read back`, `Shutter CLOSE`/`OPEN`, `LD ON`/`off`.
+`Configure` sets wavelength and power together and reads both back. **Setting a
+wavelength stops the laser sweeping** until you press Sweep → Configure again.
 
-**Drive (OUT1) — f1** and **Drive (OUT2) — f2, for SFG** — `carrier` (MHz),
-`modulation` (kHz), `amplitude` (V), then `OUTn ON` / `OUTn OFF` / `ALL OFF`.
-A line under the boxes says what will actually be generated. **Nothing is
-enabled without a dialog** naming channel, frequencies and amplitude.
-Two degenerate settings, opposite ends of the same knob:
+**Drive (OUT1)** and **Drive (OUT2)** — `carrier` (MHz), `modulation` (kHz),
+`amplitude` (V), then `OUTn ON` / `OUTn OFF` / `ALL OFF`.
+A line under the boxes tells you what will actually be generated. Nothing is
+enabled without a dialog naming the channel, frequencies and amplitude. OUT2 is
+only needed for SFG.
+Two special values: **modulation 0** gives an unmodulated carrier (CW);
+**carrier 0** gives a plain sine at the modulation frequency.
 
-- **modulation 0** → an unmodulated carrier at constant amplitude (CW). Not a
-  DC level — the AOM needs its 80 MHz and the amplifier is AC-coupled.
-- **carrier 0** → a plain sine at the modulation frequency, one spectral line,
-  exact to the hertz.
-
-**Sweep** — `start` / `stop` (nm), `speed` (a dropdown; the laser only accepts
+**Sweep** — `start` / `stop` (nm), `speed` (dropdown — the laser only accepts
 0.5, 1, 2, 5, 10, 20, 50, 100, 200 nm/s), `trigger step` (nm), `mode`, then
-`Configure` / `Start` / `Stop` / `Read log`. The info line says how many points
-the **laser** will log and how that lines up with the **lock-in**'s own points.
+`Configure` / `Start` / `Stop` / `Read log`.
 
-**Acquire** — `decimation`, `sweep length` (s, follows the Sweep panel until
-you type in it), `trigger` (**CH2_PE** = channel 2, positive edge), `level` (V),
-`wait up to` (s), then `Capture (arms and waits)` / `Snapshot (no trigger)` /
-`STOP waiting`. Pre-roll and tail are added on top of the sweep length, and
-both inputs are always captured together.
+**Acquire** — `decimation`, `sweep length` (follows the Sweep panel until you
+type in it), `trigger` (**CH2_PE**), `level`, `wait up to`, then
+`Capture (arms and waits)` / `Snapshot (no trigger)` / `STOP waiting`.
+Pre-roll and tail are added on top automatically. Both inputs are always
+recorded together.
 
-**Demodulate** — `f_ref` (kHz), `output rate` (Sa/s) with a **max** button,
-`bandwidth` (Hz, blank = derive it), the frequency buttons, then
-`Demodulate capture`. Runs on the capture already in the workspace, so the same
-record can be examined at f1 and 2×f1 with the hardware untouched.
-The buttons are **f1**, **2 × f1**, **3 × f1**, **f2**, **f1+f2**, **|f1−f2|**.
-**Use them. Never type a harmonic or a sum by hand** — they build f_ref from
-what the ASG will actually generate, and a lock-in sitting df from its signal
-returns a df beat: a clean sine across the trace that looks like a result.
-The readout underneath gives τ, the noise gain, the settling cost and the
-wavelength resolution at the current sweep speed.
+**Demodulate** — `f_ref` (kHz), `output rate` with a `max` button, `bandwidth`
+(leave blank to derive it), the frequency buttons, then `Demodulate capture`.
+**The buttons are the point: `f1`, `2 × f1`, `3 × f1`, `f2`, `f1+f2`,
+`|f1−f2|`.** Press one instead of typing a number. The readout underneath gives
+τ, the noise gain, the settling cost, and **the wavelength resolution you will
+actually get**.
 
-**Map to wavelength** — one button. Capture + laser log → amplitude against
-wavelength, through `reduce_sweep`, the offline-tested join. **It refuses a
-filter that smears wavelength past 100 pm.**
+**Map to wavelength** — one button. Capture + laser log → the trace. It refuses
+a filter that smears wavelength past 100 pm.
 
-**Export** — `Trace to CSV` and `Raw to .npz`.
+**Export** — `Trace to CSV`, `Raw to .npz`.
 
-**Sequences** — `linear sweep`, `SHG (demodulate at 2*f1)`, `SFG (two tones,
-demodulate at f1+f2)`, `control: no drive`, `control: low power`, then `Run`.
-These call exactly the same functions the buttons call. There is no second
-implementation.
-
-### The plot
-
-Six views: **trace** (amplitude vs wavelength — the deliverable), **lock-in**
-(amplitude vs time), **lock-in R** (magnitude), **lock-in phase** (unwrapped
-degrees), **raw IN1** (volts), **raw IN2** (counts). Plus a **dB** checkbox
-with a dB-range box, `Redraw` and `Fit`.
-
-Wheel = zoom X, shift+wheel = Y, ctrl+wheel = both, drag = pan, double-click =
-fit.
+**Sequences** — `linear sweep`, `SHG (demodulate at 2*f1)`, `SFG`,
+`control: no drive`, `control: low power`, then `Run`. These call the same
+functions the buttons call, in order.
 
 ---
 
-## 5. Taking one sweep, start to finish
+## 6. Taking a sweep
 
-1. **Board** → Connect, then **Configure**.
-2. **Laser** → Connect. Check the power readout in the header.
-3. **Drive (OUT1)** → set carrier 80 MHz and the modulation, then **OUT1 ON**
-   and confirm the dialog.
-4. **Sweep** → set start, stop, speed, trigger step, then **Configure**.
-5. **Wait.** The laser has to travel back to its start wavelength on its own.
-   Watch the wavelength in the header stop moving.
-6. **Acquire** → **Capture (arms and waits)**. The header says ARMED.
+1. **Board** → Connect → **Configure**
+2. **Laser** → Connect. Check the power in the header.
+3. **Drive (OUT1)** → carrier 80 MHz, modulation 915 kHz → **OUT1 ON**, confirm
+4. **Sweep** → start, stop, speed, trigger step → **Configure**
+5. **Wait.** Watch the wavelength in the header until it stops moving.
+6. **Acquire** → **Capture (arms and waits)**. Header says ARMED.
 7. **Sweep → Start.** The capture fires on the laser's first trigger pulse.
-8. **Demodulate** → press **f1**, then **Demodulate capture**.
-9. **Sweep → Read log**, then **Map**.
-10. **Export** → Trace to CSV, and Raw to .npz.
+8. **Demodulate** → press **2 × f1** (for SHG) → **Demodulate capture**
+9. **Sweep → Read log**, then **Map**
+10. **Export** → Trace to CSV
 
-**Order matters at steps 5–7.** Arm the capture first — it arms and *then*
-waits — and only then start the sweep.
+**Steps 5–7 are where it goes wrong.** Wait for the laser, arm the capture,
+*then* start the sweep.
 
 ---
 
-## 6. Six things that will bite you
+## 7. Six things that will bite you
 
-1. **Wait between Sweep → Configure and Sweep → Start.** A sweep started early
-   covers a *shorter range* at exactly the right speed and step, so the trace
-   looks entirely normal. Measured: 80.96 nm of a requested 100.
-2. **One laser connection, held for the whole session.** A connection attempt
-   is a consumable — two connect-and-close cycles took a port from accepting to
-   silently dropping SYNs, and only a power cycle recovered it. **Never retry a
-   failed connect. Do not run two benches.**
-3. **Use the frequency buttons, never a typed harmonic.** See above.
-4. **A negative amplitude is the estimator, not the signal.** `amplitude()`
-   projects onto one phase — unbiased, where `R` reads +1.25σ on pure noise —
-   but it assumes the phase is steady. A sign change means the phase rotated
-   past 90°, which no optical amplitude can do. **Plot lock-in R:** flat R
-   under a swinging amplitude is phase, not physics.
-5. **Front-end settings are per channel and both matter.** IN1 LV/AC, IN2
-   HV/DC. On LV the 3.3 V trigger clips to a flat line.
-6. **Narrowing the bandwidth is not free.** It is quieter *and* often settles
-   faster, so nothing pushes back except the wavelength resolution, which is
+1. **Wait between Sweep → Configure and Sweep → Start.** Start early and the
+   laser covers a *shorter range* at exactly the right speed and step — so the
+   trace looks completely normal. Measured: 80.96 nm of a requested 100.
+2. **One laser connection per session.** A failed connect is not free: two
+   connect-and-close cycles have taken a port from working to silently dead,
+   recoverable only by power-cycling the laser. **Never retry a failed
+   connect, and never run two benches at once.**
+3. **Use the frequency buttons, not typed numbers.** A lock-in sitting a few
+   hertz from its signal returns a slow beat — a clean sine across the trace
+   that looks exactly like a measurement.
+4. **A negative trace is the maths, not the light.** Switch the plot to
+   **lock-in R**. If R is flat while the trace swings through zero, you are
+   looking at a phase rotation, not a signal.
+5. **IN1 on LV/AC, IN2 on HV/DC.** On LV the laser's 3.3 V trigger clips to a
+   flat line, which looks like "the laser is not triggering".
+6. **A narrower filter is not free.** It is quieter *and* often faster to
+   settle, so nothing warns you — except the wavelength resolution, which is
    `speed / (2 × bandwidth)`. Map refuses anything past 100 pm.
 
-Every trap, in the order it bites, is `docs/08-the-bench.md` §3. Every mistake
-this project has ever made is `docs/11-mistakes.md`.
+The full list, in the order they bite, is `docs/08-the-bench.md` §3. Every
+mistake this project has ever made is `docs/11-mistakes.md`.
 
 ---
 
-## 7. Without any hardware
+## 8. Setting up a new machine
+
+Needs **Python ≥ 3.10** (the bench PC runs 3.13). Nothing else.
 
 ```bash
-run_gui.cmd
-```
-
-then **Acquire → Simulate**, **Demodulate → Demodulate**. The old tabbed GUI's
-Simulate path runs the whole chain — capture handling, demodulation, trigger
-edges, the laser log, the wavelength mapping and the CSV — with nothing
-connected. It is the quickest proof an installation works.
-
-Also useful, and instant:
-
-```bash
+git clone https://github.com/kc-2026/rp-lockin-2tone.git C:\dev\rp-lockin-2tone
+cd C:\dev\rp-lockin-2tone
+python -m venv .venv
+.venv\Scripts\python -m pip install -e ".[dev]"
 .venv\Scripts\python -m pytest -q
-.venv\Scripts\python -c "from rp_lockin import plan_two_tone_grid; print(plan_two_tone_grid(1e6).describe())"
-.venv\Scripts\python -c "from rp_lockin import describe_capture_plan, plan_two_tone_grid as g; print(describe_capture_plan(1.0, g(1e6).difference))"
 ```
+
+Expect **450 passed, 2 skipped, 11 deselected**, about four minutes. On Linux
+use `.venv/bin/python`.
+
+**Do not put it in OneDrive, and do not run it from a copy on the Desktop.**
+The Desktop snapshot has no `.venv`; starting the GUI from it fails with
+`No module named 'numpy'`, which blames the interpreter when the problem is the
+folder.
 
 ---
 
-## 8. The other programs
+## 9. The other programs
 
-**`run_dr.cmd` — the detector gain study.** Set the detector's gain by hand,
-type what you set, press Run; it takes N sweeps at that setting and reduces
-them to peak, noise floor and dynamic range. Views: waterfall by gain, dynamic
-range against gain, peak and floor against gain. Exports CSV. The gain box is a
-**label** — nothing reads the detector — so it only has to be a number and to
-mean the same thing at every point. **A point flagged `clip` is not a
-measurement.**
+**`run_dr.cmd`** — detector gain study. Set the gain by hand, type what you set,
+press Run; it takes N sweeps and reduces them to peak, noise floor and dynamic
+range. The gain box is just a **label** — nothing reads the detector. A point
+flagged `clip` is not a measurement.
 
-**The P-series scripts** (`scripts/p1_laser_check.py` … `p6_robustness.py`) are
-the original step-by-step campaign, superseded by the bench but still holding
-the safety contract. Outputs are disarmed on **every** exit path including
-exceptions and Ctrl-C, nothing drives an output without `--i-am-present` *and*
-a typed confirmation, and P5.2 refuses to run before a clean P5.1.
+**`scripts/p1_laser_check.py` … `p6_robustness.py`** — the original
+step-by-step campaign, superseded by the bench. They still hold the safety
+contract: outputs disarmed on every exit path, and nothing drives an output
+without `--i-am-present` *and* a typed confirmation.
 
-```bash
-.venv\Scripts\python.exe scripts\p4_linear_sweep.py --i-am-present
-```
-
-**With the board, the hardware suite:**
+**The hardware test suite**, with loopback cables fitted and the sample
+disconnected:
 
 ```bash
 set RP_HOST=rp-fffe42.local
 .venv\Scripts\python -m pytest tests/hardware -m hardware
 ```
 
-Read `docs/12-test-campaigns.md` first. Loopback wiring must be in place and
-the sample must not be connected.
-
 ---
 
-## 9. Key numbers
+## 10. Numbers worth knowing
 
 | | |
 |---|---|
-| Bench default f1 / f2 | **915 kHz / 1225 kHz** |
-| Carrier | ~80 MHz (the exact value follows from the modulation) |
+| Default f1 / f2 | 915 kHz / 1225 kHz |
 | Acquisition | 31.25 MS/s (decimation 8) |
 | Output | 5000 Sa/s, 2250 Hz bandwidth, τ = 71 µs |
-| **Noise gain** | **~4763 Hz — 1.9× the nominal bandwidth, not equal to it** |
-| Noise floor | **σ = 3.57 µV** per trace point at the ADC; **≥36 µV** for SNR 10 |
-| With the photodetector | expect nearer **11 µV** and **~120 µV** |
-| Settling | ~113 output points, 22.6 ms — **pre-roll AND tail both required** |
-| Wavelength resolution | 22 pm at 2250 Hz and 100 nm/s; **100 pm is a hard limit** |
-| Memory, 1 s two-channel | **119.2 MiB** — 93% of the 128 MiB region |
+| Noise floor | **σ = 3.57 µV** per point; **≥36 µV** for SNR 10 |
+| Wavelength resolution | 22 pm at 100 nm/s; **100 pm is a hard limit** |
 
-**Two frequencies are forbidden and one is dangerous.** The board's switching
-supply puts ~32 µV — nine times the noise floor — at **504.868 kHz and its
-multiples**, and a lock-in cannot tell that apart from a steady signal. Round
-numbers are the dangerous ones: 1.000 MHz sits 9.7 kHz from the second
-harmonic, 500 kHz sits 4.9 kHz from the fundamental. 915 kHz clears the family
-by 94.7 kHz, which is why it is the default. For SFG, **four** frequencies have
-to clear it — f1, f2, f1+f2 and |f1−f2| — not the two being driven.
+**Avoid 504.868 kHz and its multiples.** The board's switching supply puts
+~32 µV there — nine times the noise floor — and a lock-in cannot tell that
+apart from a real signal. This is why the default is 915 kHz and not a round
+1 MHz, which sits 9.7 kHz from the second harmonic. For SFG, **four**
+frequencies have to clear it: f1, f2, f1+f2 and |f1−f2|.
 
 **There is no frequency grid.** Any whole number of hertz is exactly
-generatable — the play rate is quantised to 1 Hz and that is the only
-constraint. An older 15258.789 Hz "ASG grid" was a wrong model of the
-generator, corrected on the board 2026-08-28; if you find a document, comment
-or log line still asserting it, it is stale. `03-frequency-plan.md` has the
-measurement.
-
-**So round numbers are reachable — they are just bad choices**, because of the
-switching supply above, not because the hardware cannot make them.
-
-**Still use the bench's f1 / f2 / f1+f2 / |f1−f2| buttons rather than typing a
-harmonic.** The reason is no longer snapping. It is that the table is built
-from a whole number of modulation cycles times a play rate, so whatever
-rounding is left gets multiplied by the cycle count and lands on the
-modulation — and a lock-in sitting even a fraction of a hertz from its signal
-returns a beat: a clean sine across the trace that looks like a result. The
-buttons read the table the ASG will actually play.
+generatable. If you find a comment or document claiming a 15258.789 Hz "ASG
+grid" is a hardware limit, it is stale — that was a wrong model, corrected on
+the board 2026-08-28. See `docs/03-frequency-plan.md`.
 
 ---
 
-## 10. Layout
+## 11. Where everything is
 
 ```
-README.md          this file — how to install and use it
+docs/00-index.md   what every document is for — start here
+docs/08-the-bench  what is connected, and the traps in the order they bite
+docs/09-whats-next what to do next
+docs/11-mistakes   every wrong turn this project has taken
+SESSION_LOG.md     history; the HANDOFF block at the top is the current state
 CLAUDE.md          onboarding for an agent working on this project
-SESSION_LOG.md     chronological history; its HANDOFF block is the current state
-run_bench.cmd      launch the bench
-run_dr.cmd         launch the gain study
-run_gui.cmd        launch the old tabbed GUI (has a no-hardware Simulate path)
-docs/              see docs/00-index.md
-src/rp_lockin/     the package
-scripts/           the bench, the shared operations, and the P-series campaign
-tests/             offline suite + hardware-gated loopback suite
-data/              captured sweeps
+scripts/bench.py   the bench
 ```

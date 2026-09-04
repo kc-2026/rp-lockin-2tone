@@ -10,11 +10,12 @@ the reference and the reasoning.
 
 ## Status, in one line
 
-**The instrument is finished and works end to end against real hardware; what
-is left is physics.** Real optical amplitude-against-wavelength sweeps exist,
-driven from `scripts/bench.py`. **No blockers.** Next up is SHG, which needs a
-crystal and a silicon detector; then SFG, which needs the second beam path
-wired; then the stepping laser for the second axis.
+**The instrument works, and it has measured the physics it was built for.**
+**SHG was seen on 2026-09-03** — crystal in, APD on IN1, demodulating at 2 x f1,
+a clear peak at ~1559 nm where phase matching was expected. **No blockers.**
+What is left: write the SHG numbers down and measure the power-scaling control;
+then SFG, which needs the second beam path wired; then the stepping laser for
+the second axis.
 
 ## Reading order
 
