@@ -61,7 +61,10 @@ one does one thing, and a sweep is those things in order.
 8. **Export** — CSV plus the raw `.npz`.
 
 The `Sequences` panel runs exactly these operations in order, through the same
-functions the buttons call. There is no second implementation.
+functions the buttons call, so there is no second implementation to drift.
+**But it is not trusted: drive the panels by hand.** The sequences are not
+exercised against hardware, the SHG one has been seen to fail part way through
+on a timing overrun, and **every result this project has is from the panels.**
 
 ### Reading the result
 

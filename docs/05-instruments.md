@@ -254,9 +254,16 @@ from the **measured** edge times rather than a uniform grid. See Q29 and
 
 ## 1.8 Optical power
 
-**Keep the laser under 1 mW (0 dBm).** Below the PDA05CF2's ~0.96 mW
-saturation, and therefore comfortably below damage. Enforced as `--max-dbm` in
-the P-series scripts.
+**The 1 mW (0 dBm) ceiling written throughout this project is the PDA05CF2's
+number, and only its number** -- its output saturates at ~0.96 mW optical. It
+is enforced as `--max-dbm` in the P-series scripts, which were written when
+that detector was fitted.
+
+**It does not automatically transfer to the APD now on IN1**, which is a
+different part with a much lower saturation, and dynamic-range work has been
+run at **+10 dBm at the laser** with the splitters, the AOM and the conversion
+efficiency in between. **Establish what actually reaches whatever is fitted
+before turning the laser up** -- that is Q39, and it is open.
 
 **The gate is POWER, not the shutter** (Kevin, 2026-08-28). Fibre and connector
 loss only widen the margin: the limit is the setpoint at the laser, not the
@@ -295,7 +302,11 @@ these as working numbers, not as verified specification.
 **Nothing reads the detector's gain over any interface.** In `dr_bench.py` the
 gain box is a **label** — whatever the knob says — and it only has to be a
 number and to mean the same thing at every point, because it becomes the x
-axis.
+axis. Settings are referred to by **notch**, since that is what the knob has.
+
+**Measured on it:** at +10 dBm out of the laser and **gain notch 2**, the
+instrument's dynamic range is **~55 dB**, against ~60 dB from the commercial
+lock-in under the same conditions. See `06-results.md`.
 
 ## 2.2 Thorlabs PDA05CF2 — InGaAs, the original detector
 

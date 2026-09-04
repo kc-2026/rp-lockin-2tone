@@ -16,7 +16,37 @@ sweep in, one **amplitude-against-wavelength** trace out, as CSV.
 
 ---
 
-## 1. Start the GUI
+## 1. Set up the machine
+
+Skip this if the bench PC is already working. Needs **Python ≥ 3.10** (the bench
+PC runs 3.13); nothing else.
+
+```bash
+git clone https://github.com/kc-2026/rp-lockin-2tone.git C:\dev\rp-lockin-2tone
+cd C:\dev\rp-lockin-2tone
+python -m venv .venv
+.venv\Scripts\python -m pip install -e ".[dev]"
+```
+
+Then prove it, with no hardware connected:
+
+```bash
+.venv\Scripts\python -m pytest -q
+```
+
+Expect **~451 passed, 1-2 skipped, 11 deselected**, about four minutes.
+Nothing should fail. The skip count moves because two GUI tests skip when Tk
+cannot open a display; the 11 deselected need the board. On Linux use
+`.venv/bin/python`.
+
+**Do not put it in OneDrive, and do not run it from a copy on the Desktop.**
+The Desktop snapshot has no `.venv`; starting the bench from it fails with
+`No module named 'numpy'`, which blames the interpreter when the problem is the
+folder.
+
+---
+
+## 2. Start the bench
 
 Double-click **`run_bench.cmd`**, or from a terminal in the project folder:
 
@@ -24,46 +54,23 @@ Double-click **`run_bench.cmd`**, or from a terminal in the project folder:
 .venv\Scripts\python.exe scripts\bench.py
 ```
 
-That is the whole thing. If it opens, you are ready.
-
-**If it does not open**, the machine has not been set up — go to §8.
-
----
-
-## 2. Try it with no hardware, right now
-
-Before touching the bench, prove the software works:
-
-```bash
-run_gui.cmd
-```
-
-In the window that opens: **Acquire** tab → **Simulate**, then **Demodulate**
-tab → **Demodulate**. You will get a trace. That runs the whole chain —
-capture, demodulation, trigger edges, the laser log, the wavelength mapping —
-with nothing plugged in.
-
-(`run_gui.cmd` is the older tabbed GUI, kept only because it has that Simulate
-path. For real work use `run_bench.cmd`.)
+That is the whole thing.
 
 ---
 
 ## 3. Before you plug into real hardware
 
-Four things:
-
 1. **Board on**, and its SCPI server running: web interface → Development →
    SCPI server → **Run**. It does **not** auto-start after a reboot. If it is
    already running, leave it alone.
-2. **Laser on**, and answering at `10.101.0.197:5000`. If not, reapply the LAN
-   settings on its front panel: Other → Communication → LAN.
-3. **Check the laser's power setpoint.** It has been found at 12 dBm ≈ 15.8 mW.
-   **Keep it at or under 0 dBm (1 mW).**
+2. **Laser on**, and answering at `10.101.0.197:5000`.
+3. **Know what the laser's power setpoint is** before opening the shutter — see
+   §7.6.
 4. **Connect the AOM before applying RF.** Never power the amplifier into an
    open port.
 
 Then press Connect on the Board panel. It prints `fast-read helper running`,
-and normally that is the end of it — see §11 if it ever says NOT RUNNING.
+and normally that is the end of it — see §10 if it ever says NOT RUNNING.
 
 ---
 
@@ -157,9 +164,11 @@ a filter that smears wavelength past 100 pm.
 
 **Export** — `Trace to CSV`, `Raw to .npz`.
 
-**Sequences** — `linear sweep`, `SHG (demodulate at 2*f1)`, `SFG`,
-`control: no drive`, `control: low power`, then `Run`. These call the same
-functions the buttons call, in order.
+**Sequences** — **not trusted. Drive the panels by hand.** The dropdown offers
+`linear sweep`, `SHG (demodulate at 2*f1)`, `SFG`, `control: no drive` and
+`control: low power`, and they call the same functions the buttons call — but
+they are not exercised against hardware, and the SHG one has been seen to fail
+part way through on a timing overrun. Every result so far came from the panels.
 
 ---
 
@@ -169,36 +178,44 @@ functions the buttons call, in order.
 2. **Laser** → Connect. Check the power in the header.
 3. **Drive (OUT1)** → carrier 80 MHz, modulation 915 kHz → **OUT1 ON**, confirm
 4. **Sweep** → start, stop, speed, trigger step → **Configure**
-5. **Wait.** Watch the wavelength in the header until it stops moving.
+5. **Wait.** Watch the wavelength in the header until it stops moving — the
+   laser is travelling back to its start on its own.
 6. **Acquire** → **Capture (arms and waits)**. Header says ARMED.
 7. **Sweep → Start.** The capture fires on the laser's first trigger pulse.
 8. **Demodulate** → press **2 × f1** (for SHG) → **Demodulate capture**
 9. **Sweep → Read log**, then **Map**
 10. **Export** → Trace to CSV
 
-**Steps 5–7 are where it goes wrong.** Wait for the laser, arm the capture,
-*then* start the sweep.
-
 ---
 
-## 7. Six things that will bite you
+## 7. Things that will bite you
 
-1. **Wait between Sweep → Configure and Sweep → Start.** Start early and the
-   laser covers a *shorter range* at exactly the right speed and step — so the
-   trace looks completely normal. Measured: 80.96 nm of a requested 100.
+1. **If the laser will not connect, reapply its LAN settings** on the front
+   panel: **Other → Communication → LAN**. That has fixed it every time. Do
+   **not** just try again — see 2.
 2. **One laser connection per session.** A failed connect is not free: two
    connect-and-close cycles have taken a port from working to silently dead,
    recoverable only by power-cycling the laser. **Never retry a failed
    connect, and never run two benches at once.**
-3. **Use the frequency buttons, not typed numbers.** A lock-in sitting a few
+3. **Wait between Sweep → Configure and Sweep → Start.** Start early and the
+   laser covers a *shorter range* at exactly the right speed and step — so the
+   trace looks completely normal. Measured: 80.96 nm of a requested 100.
+4. **Use the frequency buttons, not typed numbers.** A lock-in sitting a few
    hertz from its signal returns a slow beat — a clean sine across the trace
    that looks exactly like a measurement.
-4. **A negative trace is the maths, not the light.** Switch the plot to
+5. **A negative trace is the maths, not the light.** Switch the plot to
    **lock-in R**. If R is flat while the trace swings through zero, you are
    looking at a phase rotation, not a signal.
-5. **IN1 on LV/AC, IN2 on HV/DC.** On LV the laser's 3.3 V trigger clips to a
+6. **The laser power limit depends on which detector is fitted, and the written
+   one is stale.** The "keep it under 1 mW" rule throughout `docs/` is the
+   **PDA05CF2's** 0.96 mW saturation and nothing more. The APD now on IN1 is a
+   different part with a much lower saturation, and dynamic-range work has been
+   run at **+10 dBm at the laser** — the splitters, the AOM and the conversion
+   efficiency sit between the two numbers. **Know what is fitted and what
+   actually reaches it before turning the laser up** (Q39).
+7. **IN1 on LV/AC, IN2 on HV/DC.** On LV the laser's 3.3 V trigger clips to a
    flat line, which looks like "the laser is not triggering".
-6. **A narrower filter is not free.** It is quieter *and* often faster to
+8. **A narrower filter is not free.** It is quieter *and* often faster to
    settle, so nothing warns you — except the wavelength resolution, which is
    `speed / (2 × bandwidth)`. Map refuses anything past 100 pm.
 
@@ -207,29 +224,7 @@ mistake this project has ever made is `docs/11-mistakes.md`.
 
 ---
 
-## 8. Setting up a new machine
-
-Needs **Python ≥ 3.10** (the bench PC runs 3.13). Nothing else.
-
-```bash
-git clone https://github.com/kc-2026/rp-lockin-2tone.git C:\dev\rp-lockin-2tone
-cd C:\dev\rp-lockin-2tone
-python -m venv .venv
-.venv\Scripts\python -m pip install -e ".[dev]"
-.venv\Scripts\python -m pytest -q
-```
-
-Expect **450 passed, 2 skipped, 11 deselected**, about four minutes. On Linux
-use `.venv/bin/python`.
-
-**Do not put it in OneDrive, and do not run it from a copy on the Desktop.**
-The Desktop snapshot has no `.venv`; starting the GUI from it fails with
-`No module named 'numpy'`, which blames the interpreter when the problem is the
-folder.
-
----
-
-## 9. The other programs
+## 8. The other programs
 
 **`run_dr.cmd`** — detector gain study. Set the gain by hand, type what you set,
 press Run; it takes N sweeps and reduces them to peak, noise floor and dynamic
@@ -251,7 +246,7 @@ set RP_HOST=rp-fffe42.local
 
 ---
 
-## 10. Numbers worth knowing
+## 9. Numbers worth knowing
 
 | | |
 |---|---|
@@ -260,6 +255,13 @@ set RP_HOST=rp-fffe42.local
 | Output | 5000 Sa/s, 2250 Hz bandwidth, τ = 71 µs |
 | Noise floor | **σ = 3.57 µV** per point; **≥36 µV** for SNR 10 |
 | Wavelength resolution | 22 pm at 100 nm/s; **100 pm is a hard limit** |
+
+**Dynamic range, measured:** at **+10 dBm** out of the laser with the **APD on
+gain notch 2**, the board gives **~55 dB**, against **~60 dB** from the
+commercial lock-in under the same conditions. So this instrument is about
+**5 dB short** of the bench reference, not orders of magnitude — and the gap
+has not been chased yet. `run_dr.cmd` is the tool for finding the gain setting
+that closes it.
 
 **Avoid 504.868 kHz and its multiples.** The board's switching supply puts
 ~32 µV there — nine times the noise floor — and a lock-in cannot tell that
@@ -274,7 +276,7 @@ the board 2026-08-28. See `docs/03-frequency-plan.md`.
 
 ---
 
-## 11. If the bench says "fast-read helper NOT RUNNING"
+## 10. If the bench says "fast-read helper NOT RUNNING"
 
 Deep captures are read by a small program that runs **on the board**, not here.
 It lives in `/dev/shm`, which is RAM, so it is wiped by a reboot or a power
@@ -299,7 +301,7 @@ against SCPI's 5.7.
 
 ---
 
-## 12. Where everything is
+## 11. Where everything is
 
 ```
 docs/00-index.md   what every document is for — start here

@@ -561,6 +561,25 @@ floor. Near 1 the trace really is empty away from the peak; well above 1 there
 is real structure in the skirts, which for a sinc is the answer rather than a
 problem.
 
+### Dynamic range against the commercial lock-in
+
+Measured with the **laser output at +10 dBm** and the **APD on gain notch 2**:
+
+| | Dynamic range |
+|---|---:|
+| **This instrument (the board + software lock-in)** | **~55 dB** |
+| The commercial lock-in, same conditions | ~60 dB |
+
+**About 5 dB short of the bench reference**, not orders of magnitude. The gap
+has not been chased.
+
+Two things to hold on to when reading this. **Dynamic range is a ratio of two
+voltages in the same units**, `20 log10(peak / floor)`, so it is unaffected by
+every peak-to-peak-versus-amplitude question elsewhere in this document. And
+**+10 dBm is well above the 0 dBm ceiling written throughout these documents**
+-- that ceiling is the PDA05CF2's 0.96 mW saturation and nothing more, and the
+detector has changed. See Q39.
+
 ### The detector on IN1 is now an APD
 
 `scripts/dr_bench.py` was written to characterise its gain knob: N sweeps per

@@ -4309,3 +4309,59 @@ way; only the explanation depends on it.**
 3. **Read the detector's label** (Q38).
 4. The 0.400 V scope reading (Q36); the two labelling defects (Q37).
 5. Wire the second amplifier and AOM, then SFG -- one-tone control first.
+---
+
+## 2026-09-04 (evening) — Claude (Claude Code) — README reordered; the DR number recorded
+
+**Goal:** Kevin's corrections to the README, plus the first dynamic-range
+figure against the commercial lock-in.
+
+**Did:**
+
+* **README reordered.** Setup is section 1; starting the bench is section 2.
+  The old tabbed GUI is **gone from the README entirely** -- nobody uses it, so
+  the no-hardware check is now `pytest -q` rather than the Simulate path.
+  `bench_gui.py` still exists and is still recorded in `02-architecture.md`.
+* **Dropped "steps 5-7 are where it goes wrong"** and replaced the traps list's
+  opener with the thing that actually happens: **if the laser will not connect,
+  reapply its LAN settings on the front panel (Other > Communication > LAN).**
+  That has fixed it every time, and it now sits immediately above the rule that
+  a failed connect must not be retried -- the two belong together.
+* **The Sequences panel is now labelled NOT TRUSTED**, in the README and in
+  `08-the-bench.md`. It is not exercised against hardware, the SHG one has been
+  seen to fail part way through on a timing overrun, and every result this
+  project has came from driving the panels by hand. The previous wording
+  ("there is no second implementation") read as an endorsement.
+
+**Measured, recorded in `06-results.md` and `05-instruments.md`:**
+
+| | Dynamic range |
+|---|---:|
+| This instrument, board + software lock-in | **~55 dB** |
+| The commercial lock-in, same conditions | ~60 dB |
+
+At **+10 dBm out of the laser**, **APD gain notch 2**. About **5 dB short** of
+the bench reference, not orders of magnitude, and the gap has not been chased.
+Worth noting the number is unaffected by the peak-to-peak-versus-amplitude
+question that occupied 2026-09-03: dynamic range is a ratio of two voltages in
+the same units, so any common scale factor cancels.
+
+**Learned -- a stale safety number, found by writing the DR figure down:**
+
+**The "keep the laser under 1 mW / 0 dBm" rule is the PDA05CF2's number and
+only its number** -- that detector's output saturates at ~0.96 mW. It is
+enforced as `--max-dbm` in the P-series scripts, which were written when it was
+fitted. **The detector has changed**, so +10 dBm is not a violation of
+anything; the old limit simply was never about the APD.
+
+What is missing is the replacement, and that is **Q39**: the APD's own
+saturation together with the actual loss from laser output to detector face
+through the splitters, the AOM and the conversion efficiency. **Until both
+exist there is no written ceiling for the current bench.** The rule was
+softened rather than deleted in `05-instruments.md`, `09-whats-next.md` and the
+README, in each case naming which detector it belongs to.
+
+**Broke / still broken:** nothing. Documentation only. 450 passed, 2 skipped.
+
+**Next:** unchanged -- the SHG numbers, the power-scaling slope, the detector
+label (Q38), and now the optical ceiling (Q39).

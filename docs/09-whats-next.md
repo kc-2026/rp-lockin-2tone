@@ -96,7 +96,9 @@ curve, and has not been run in anger yet.
   detector itself. Ambient light will exceed that.
 - **No 50 Ω terminator** — there is a 50 Ω series resistor already and the
   board's inputs are 1 MΩ, so use the Hi-Z gain column.
-- **Keep the laser at or under 0 dBm (1 mW)**, as always.
+- **Know the optical ceiling for whatever detector is fitted.** The 0 dBm
+  (1 mW) figure quoted throughout this project is the **PDA05CF2's**
+  saturation, not a universal limit, and the detector has changed — see Q39.
 - **A point that clips is not a measurement.** A flattened peak understates
   dynamic range *and* manufactures harmonics, in exactly the place a 2·f1
   measurement looks.
@@ -149,7 +151,7 @@ Kevin's request.
 | | |
 |---|---|
 | **No attenuator** on the drive | Kevin tuned it by maximising diffracted light with an unmodulated carrier, which is correct because the drive is depth-1 AM. Three attenuator recommendations were made and all three withdrawn (Q12) |
-| **Laser under 1 mW** | Below the PDA05CF2's ~0.96 mW saturation, and so well below damage |
+| **Laser under 1 mW** — *for the PDA05CF2* | Below its ~0.96 mW saturation, and so well below damage. **This number does not transfer to the APD now fitted** (Q39) |
 | **Amplitude only**, not phase | Q6. A constant phase offset does not affect the deliverable |
 | **No sweep averaging** | Q13. Each sweep is its own measurement |
 | **No FPGA work** | ADR-0001 |
