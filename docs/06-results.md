@@ -476,15 +476,84 @@ carrier and asking how much of the modulation survives to the output:
 **-3 dB at 2077 Hz**, consistent with the 2059 Hz recorded above. Flat to
 1400 Hz and then gone: it falls 81 dB in the 400 Hz between 2000 and 2400.
 
-**A single-pole RC at the same corner would be only -3.5 dB down at the output
-Nyquist.** That is the entire reason for the 5x rule -- an RC has enormous
-out-of-band tails, so you must sample slowly enough that what folds is small.
-This filter has no tails to fold. Pinned by
+**Corrected 2026-09-04, after Kevin pointed out that the SR865A uses a
+Gaussian FIR rather than a simple RC.** The RC was the wrong foil, but the
+magnitude was right -- matched at the same -3 dB point, a **Gaussian is -3.8 dB
+at the output Nyquist and a 1-pole RC is -3.6 dB.** They are equally leaky
+there, because a Gaussian is deliberately the *gentlest* possible rolloff:
+
+| f | ours | Gaussian | 1-pole RC |
+|---:|---:|---:|---:|
+| 1000 Hz | -0.0 | -0.6 | -0.8 |
+| 2000 Hz | 0.0 | -2.4 | -2.6 |
+| 2200 Hz | -1.4 | -2.9 | -3.0 |
+| 2400 Hz | **-67** | -3.5 | -3.4 |
+| 2500 Hz | **-76** | -3.8 | -3.6 |
+
+*(all matched at -3 dB = 2223 Hz; ours from the built taps, the other two in
+closed form.)*
+
+**That is the reason for the 5x rule** -- a gently-rolling filter has tails
+past the output Nyquist, so you must sample slowly enough that what folds is
+small. Ours has no tails to fold. Pinned by
 `test_the_output_filter_is_dead_before_its_own_nyquist`, which requires at
-least 60 dB and measures 140.
+least 60 dB and measures 140 on the full chain.
+
+**A Gaussian needs a faster output rate, and that is affordable.** For 60 dB
+at its own Nyquist a Gaussian needs **8.9x its -3 dB point**, i.e. ~19.9 kSa/s
+for our 2223 Hz. **That is not a constraint here** -- `max_output_rate` allows
+**31250 Sa/s** at f1 = 915 kHz (the binding limit is reference cycles per
+integration time, not the converter), and 25000 Sa/s is an exact divisor of
+31.25 MS/s. At 25 kSa/s the bandwidth is not clamped either, so the noise is
+unchanged: **same bandwidth, same sigma, same resolution, and no ringing.**
+
+So the real shape of the choice is a trilemma. **Gaussian response, full
+bandwidth, 5000 rows -- pick two:**
+
+| | Bandwidth | Rows per 1 s sweep | Step overshoot |
+|---|---:|---:|---:|
+| **What we do** | 2223 Hz | **5000** | **+5.5%** |
+| Gaussian, same bandwidth | 2223 Hz | **25000** | 0% |
+| Gaussian, same row count | **560 Hz** | 5000 | 0% |
+
+The third row is 4x narrower -- 89 pm of wavelength resolution at 100 nm/s
+against our 22 pm -- in exchange for being 2x quieter.
+
+**The 5000 is R5, a deliverable specification, not a hardware limit.** Nothing
+stops a 25000-row sweep except that the brief asked for 4000-5000 points; the
+CSV would be 25000 rows instead of 5000, which is nothing. And note you cannot
+recover the 5000 afterwards by decimating: that needs its own anti-alias filter
+at 2500 Hz, which is exactly the sharp filter whose ringing you were trying to
+avoid.
 
 So the correct sampling criterion here is Nyquist on a band-limited signal:
 **>= 2 x bandwidth = 4500 Sa/s. We take 5000.** Correct, with 11% margin.
+
+### What the sharpness costs: 5-8% step overshoot
+
+Measured on the **full chain** by stepping the carrier amplitude:
+
+| Bandwidth | Step overshoot |
+|---:|---:|
+| **2250 Hz (operating point)** | **+5.5%** |
+| 2000 Hz | +7.3% |
+| 1500 Hz | +7.8% |
+| 1000 Hz | +6.5% |
+| 500 Hz | +7.8% |
+
+The first output samples after a step run 0.889, **1.055**, 0.961, 1.027,
+0.982, 1.011, 0.995, 1.001 -- a damped oscillation settling under 0.5% after
+about seven output samples (1.4 ms).
+
+**A Gaussian has no overshoot and no sidelobes, by construction.** That is
+what an instrument buys by choosing one. This is Gibbs ringing from a windowed
+sinc, and it is a property of the Kaiser design rather than of the accidental
+brickwall -- it does not get better at the gentler settings.
+
+**Why it matters here specifically.** This project's entire hazard class is
+artefacts that look like signal, and ~5% of peak height sitting immediately
+beside a sharp spectral feature is exactly that. A phase-matching peak with a
+5% shoulder 200 us to its right is not obviously wrong. **Q40.**
 
 ### 5000 samples per second are about 3800 independent values
 
@@ -538,6 +607,26 @@ To actually get the original resolution: bandwidth ~5300 Hz, output rate
 noise** since sigma scales as sqrt(ENBW). That is the 12500-point option Q10
 considered and Kevin declined. Both boxes are on the bench, so it is a
 two-field experiment whenever the trade is worth revisiting.
+
+### What the output filter actually is
+
+| | |
+|---|---|
+| Final stage | **Kaiser-windowed FIR, 79 taps at the output rate**, 60 dB stopband design |
+| Cutoff | `min(bandwidth, 0.9 x output Nyquist)` = 2250 Hz |
+| Transition width | **237.5 Hz** at the operating point |
+| Preceded by | six lax Kaiser decimation stages, `[5, 5, 5, 5, 5, 2]` = 6250, 90 dB stopband |
+| Settling | 113 output samples, 22.6 ms |
+
+**The transition width is not what the code intends.** `_design_filter_chain`
+computes `min(max(0.8 x cutoff, 0.10 x Nyquist), 0.95 x (Nyquist - cutoff))`,
+and its comment says the transition is "deliberately comparable to the cutoff
+... a lock-in output filter gains nothing from a brick wall ... close to the
+settling of a 2-pole analog filter of the same corner". The intended value is
+**1800 Hz**. At the default operating point the third term binds at
+**237.5 Hz**, because the bandwidth is pinned at 0.9 x Nyquist and there is
+only 250 Hz of room left. **We get a brickwall by accident, and only at the
+default.** At bandwidth 1000 Hz the intent wins and the transition is 800 Hz.
 
 ### The output lowpass, characterised
 

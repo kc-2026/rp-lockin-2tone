@@ -4524,3 +4524,74 @@ it is a two-field experiment whenever the trade is worth revisiting.
 **Broke / still broken:** nothing. 459 passed, 2 skipped.
 
 **Next:** unchanged — the SHG numbers, the power-scaling slope, Q36, Q38, Q39.
+
+---
+
+## 2026-09-04 (night, 2) — Claude (Claude Code) — the output filter, characterised properly
+
+**Goal:** Kevin's question about output sampling versus the filter, then two
+corrections from him that both landed.
+
+**A dedicated handoff for this exists: `docs/13-output-filter.md`.** It is
+self-contained and carries the question, every measurement, and the open
+choice. `scripts/filter_study.py` reproduces every number offline in ~2 min.
+
+**The three exchanges, because the corrections are the useful part:**
+
+1. *"Is 5000 points compatible with the 5x rule?"* — Yes; the rule manages a
+   gently-rolling filter's tails and ours is sharp.
+2. *"The SR865A does not use a simple RC, it uses a Gaussian FIR."* — Right,
+   and I had used an RC as the foil throughout. **The magnitude survived**
+   (matched at -3 dB, a Gaussian is -3.8 dB at the output Nyquist and an RC is
+   -3.6 -- indistinguishable, because a Gaussian is deliberately the gentlest
+   possible rolloff) **but the reasoning did not.** Naming the wrong exemplar
+   made the argument look like an appeal to obsolete practice instead of to
+   rolloff shape — and it hid the reciprocal question, which is what we pay for
+   the sharpness.
+3. *"Why is 19851 Sa/s a problem for the Gaussian? The ADC sample rate is much
+   faster."* — Also right. `max_output_rate` allows **31250 Sa/s** at f1, and
+   25000 divides 31.25 MS/s exactly. **I had silently promoted R5 — a line in
+   the original brief asking for 4000-5000 points — into a hardware limit**,
+   which made an available option look impossible.
+
+**What was measured (all offline, all in `filter_study.py`):**
+
+* **The filter is a Kaiser FIR**, 79 taps at the output rate, 60 dB stopband,
+  cutoff 2250 Hz, **transition width 237.5 Hz**, behind six lax decimation
+  stages [5,5,5,5,5,2]. Measured -3 dB **2223 Hz**.
+* **It is not what its own comment says.** The comment wants a transition
+  "comparable to the cutoff" (1800 Hz) and calls a brickwall pointless for a
+  lock-in; the `0.95 x (Nyquist - cutoff)` term binds at 237.5 Hz because the
+  bandwidth is pinned at 0.9 x Nyquist. **A brickwall by accident, and only at
+  the default** — at 1000 Hz the intent wins with an 800 Hz transition.
+* **Transfer function, full chain:** -1.3 dB at 2000 Hz, -6.8 at 2200,
+  **-82.8 at 2400, -140.2 at the 2500 Hz Nyquist.** Nothing folds.
+* **Step overshoot +5.5%** at the operating point (6.5-7.8% elsewhere), ringing
+  0.888, 1.055, 0.961, 1.027 ... settling under 0.5% after ~7 output samples.
+  **A Gaussian has none of this.** That is the real cost of the sharpness and
+  it had never been measured.
+* **~3790 independent values per second** of the 5000 taken (tau_int 1.32 over
+  all lags, cross-checked by block-mean variance at 1.25-1.29).
+* **Impulse FWHM 255 us** at 2250 Hz = 25.5 pm at 100 nm/s, i.e. 1.15 x
+  1/(2B) — the resolution formula stands.
+* **The original spec aliases:** tau = 30 us is a 5305 Hz corner, 5*tau spacing
+  puts Nyquist at 3333 Hz, ratio **1.59**.
+
+**The open choice, now Q40.** Gaussian response / full bandwidth / 5000 rows —
+pick two. A Gaussian at 2223 Hz needs ~20 kSa/s, which is affordable, so the
+real cost is **25000 rows instead of 5000** with noise, bandwidth and
+resolution all unchanged. Decimating 25000 back to 5000 does NOT recover it:
+that needs its own sharp anti-alias filter, which is the thing being avoided.
+**Nothing is broken** — every result so far used this filter and the overshoot
+is small and now known. It is a decision for Kevin, not a defect.
+
+**Three new tests in `tests/test_dsp.py`**, all checked against the old code:
+alias rejection at the output Nyquist (>= 60 dB required, 140 measured — an RC
+or a Gaussian would give ~3.7 and fail by 56 dB), the step overshoot pinned in
+BOTH directions (if it vanishes, someone made the filter gentler and the alias
+margin probably went with it), and the degrees-of-freedom count.
+
+**Broke / still broken:** nothing. **462 passed**, 11 deselected.
+
+**Next:** decide Q40 with Kevin. Otherwise unchanged — the SHG numbers, the
+power-scaling slope, Q36, Q38, Q39.

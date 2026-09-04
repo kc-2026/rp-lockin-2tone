@@ -144,13 +144,19 @@ shorten τ you must raise the point count.
 
 **This is also why the traditional "sample no faster than 1/(5τ)" rule does not
 apply here**, and the difference is measured (`06-results.md`). That rule
-exists because a single-pole RC output filter has enormous out-of-band tails:
-at the output Nyquist an RC is only ~3.5 dB down, so you must sample slowly to
-keep what folds small. This chain is a sharp multistage FIR, **−82 dB at
-2400 Hz and −140 dB at 2500 Hz**, so there is nothing to fold and plain
-Nyquist applies: ≥ 2 × bandwidth. The rule's other half is real and worth
-keeping — 5000 samples per second carry about **3800 independent values**, not
-5000.
+exists because a **gently-rolling** output filter has tails past the output
+Nyquist. Matched at the same −3 dB point, a **Gaussian FIR** — what an SR865A
+uses — is −3.8 dB there and a 1-pole RC is −3.6 dB; both fold, so both must be
+sampled slowly. This chain is a sharp Kaiser FIR, **−82 dB at 2400 Hz and
+−140 dB at 2500 Hz**, so there is nothing to fold and plain Nyquist applies:
+≥ 2 × bandwidth.
+
+**The trade runs the other way in the time domain**, and it is not free: ours
+overshoots a step by **5–8%** and rings for ~7 output samples, where a Gaussian
+has no overshoot and no sidelobes by construction. See Q40.
+
+The rule's other half is real and worth keeping — 5000 samples per second carry
+about **3800 independent values**, not 5000.
 
 The bench exposes the bandwidth explicitly (blank = derive it from the output
 rate) and reports the resulting τ, the noise gain, the settling cost and the

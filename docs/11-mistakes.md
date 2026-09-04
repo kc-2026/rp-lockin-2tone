@@ -316,7 +316,46 @@ All lags give **1.32**, and an independent route — the variance of block means
 against block size — agrees at 1.26–1.34. The right answer is **~3800**, which
 is also the one consistent with 2 × ENBW.
 
-### 2.11 An unexplained residual, still open
+### 2.11 Comparing against the wrong instrument
+
+**Made 2026-09-04.** Asked whether the output was sampled too finely for its
+own filter, I answered that the traditional 5x rule is "written for a
+single-pole RC", and used an RC as the foil throughout.
+
+**Kevin: the SR865A does not use a simple RC, it uses a Gaussian FIR.** So the
+comparison was against a filter nobody builds any more.
+
+**The magnitude survived, the reasoning did not.** Matched at the same -3 dB
+point, a Gaussian is **-3.8 dB** at the output Nyquist and an RC is **-3.6 dB**
+-- indistinguishable, because a Gaussian is deliberately the gentlest possible
+rolloff. So "gently-rolling filters have tails that fold, ours does not" is
+still right; "this is about RCs" was not. Naming the wrong exemplar made the
+argument look like an appeal to obsolete practice rather than to rolloff shape.
+
+**And it hid the reciprocal question**, which is the one worth asking: if a
+Gaussian has no overshoot and ours has 5-8%, what are we paying for the
+sharpness? Nobody would have asked that while the comparison was against an RC,
+which rings even less. That is now **Q40**.
+
+### 2.12 "That output rate is a problem" -- when it is a specification
+
+Same exchange, minutes later. Having computed that a Gaussian at our bandwidth
+needs ~19.9 kSa/s of output, I presented that as a reason it "cannot simply be
+dropped in".
+
+**Kevin: why is 19851 Sa/s a problem? The ADC sample rate is much faster.**
+
+Correct, and the framing was wrong. The converter runs at 31.25 MS/s;
+`max_output_rate` allows **31250 Sa/s** at f1 = 915 kHz, and 25000 divides
+31.25 MS/s exactly. The output rate was never the binding constraint. **The
+5000 is R5 -- a line in the original brief asking for 4000-5000 points -- and
+I had silently promoted a specification into a law of physics**, which made a
+perfectly available option look impossible.
+
+The general form, worth watching for: **when an option looks blocked, check
+whether the thing blocking it is hardware or a number somebody wrote down.**
+
+### 2.13 An unexplained residual, still open
 
 P2.4's line-fit residual is **43.2 µs rms** over 5001 edges, with a minimum
 pulse spacing of 178.125 µs against a 199.997 µs mean. Local spacing is clean,
@@ -324,7 +363,7 @@ so that suggests a step or discontinuity in the train rather than jitter. It
 may itself be an artefact of the units and edge-pairing defects in §1.7 — check
 the script before concluding anything about the laser.
 
-### 2.12 The missed-edge panic came from a synthetic signal
+### 2.14 The missed-edge panic came from a synthetic signal
 
 Every anxiety about losing trigger edges at decimation 8 came from a **20 ns**
 pattern that was an artefact of the ASG's 4 ns table step. A real santec trigger

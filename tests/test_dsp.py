@@ -250,6 +250,33 @@ def test_the_output_filter_is_dead_before_its_own_nyquist():
         f"noise above it will fold onto every trace")
 
 
+def test_the_output_filter_overshoots_a_step_by_a_known_amount():
+    """Ours is a Kaiser FIR, so it rings. A Gaussian FIR -- what an SR865A
+    uses -- would not, and that is the trade (Q40).
+
+    Pinned in BOTH directions on purpose. If it grows, the artefact beside
+    every sharp spectral feature grows with it; if it vanishes, somebody has
+    changed the filter to something gentler and the alias margin that lets us
+    sample at 2.2 x bandwidth has probably gone with it. Either way the change
+    should be deliberate, and this test makes it visible.
+
+    Measured on the full chain: +5.5% at the operating point, 6.5-7.8% at
+    other bandwidths, settling under 0.5% after ~7 output samples.
+    """
+    fs_out, secs = 5000.0, 0.3
+    t = np.arange(int(FS * secs)) / FS
+    sig = (t >= secs / 2).astype(float) * np.cos(2 * np.pi * F_REF * t)
+    r = demodulate(sig, FS, F_REF, output_rate=fs_out)
+    y = np.abs(r.X + 1j * r.Y)
+    settled = float(np.median(y[int(len(y) * 0.75):]))
+    assert settled > 0
+    after = y[int(np.argmax(r.t >= secs / 2)):] / settled
+    overshoot = after.max() - 1.0
+    assert 0.02 < overshoot < 0.12, (
+        f"step overshoot {overshoot:.1%}; expected ~5.5%. Below 2% means the "
+        f"filter got gentler -- check the alias rejection at Nyquist too.")
+
+
 def test_the_output_carries_about_two_bandwidths_of_independent_values():
     """5000 samples per second are not 5000 independent measurements, and the
     difference is the whole content of the traditional 5*tau rule.

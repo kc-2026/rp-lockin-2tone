@@ -42,6 +42,7 @@ and every way it has gone wrong.
 | **10-open-questions.md** | What is undecided, what was decided, and who decided it | Something looks unresolved |
 | **11-mistakes.md** | **Every wrong turn this project has taken**, what each one looked like, and what settled it | Before you conclude anything. Several of these were made twice |
 | **12-test-campaigns.md** | Phase 0 (offline) and Phase 1 (loopback), complete, including the two steps that failed and the two that were skipped | Checking what was tested, how, and what it found |
+| **13-output-filter.md** | **The output filter in full** — what it is, its measured transfer function, its 5% ringing, and why 5000 points is not too many for a 2250 Hz bandwidth. Self-contained | Asking anything about bandwidth, output rate, resolution or the traditional 5x sampling rule |
 
 Also at the repository root:
 
@@ -67,6 +68,8 @@ Also at the repository root:
 | Whether a given test passed | `12-test-campaigns.md` — every H step, with its result |
 | Why a decision was made | `10-open-questions.md`, then the session-log entry it names |
 | Whether this mistake has been made before | `11-mistakes.md`. It usually has |
+| Whether 5000 points is too many for the filter | `13-output-filter.md` — no, and the measurements are there |
+| Why the trace rings ~5% beside a sharp feature | `13-output-filter.md` §5, and Q40 |
 
 ## Four conventions worth knowing
 
