@@ -26,7 +26,7 @@ Double-click **`run_bench.cmd`**, or from a terminal in the project folder:
 
 That is the whole thing. If it opens, you are ready.
 
-**If it does not open**, the machine has not been set up — go to §7.
+**If it does not open**, the machine has not been set up — go to §8.
 
 ---
 
@@ -50,29 +50,20 @@ path. For real work use `run_bench.cmd`.)
 
 ## 3. Before you plug into real hardware
 
-Five things, in this order:
+Four things:
 
-1. **Board on**, and start its SCPI server: web interface → Development → SCPI
-   server → **Run**. It does **not** auto-start after a reboot. If it is
+1. **Board on**, and its SCPI server running: web interface → Development →
+   SCPI server → **Run**. It does **not** auto-start after a reboot. If it is
    already running, leave it alone.
-2. **Start the deep-capture helper** (see below). It lives in RAM and **dies
-   on every board reboot**, so this is a routine, not a one-off.
-3. **Laser on**, and check it answers at `10.101.0.197:5000`. If not, reapply
-   the LAN settings on its front panel: Other → Communication → LAN.
-4. **Check the laser's power setpoint.** It has been found at 12 dBm ≈ 15.8 mW.
+2. **Laser on**, and answering at `10.101.0.197:5000`. If not, reapply the LAN
+   settings on its front panel: Other → Communication → LAN.
+3. **Check the laser's power setpoint.** It has been found at 12 dBm ≈ 15.8 mW.
    **Keep it at or under 0 dBm (1 mW).**
-5. **Connect the AOM before applying RF.** Never power the amplifier into an
+4. **Connect the AOM before applying RF.** Never power the amplifier into an
    open port.
 
-The helper:
-
-```bash
-scp scripts/rp_fastread.py root@rp-fffe42.local:/dev/shm/
-ssh -n root@rp-fffe42.local "nohup setsid python3 /dev/shm/rp_fastread.py > /dev/shm/rp_fastread.log 2>&1 < /dev/null &"
-```
-
-The bench prints `fast-read helper running` or `NOT RUNNING` when you press
-Connect. If NOT RUNNING, read `/dev/shm/rp_fastread.log`.
+Then press Connect on the Board panel. It prints `fast-read helper running`,
+and normally that is the end of it — see §11 if it ever says NOT RUNNING.
 
 ---
 
@@ -283,7 +274,32 @@ the board 2026-08-28. See `docs/03-frequency-plan.md`.
 
 ---
 
-## 11. Where everything is
+## 11. If the bench says "fast-read helper NOT RUNNING"
+
+Deep captures are read by a small program that runs **on the board**, not here.
+It lives in `/dev/shm`, which is RAM, so it is wiped by a reboot or a power
+cycle — and nothing redeploys it automatically. In practice the board stays up
+for weeks and you will rarely see this.
+
+When you do, from the project folder:
+
+```bash
+scp scripts/rp_fastread.py root@rp-fffe42.local:/dev/shm/
+ssh -n root@rp-fffe42.local "nohup setsid python3 /dev/shm/rp_fastread.py > /dev/shm/rp_fastread.log 2>&1 < /dev/null &"
+```
+
+Then press Connect again. `setsid` and the redirects matter — without them the
+program dies the moment the SSH session closes, which looks exactly like never
+having started it. If it still says NOT RUNNING, read
+`/dev/shm/rp_fastread.log`.
+
+Everything else — configuring, arming, triggering, the laser — goes over SCPI
+and does not need this. Only the bulk read does, and it is worth it: 87 MB/s
+against SCPI's 5.7.
+
+---
+
+## 12. Where everything is
 
 ```
 docs/00-index.md   what every document is for — start here

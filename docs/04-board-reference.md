@@ -309,7 +309,14 @@ reaches an input at all.
 
 `scripts/rp_fastread.py` **runs ON THE BOARD** — the one deliberate exception
 to "everything runs on the control PC". It lives in `/dev/shm`, which is RAM,
-so **it disappears on every reboot** and these two commands are the routine:
+so **a reboot or power cycle wipes it**.
+
+**Nothing redeploys it automatically.** There is no `scp`, `ssh` or
+`subprocess` call anywhere in this repository; `bench.py` and `_bench.py` only
+*report* whether it is up, and `acquire_deep_fast` raises `ConnectionError` if
+it is not. So this is a recovery step after a reboot, **not a per-session
+routine** — the board stays up for weeks at a time and in practice it is rarely
+needed:
 
 ```bash
 scp scripts/rp_fastread.py root@rp-fffe42.local:/dev/shm/

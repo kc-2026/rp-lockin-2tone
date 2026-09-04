@@ -427,10 +427,12 @@ export RP_HOST=rp-fffe42.local     # mDNS; the link-local IP changes on reconnec
 - **One persistent connection, always.** Opening a connection per command
   wedges the server, and the symptom is multi-second latency that looks
   exactly like a failing cable, not an error.
-- For deep captures, start the helper first. It lives in `/dev/shm`, which is
-  RAM, so **it is gone after every reboot** and these two commands are the
-  routine. Key-based SSH was installed on the control PC on 2026-08-12, so this
-  needs no password and no human:
+- Deep captures need the board-side helper. It lives in `/dev/shm`, which is
+  RAM, so **a reboot wipes it** — but nothing in this repo redeploys it, and
+  the board stays up for weeks, so this is a recovery step and **not something
+  to do at the start of a session.** Check `fast_read_available()` first and
+  only run these if it is False. Key-based SSH is installed, so no password
+  and no human are needed:
 
   ```bash
   scp scripts/rp_fastread.py root@rp-fffe42.local:/dev/shm/
