@@ -4433,3 +4433,94 @@ there instead.
 **Broke / still broken:** nothing. **Next:** unchanged — the SHG numbers, the
 power-scaling slope, Q36 (0.400 V), Q38 (detector label), Q39 (optical
 ceiling).
+
+---
+
+## 2026-09-04 (late) — Claude (Claude Code) — is the output sampled too finely for its own filter?
+
+**Goal:** Kevin: "Traditionally, the output of a lock-in amplifier must be
+sampled ~5x more coarsely than the filter. The ~5000 points here comes from a
+30 us time constant and a 0.8 s sweep, which gives 5600 points. Is the current
+approach compatible with this? Something seems off since a sub-second sweep can
+be rendered into 5000 points despite having a 2250 Hz bandwidth."
+
+**Answer: compatible, and the 5x rule does not apply — but the ORIGINAL
+specification is the thing that does not hold together.** All measured offline
+this session.
+
+**1. The output filter is very nearly a brickwall.** Measured by
+amplitude-modulating the carrier and asking what survives to the output:
+
+| f_mod | 2250 Hz setting |
+|---:|---:|
+| 200–1400 Hz | +0.4 dB |
+| 2000 Hz | −0.9 dB |
+| 2200 Hz | −6.4 dB |
+| **2400 Hz** | **−82 dB** |
+| **2500 Hz (Nyquist)** | **−140 dB** |
+
+−3 dB at **2077 Hz**, agreeing with the 2059 Hz already recorded. **A
+single-pole RC at the same corner would be only ~3.5 dB down at the output
+Nyquist** — and coping with that is the entire reason the 5x rule exists. It is
+a rule for an RC's out-of-band tails. This chain has none, so plain Nyquist
+applies: ≥ 2 × bandwidth = 4500 Sa/s, and we take 5000.
+
+**2. The other half of the rule is real, and now quantified.** 5000 samples per
+second are **not** 5000 measurements. Autocorrelation at the operating point
+runs +0.21, −0.15, +0.10, −0.06; integrated over all lags τ_int = **1.32**,
+confirmed independently by the variance of block means (1.26–1.34). So a 1 s
+trace carries **~3800 independent values**, which is 0.84 × 2B — close to the
+information-theoretic maximum for that bandwidth, and the same ratio at
+1000 Hz. **Describe a sweep as "5000 points, ~3800 degrees of freedom".**
+
+**3. The original 5600-point spec aliases, and that is the real answer to
+"something seems off".** τ = 30 µs is an RC corner of **5305 Hz**; sampling at
+5τ = 6667 Sa/s puts Nyquist at **3333 Hz**. The corner sits **1.59× above
+Nyquist**, and an RC is still only 1.5 dB down there. The traditional recipe
+tolerates that because an RC lock-in output is normally read by eye or by a
+slow meter. Q10 chose the other trade on 2026-08-12: same point count, no
+folding, 3.7 dB quieter.
+
+**4. What it cost, stated plainly.** Time resolution. The 30 µs intent implies
+~94 µs features; the delivered impulse is **255 µs FWHM**, i.e. ~9 pm intended
+against **25.5 pm delivered** at 100 nm/s. Getting the original resolution
+needs bandwidth ~5300 Hz, output ≥ 11.8 kSa/s, ~11800 points, and **+4.0 dB of
+noise** — the 12500-point option Q10 declined. Both boxes are on the bench, so
+it is a two-field experiment whenever the trade is worth revisiting.
+
+**Two mistakes I made getting there, both now in `11-mistakes.md` (2.9, 2.10):**
+
+* **The first impulse measurement said 450 µs**, twice the formula, and I was
+  ready to report that `resolution = speed/(2B)` — and therefore the 100 pm
+  limit in ADR-0004 — was 2× optimistic. **It was my ruler.** At 2250 Hz the
+  impulse is ~255 µs and the output steps every 200 µs, so the feature spans
+  barely two samples and its FWHM quantises to about half its own value.
+  Holding the bandwidth and raising the output rate to 50 kSa/s converges to
+  255 µs. The tell was there: `FWHM × bandwidth` came out 0.58 at 250–1000 Hz
+  and 1.01 at 2250 Hz, and a shape constant that is constant everywhere except
+  at the operating point is an artefact of the operating point.
+* **The first independence estimate summed only the POSITIVE autocorrelation
+  terms**, giving τ_int 1.75 and "3080 independent points". This chain's
+  autocorrelation alternates in sign, so dropping the negative lags counts the
+  correlation and ignores the anticorrelation cancelling it.
+
+**Did:**
+
+* `docs/06-results.md` gained the measured transfer function, the independence
+  numbers, the original spec's inconsistency, and a note on how to measure a
+  FWHM without measuring your own grid.
+* `docs/02-architecture.md` ADR-0003 explains why the 5x rule does not bind.
+* **Two new tests in `tests/test_dsp.py`.**
+  `test_the_output_filter_is_dead_before_its_own_nyquist` requires ≥ 60 dB of
+  rejection at the output Nyquist and measures 140 — an RC would give 3.5 and
+  fail by 56 dB. This is the property that makes 5000 Sa/s legitimate, and
+  nothing had been pinning it: the existing test only checked that the
+  REQUESTED bandwidth was clamped, not that the filter built from it actually
+  rejects anything. A future redesign to a gentle rolloff would have passed the
+  old test while folding noise onto every trace.
+  `test_the_output_carries_about_two_bandwidths_of_independent_values` pins the
+  degrees-of-freedom count and the all-lags method.
+
+**Broke / still broken:** nothing. 459 passed, 2 skipped.
+
+**Next:** unchanged — the SHG numbers, the power-scaling slope, Q36, Q38, Q39.

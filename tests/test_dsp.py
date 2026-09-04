@@ -213,6 +213,67 @@ def test_output_rate_clamps_bandwidth_to_avoid_folding():
     assert r.fs_out == 5000.0
 
 
+def test_the_output_filter_is_dead_before_its_own_nyquist():
+    """The clamp above only checks the REQUESTED bandwidth. This checks the
+    filter it actually builds, which is the load-bearing property.
+
+    Sampling the lock-in output at 5000 Sa/s is only legitimate because
+    nothing survives to fold: measured on the real chain, the response is
+    -0.9 dB at 2000 Hz, -6.4 dB at 2200 Hz and -82 dB at 2400 Hz. If a future
+    redesign made the rolloff gentle -- a single-pole output filter is the
+    classic lock-in choice, and it would look perfectly reasonable -- noise
+    from above 2500 Hz would fold onto the trace, silently, and the traces
+    would still look fine.
+
+    This is also what makes the traditional "sample no faster than 1/(5*tau)"
+    rule inapplicable here: that rule exists to cope with an RC's enormous
+    out-of-band tails. See docs/06-results.md.
+    """
+    fs_out, secs = 5000.0, 0.3
+
+    def survives(f_mod):
+        t = np.arange(int(FS * secs)) / FS
+        sig = (1.0 + 0.5 * np.cos(2 * np.pi * f_mod * t)) * \
+            np.cos(2 * np.pi * F_REF * t)
+        r = demodulate(sig, FS, F_REF, output_rate=fs_out)
+        y = np.abs(r.X + 1j * r.Y)
+        y = y - y.mean()
+        w = np.exp(-2j * np.pi * f_mod * r.t)
+        return 2.0 * np.abs(np.sum(y * w)) / len(y)
+
+    passband = survives(200.0)
+    assert passband > 0, "no signal in the passband at all"
+    at_nyquist = survives(fs_out / 2.0)
+    rejection_db = 20 * np.log10(at_nyquist / passband)
+    assert rejection_db < -60.0, (
+        f"only {-rejection_db:.0f} dB of rejection at the output Nyquist; "
+        f"noise above it will fold onto every trace")
+
+
+def test_the_output_carries_about_two_bandwidths_of_independent_values():
+    """5000 samples per second are not 5000 independent measurements, and the
+    difference is the whole content of the traditional 5*tau rule.
+
+    For a band-limited output the honest count is ~2 x bandwidth per second.
+    Measured here via the integrated autocorrelation time -- ALL lags, not
+    just the positive ones: this chain's autocorrelation alternates in sign
+    (+0.21, -0.15, +0.10, ...) and summing only the positive terms overstates
+    the correlation badly.
+    """
+    rng = np.random.default_rng(1)
+    fs_out = 5000.0
+    x = demodulate(rng.standard_normal(int(FS * 3.0)), FS, F_REF,
+                   output_rate=fs_out).X
+    x = (x - x.mean()) / x.std()
+    ac = [float(np.mean(x[:len(x) - k] * x[k:])) for k in range(1, 40)]
+    tau_int = 1.0 + 2.0 * sum(ac)
+    independent = fs_out / tau_int
+    # ~3800/s measured, against 2 x 2250 = 4500 nominal and 2 x 2087 (the
+    # measured ENBW) = 4174. Loose bounds: this pins the ORDER, not a digit.
+    assert 3000 < independent < 4600, independent
+    assert tau_int > 1.05, "samples cannot be perfectly independent"
+
+
 def test_non_integer_output_rate_rejected():
     with pytest.raises(ValueError, match="not an integer"):
         demodulate(_tone(1.0, 0.0, ms=10), FS, F_REF, output_rate=3333.0)

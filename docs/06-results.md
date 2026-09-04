@@ -451,6 +451,94 @@ What would finish it is the **power-scaling slope at the peak** — the artefact
 goes as P^1 and SHG as P^2, the laser's -5 to +13 dBm range is an 18 dB lever
 arm, and it works with the crystal left in. Not yet measured.
 
+### The output lowpass is very nearly a brickwall -- measured 2026-09-04
+
+Raised by Kevin: the traditional lock-in rule is that the output must be
+sampled about **5x more coarsely than the filter** -- a sample no more often
+than every 5*tau, so each reading is settled and independent. At 2250 Hz the
+RC-equivalent tau is 70.7 us, 5*tau is 354 us, and we sample every **200 us**.
+By the letter of the rule we are 1.8x too fast.
+
+**The rule does not apply, and this is why.** It is written for a single-pole
+RC output filter. Measured on the real chain by amplitude-modulating the
+carrier and asking how much of the modulation survives to the output:
+
+| Modulation | Response, 2250 Hz setting |
+|---:|---:|
+| 200 Hz | +0.4 dB |
+| 1400 Hz | +0.4 dB |
+| 1800 Hz | +0.1 dB |
+| 2000 Hz | -0.9 dB |
+| 2200 Hz | -6.4 dB |
+| **2400 Hz** | **-82 dB** |
+| **2500 Hz (output Nyquist)** | **-140 dB** |
+
+**-3 dB at 2077 Hz**, consistent with the 2059 Hz recorded above. Flat to
+1400 Hz and then gone: it falls 81 dB in the 400 Hz between 2000 and 2400.
+
+**A single-pole RC at the same corner would be only -3.5 dB down at the output
+Nyquist.** That is the entire reason for the 5x rule -- an RC has enormous
+out-of-band tails, so you must sample slowly enough that what folds is small.
+This filter has no tails to fold. Pinned by
+`test_the_output_filter_is_dead_before_its_own_nyquist`, which requires at
+least 60 dB and measures 140.
+
+So the correct sampling criterion here is Nyquist on a band-limited signal:
+**>= 2 x bandwidth = 4500 Sa/s. We take 5000.** Correct, with 11% margin.
+
+### 5000 samples per second are about 3800 independent values
+
+The other half of the traditional rule is real and worth stating: **N samples
+are not N measurements.** Measured on pure noise at the operating point, by
+two independent routes that agree:
+
+| | |
+|---|---|
+| Autocorrelation, lags 1-5 | **+0.21, -0.15, +0.10, -0.06, +0.04** |
+| Integrated autocorrelation time, all lags | **1.32 samples** |
+| Same, from the variance of block means | 1.26-1.34 |
+| **Independent values per second** | **~3800** of the 5000 taken |
+| 2 x nominal bandwidth | 4500 |
+| 2 x measured ENBW (2087 Hz) | 4174 |
+
+**~0.84 x 2B, and the same ratio at 1000 Hz** (1691 against 2000), so the
+trace carries close to the information-theoretic maximum for its bandwidth.
+The right way to describe a sweep is therefore **"5000 points, ~3800 degrees
+of freedom"**, not 5000 independent measurements.
+
+Note the autocorrelation **alternates in sign** -- that is the sinc structure
+of a sharp filter. Summing only the positive terms gives tau_int = 1.75 and
+"3080 independent points", which is wrong; see `11-mistakes.md`.
+
+### The original 5600-point specification does not hold together
+
+Worth recording, because it is where the 5000 came from. The original brief
+assumed **tau = 30 us over a 0.8 s sweep**, sampled at 5*tau, giving ~5300
+points. Checked:
+
+| | |
+|---|---:|
+| tau = 30 us | RC corner **5305 Hz** |
+| 5*tau spacing | 6667 Sa/s, Nyquist **3333 Hz** |
+| corner / Nyquist | **1.59** |
+
+**The corner sits above the Nyquist frequency, so the recipe aliases** -- and
+an RC is still only 1.5 dB down at 3333 Hz, so a lot folds. The traditional
+recipe tolerates that because an RC lock-in output is usually read by eye or
+by a slow meter, where nobody looks at the folded noise.
+
+**What the current design changed, and what it cost.** Same point count, no
+aliasing, 3.7 dB less noise (Q10, 2026-08-12) -- and **coarser time
+resolution**: the 30 us intent implies ~94 us features, against **255 us
+measured** here. In wavelength at 100 nm/s that is ~9 pm intended against
+**25.5 pm delivered**.
+
+To actually get the original resolution: bandwidth ~5300 Hz, output rate
+>= 11.8 kSa/s (the 0.9 clamp), ~11800 points per second, and **+4.0 dB of
+noise** since sigma scales as sqrt(ENBW). That is the 12500-point option Q10
+considered and Kevin declined. Both boxes are on the bench, so it is a
+two-field experiment whenever the trade is worth revisiting.
+
 ### The output lowpass, characterised
 
 The bench now exposes the lock-in's output filter directly (bandwidth, or the
@@ -485,11 +573,19 @@ resolution_nm = speed_nm_s / (2 x bandwidth)
 
 | Bandwidth | Speed | Predicted | Measured impulse FWHM |
 |---:|---:|---:|---:|
-| 2250 Hz | 100 nm/s | 22 pm | **20 pm** |
-| 1000 Hz | 100 nm/s | 50 pm | **60 pm** |
+| 2250 Hz | 100 nm/s | 22 pm | **20 pm**, and 25.5 pm re-measured 2026-09-04 |
+| 1000 Hz | 100 nm/s | 50 pm | **60 pm**, and 48 pm re-measured |
 
 Good to about 20%, which is what the 100 pm structural limit is written
 against (ADR-0004).
+
+**Measure this with the OUTPUT OVERSAMPLED, or you will measure your own
+grid.** At 2250 Hz the impulse is ~255 us wide and the output steps every
+200 us, so a FWHM read off the trace itself is quantised to about half its own
+value: doing that gives **450 us**, twice the truth, and reads as the formula
+being 2x optimistic. Hold the bandwidth and raise the output rate to 50 kSa/s
+-- same filter, finer ruler -- and it converges to 255 us. See
+`11-mistakes.md`.
 
 ### Q23, mostly settled: the counts-per-volt constant is right
 

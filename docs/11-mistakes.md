@@ -283,7 +283,40 @@ issues at most four GETs per capture and the board helper streams the reply
 over one connection. **The measured times stand; the cause of the shortfall
 against the 87 MB/s single-read figure is still unknown.**
 
-### 2.9 An unexplained residual, still open
+### 2.9 Measuring a feature on a grid too coarse to hold it
+
+**Made 2026-09-04, while checking whether the output was sampled too finely
+for its own filter.** The chain's impulse response was measured directly off a
+trace at the operating point and came out **450 µs FWHM**, against 222 µs from
+`1/(2B)`. That reads as the resolution formula — and therefore the 100 pm limit
+in ADR-0004 — being **2× optimistic**, which would have been a real finding.
+
+**It was the measurement, not the filter.** At 2250 Hz the impulse is ~255 µs
+wide and the output steps every 200 µs, so the feature spans barely two samples
+and its FWHM is quantised to roughly half its own value. Holding the bandwidth
+and raising the output rate to 50 kSa/s — the same filter, a finer ruler —
+converges to **255 µs**, i.e. 1.15 × 1/(2B). The formula was fine.
+
+**The tell was there and nearly missed:** the same measurement across
+bandwidths gave `FWHM × bandwidth` = 0.58 at 250–1000 Hz but 1.01 at 2250 Hz.
+A shape constant that is constant everywhere *except* at the operating point is
+an artefact of the operating point's grid, not physics.
+
+### 2.10 Summing only the positive autocorrelation terms
+
+Same session. The number of independent values in a 5000-point trace was
+estimated from the integrated autocorrelation time, computed as
+`1 + 2·Σρₖ` over the terms that were **positive and above 0.02** — giving
+τ_int = 1.75 and "3080 independent points per second".
+
+This chain's autocorrelation **alternates in sign** (+0.21, −0.15, +0.10,
+−0.06), because that is what a sharp lowpass does. Dropping the negative terms
+counts the correlation and ignores the anticorrelation that partly cancels it.
+All lags give **1.32**, and an independent route — the variance of block means
+against block size — agrees at 1.26–1.34. The right answer is **~3800**, which
+is also the one consistent with 2 × ENBW.
+
+### 2.11 An unexplained residual, still open
 
 P2.4's line-fit residual is **43.2 µs rms** over 5001 edges, with a minimum
 pulse spacing of 178.125 µs against a 199.997 µs mean. Local spacing is clean,
@@ -291,7 +324,7 @@ so that suggests a step or discontinuity in the train rather than jitter. It
 may itself be an artefact of the units and edge-pairing defects in §1.7 — check
 the script before concluding anything about the laser.
 
-### 2.10 The missed-edge panic came from a synthetic signal
+### 2.12 The missed-edge panic came from a synthetic signal
 
 Every anxiety about losing trigger edges at decimation 8 came from a **20 ns**
 pattern that was an artefact of the ASG's 4 ns table step. A real santec trigger
