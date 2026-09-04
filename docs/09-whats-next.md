@@ -1,11 +1,11 @@
-# What's next
+# 09 — What's next
 
 **Updated 2026-09-01.** This replaces "Phase 2 plan", which recorded the output
 of a planning gate that closed on 2026-08-28. The gate is history; what matters
 now is the order of the remaining work.
 
 For the bench as it stands, `08-the-bench.md`. For every number,
-`05-results.md`.
+`06-results.md`.
 
 ---
 
@@ -156,6 +156,24 @@ Kevin's request.
 | **Q31** — the generator's frequency-error magnitude | Worked around by planning one modulation cycle. Two cheap board-only checks would close it: read `SOUR1:FREQ:FIX?` back, and measure the phase slope of a long loopback capture |
 | **Q32** — why `:WAV` stops a sweep | Worked around by waiting between Configure and Start |
 | **Q35** — two divergent laser drivers | `TSL775` for the bench, `SantecTSL` for the pipeline. Should converge |
+| **Q36** — is the output's peak-to-peak factor linear? | One 0.400 V scope reading closes it |
+| **Q37** — two known labelling defects | `swing()` is peak-to-peak next to zero-to-peak trace numbers, and `run_demodulate`/`run_map` hardcode `gain="LV"` |
+| **Q38** — what detector is on IN1, exactly? | An APD410-series unit replaced the PDA05CF2. The model suffix decides InGaAs versus silicon, which decides the SHG plan |
 
 Also open and not tracked as a question: **the bench can be launched twice**,
 and one instrument with one connection slot deserves a single-instance lock.
+
+## Small, cheap, and worth doing before the crystal arrives
+
+- **Finish the detector gain study.** `scripts/dr_bench.py` is written and
+  tested and no results are recorded. The output is a dynamic-range-against-gain
+  curve, and the knee of that curve is the setting to run SHG at.
+- **Measure the slope-1 baseline** of the AOM's own second harmonic against
+  laser power, with no crystal in the path. That is half the SHG control, and
+  it can be done today.
+- **Read `SOUR1:FREQ:FIX?` back** and measure the phase slope of a long
+  loopback capture. Two board-only checks that would close Q31.
+- **Re-measure the switching supply's fundamental** after the board has been
+  warm and loaded for some hours, and confirm it has not walked toward
+  495.9 kHz — where its second harmonic would land exactly on a 991.821 kHz
+  lock-in and read as a strong, clean, steady signal.

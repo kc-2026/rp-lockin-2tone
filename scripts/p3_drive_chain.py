@@ -20,7 +20,7 @@ BEFORE YOU RUN IT
   about -4 dBm against a +10 dBm rating -- 14 dB of margin -- and the board's
   14 dB rolloff at 80 MHz means it cannot get closer. Three separate attenuator
   recommendations were made on this project and all three were withdrawn. See
-  docs/04-hardware-reference.md.
+  docs/04-board-reference.md.
 * Steps are run ONE AT A TIME with --step, so nothing is energised as a side
   effect of something else.
 

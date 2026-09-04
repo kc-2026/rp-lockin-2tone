@@ -1,10 +1,10 @@
-# Measured results
+# 06 — Measured results
 
 **What this is:** every number this project has actually measured, in one place.
 Anything here was measured against the board, not calculated or assumed.
 
-**How the instrument behaves** is in `04-hardware-reference.md`. **How each
-number was obtained**, step by step, is in `07-phase1-loopback.md`.
+**How the instrument behaves** is in `04-board-reference.md`. **How each
+number was obtained**, step by step, is in `12-test-campaigns.md`.
 
 **One recorded explanation here has been withdrawn.** H6.2 attributed the
 125 MB read's 6.7–11.2 s to "~125 round trips at ~50 ms each". Reading the code
@@ -104,13 +104,12 @@ Not included, and both can only make it worse: the real noise environment (U6)
 and any pickup on a longer detector cable. Loopback added 50% just from a 30 cm
 lead.
 
-**One caveat on every absolute voltage here (Q23).** These convert counts to
-volts using 1817.7 counts/V, confirmed to 0.04% by H3.5. But loopback measures
-generator × cable × ADC as a single number and cannot say whether the 0.882
-factor sits in the generator or the ADC. The photodetector drives the input
-directly, with no generator involved, so **if the factor is in the generator,
-every absolute figure here is 12.7% too high.** Ratios and dB figures are
-unaffected.
+**Q23 is now settled for these figures, and they stand as written.** They
+convert counts to volts using 1817.7 counts/V, confirmed to 0.04% by H3.5.
+Loopback alone could not say whether the 0.882 factor sat in the generator or
+the ADC, which would have made every absolute figure here 12.7% too high. **A
+scope on OUT1 on 2026-09-03 put it on the OUTPUT side** — see "Q23, mostly
+settled" below. Ratios and dB figures were never affected either way.
 
 ---
 
@@ -147,13 +146,12 @@ quantisation is ~18% of the variance and not negligible.
 2250 Hz nominal. Predicting σ from the −3 dB bandwidth gives 2.45 µV against
 3.57 measured, **46% low, in the dangerous direction.**
 
-**One caveat on the absolute scale (Q23).** These convert counts to volts using
-1817.7 counts/V, independently confirmed to 0.04% by H3.5. But loopback measures
-generator × cable × ADC as one number and cannot say whether the 0.882 factor
-sits in the generator or the ADC. In the real experiment the photodetector drives
-the input directly, with no generator involved, so **if the factor is in the
-generator then every figure above is 12.7% too high.** Settling it needs a
-calibrated source or meter, which is not a loopback measurement.
+**The absolute scale is confirmed (Q23).** These convert counts to volts using
+1817.7 counts/V, independently confirmed to 0.04% by H3.5. Loopback measures
+generator × cable × ADC as one number and could not say where the 0.882 factor
+lived; a scope on OUT1 on 2026-09-03 put it on the **output** side, so the
+input scaling is right and **the figures above stand.** See "Q23, mostly
+settled" below.
 
 **σ scales as √ENBW to ~1.5%**, confirmed on real data across a factor of 8 in
 bandwidth (H3.4). Scale by √ENBW, not √(nominal bandwidth), which is only good
@@ -422,3 +420,137 @@ average away; the projection is unbiased and can go negative.
 | 17.9 uV | 5 | 18.21 uV | +0.10 sigma | 17.85 uV |
 | 107 uV | 30 | 107.16 uV | +0.02 sigma | 107.10 uV |
 
+
+---
+
+## Measured 2026-09-03
+
+### The output lowpass, characterised
+
+The bench now exposes the lock-in's output filter directly (bandwidth, or the
+equivalent time constant). Measured against the real filter chain at the
+default 5000 Sa/s / 2250 Hz operating point:
+
+| | |
+|---|---|
+| −3 dB point | **2059 Hz** against 2250 nominal |
+| Equivalent noise bandwidth | **2087 Hz** |
+| **Noise gain** | **4184–4763 Hz — about 1.9x the nominal** |
+| Settling | **113 output points**, 22.6 ms |
+
+**The noise gain is the number to scale sigma by**, not the nominal bandwidth
+and not the −3 dB point. Using 2250 Hz puts sigma **46% low**.
+
+**Settling is NOT monotonic in bandwidth.** Measured across the range it runs
+113 → 48 → 70 → 98 output points, because the transition width is floored at
+0.10 × output Nyquist. A test that assumed monotonicity was wrong and was
+rewritten to assert the readout reports the real number.
+
+The decimation to 5000 Sa/s from 31.25 MS/s is a factor of **6250**, done as
+`[5, 5, 5, 5, 5, 2]` — six cheap wide-transition stages, then one sharp 79-tap
+filter at the output rate. That factorisation is what makes a 2 kHz corner at
+31 MS/s affordable at all; a single FIR would need ~2.4 M taps.
+
+### Wavelength resolution after the filter
+
+```
+resolution_nm = speed_nm_s / (2 x bandwidth)
+```
+
+| Bandwidth | Speed | Predicted | Measured impulse FWHM |
+|---:|---:|---:|---:|
+| 2250 Hz | 100 nm/s | 22 pm | **20 pm** |
+| 1000 Hz | 100 nm/s | 50 pm | **60 pm** |
+
+Good to about 20%, which is what the 100 pm structural limit is written
+against (ADR-0004).
+
+### Q23, mostly settled: the counts-per-volt constant is right
+
+**Measured with a scope on OUT1.** A commanded **0.200 V** read **70 mV RMS**
+on the scope, which is **99 mV amplitude**. The bench's lock-in trace read
+**100 mV** on the same signal — **1% agreement**.
+
+Two things follow.
+
+**1. `ADC_COUNTS_PER_V_LV = 1817.7` is correct, and the 0.882 factor lives on
+the OUTPUT side.** That is the half of Q23 that mattered: the photodetector
+drives the input directly with no generator involved, so the absolute noise
+figures above stand as written rather than being 12.7% high.
+
+**2. `SOUR<n>:VOLT X` commands X volts PEAK-TO-PEAK.** A commanded 0.2 V is a
+0.1 V amplitude. **Drive levels have therefore been 6 dB more conservative than
+the arithmetic in the attenuator discussion assumed**, which only widens an
+already comfortable margin.
+
+**Still outstanding:** a **0.400 V** scope reading, to confirm the factor is a
+constant 0.5 and linear rather than something more interesting. Until that
+exists, treat the peak-to-peak finding as measured at one point.
+
+### What the lock-in graphs display
+
+**Zero-to-peak amplitude, in volts at IN1, of the component at f_ref.** Not
+RMS, not peak-to-peak.
+
+Confirmed three ways: the normalisation in `dsp.py`
+(`z = 2.0 * (block - dc) * exp(...)`); a pure-software test putting 10, 134 and
+400 mV in and getting 10.000, 134.000 and 400.000 mV out; and the loopback
+agreement against the scope above.
+
+**One label is still wrong and known to be:** the capture log line reports
+`swing()`, which is peak-to-peak, alongside trace numbers that are zero-to-peak,
+with no units named. And `run_demodulate` / `run_map` both hardcode `gain="LV"`
+rather than reading the front end that is actually set.
+
+### Dynamic range is 20 log10, and it is unit-free
+
+`_bench_ops.trace_dynamic_range` reports
+
+```python
+20.0 * np.log10(peak / floor)
+```
+
+**20, not 10** — correct for a *voltage* ratio, and equal to 10·log10 of the
+corresponding power ratio.
+
+Because `peak` and `floor` are in the same units — zero-to-peak amplitude volts
+— **the ratio is dimensionless and every convention question above cancels out
+of it.** A factor of 2 in both changes nothing. Every dynamic-range number
+reported so far stands regardless.
+
+**The floor is the scatter of one wavelength ACROSS repeats**, not the off-peak
+rms:
+
+```python
+per_point   = np.nanstd(stack, axis=0, ddof=1)     # M sweeps x N wavelengths
+floor       = sqrt(mean(per_point ** 2))
+```
+
+That needs no idea where the signal is and no assumption that it ever stops,
+which matters because **a sinc's tails never do**. Verified against known
+truth in the offline suite: **3.55 µV recovered from a true 3.57**.
+
+`tail_ratio` comes along free — off-peak rms divided by the across-sweep
+floor. Near 1 the trace really is empty away from the peak; well above 1 there
+is real structure in the skirts, which for a sinc is the answer rather than a
+problem.
+
+### The detector on IN1 is now an APD
+
+`scripts/dr_bench.py` was written to characterise its gain knob: N sweeps per
+gain setting, averaged, reduced to peak / floor / dynamic range, with a
+waterfall, a DR-against-gain curve and a peak-and-floor curve. **No results are
+recorded here yet.**
+
+Two things it reports that are not optional:
+
+- **`clip`** — raw ADC samples at the rail, summed over the sweeps. Anything
+  but 0 and the point is **not a measurement**: a flattened peak understates DR
+  *and* invents harmonics, in exactly the place an SHG measurement looks.
+- A point whose **peak stopped rising while the gain went up** is already
+  compressing, even if nothing railed.
+
+The laser power is set at every point by default, because constant optical
+power is what makes the gain comparison mean anything. If the laser drifts
+between points the peak moves for reasons that have nothing to do with the
+detector.

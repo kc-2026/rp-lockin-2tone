@@ -1,4 +1,4 @@
-# The bench — what is connected, and how a measurement is made
+# 08 — The bench: what is connected, and how a measurement is made
 
 **Rewritten 2026-09-01.** This document used to be "Phase 2 — hardware in the
 loop": a proposed order of connection (P1–P6) and a list of risks loopback
@@ -7,14 +7,14 @@ its job and is retired — see the appendix. What follows describes the bench as
 it actually is and how it is actually driven.
 
 For what to do next, `09-whats-next.md`. For every measured number,
-`05-results.md`.
+`06-results.md`.
 
 ---
 
 ## 1. What is on the bench
 
 ```
-  TSL-775 --> AOM (1550AOM-1) --> 90/10 --> 50/50 --> PDA05CF2 --> IN1
+  TSL-775 --> AOM (1550AOM-1) --> 90/10 --> 50/50 --> detector --> IN1
      |              ^
      |              | 80 MHz AM at f1
      |        ZHL-1-2W+ <-- OUT1
@@ -28,7 +28,8 @@ For what to do next, `09-whats-next.md`. For every measured number,
 | TSL-775 sweeping laser | working **over LAN only**. USB is a hardware fault inside the instrument |
 | ZHL-1-2W+ #1 | connected, driven by OUT1 |
 | 1550AOM-1 #1 | connected |
-| PDA05CF2 (InGaAs, 800–1700 nm) | connected to IN1 |
+| **Thorlabs APD410-series detector** | **connected to IN1** as of 2026-09-03, on its minimum gain. `scripts/dr_bench.py` exists to characterise the gain knob. **Read the label for the model suffix** — it decides whether it is InGaAs or silicon (Q38) |
+| PDA05CF2 (InGaAs, 800–1700 nm) | the original detector; specifications and all the noise predictions in `06-results.md` are its |
 | ZHL-1-2W+ #2, AOM #2 | exist, **not wired**. Needed for SFG |
 | PDA100A2 (Si, 320–1100 nm) | **on the bench, not installed.** For the SHG product near 775 nm |
 | TSL-770 stepping laser | **never contacted.** Parked at Kevin's request |
@@ -50,7 +51,11 @@ one does one thing, and a sweep is those things in order.
    `CH2_PE`. The bench tells you it is armed and waiting.
 5. **Sweep > Start.** The capture fires on the laser's first trigger pulse.
 6. **Demodulate** — press the **f1** button rather than typing a frequency,
-   then Demodulate capture.
+   then Demodulate capture. Leave **bandwidth** blank to derive it from the
+   output rate (0.9 x output Nyquist); the readout underneath shows the
+   resulting tau, the noise gain, the settling cost and **the wavelength
+   resolution at the current sweep speed**. **max** sets the highest output
+   rate this reference frequency supports.
 7. **Sweep > Read log**, then **Map**. The wavelength axis is built from the
    measured trigger edges.
 8. **Export** — CSV plus the raw `.npz`.
@@ -110,6 +115,22 @@ prefer one modulation cycle (Q31).
 **8. The fast-read helper lives in `/dev/shm`**, which is RAM, so it disappears
 on every board reboot. `RedPitaya.fast_read_available()` says whether it is up.
 
+**9. The mouse wheel used to change the sweep mode.** `ttk.Combobox` has a
+class binding that steps its value on the wheel, and the rail scrolls on the
+wheel too — so any box the pointer crossed changed silently. `wheel_safe()`
+wraps every combobox now and a test asserts the pass covers all of them. Worth
+knowing because it is exactly how a run once ended up in step mode.
+
+**10. Narrowing the bandwidth is not free, even though everything says it is.**
+It is quieter *and* often settles faster, so nothing pushes back — except the
+wavelength resolution, which is `speed / (2 x bandwidth)`. **Map refuses
+anything past 100 pm.** An over-filtered trace is smooth, plausible, correctly
+mapped and simply not resolving what it claims to.
+
+**11. Settling is not monotonic in bandwidth** — 113 → 48 → 70 → 98 points
+across the range, because the transition width is floored. Read the number the
+panel reports; do not model it.
+
 ---
 
 ## 4. What is proven
@@ -149,7 +170,7 @@ That question is answered. The order was followed for the laser link and the
 trigger; the drive chain went in with the AOM already connected, so P3 as
 written never ran; and the bench GUI replaced the step-by-step scripts as the
 working tool. **Ten of the twelve U-risks are closed by measurement** — the
-detail is in `05-results.md` and the closures are dated in
+detail is in `06-results.md` and the closures are dated in
 `10-open-questions.md`.
 
 **The two that remain are the two the crystal will settle:**

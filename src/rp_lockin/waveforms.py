@@ -335,7 +335,7 @@ def make_cw_table(carrier: float, cycles: int = 80,
 
     It is also the configuration Kevin tuned the drive level in: maximise the
     diffracted light with an unmodulated carrier, then modulate it. See
-    `04-hardware-reference.md`, and do not add an attenuator.
+    `04-board-reference.md`, and do not add an attenuator.
 
     **Average RF power is about 3 dB higher than depth-1 AM at the same
     amplitude**, because the AM envelope spends half its time below full. That
@@ -456,7 +456,7 @@ def make_am_waveform(carrier: float, modulation: float,
     fs/N. The real ASG does not: it always traverses a fixed 16384-entry table.
     Loading the 50-sample buffer this returns and playing it at 5 MHz produces
     NO OUTPUT AT ALL -- measured, min -2 max +4 counts. See the module header
-    and docs/04-hardware-reference.md.
+    and docs/04-board-reference.md.
 
     The buffer must contain a whole number of cycles of BOTH the carrier and
     the modulation, so the minimal length is the smallest N with N*carrier/fs

@@ -1,5 +1,5 @@
 """
-Loopback tests against a real board. See docs/04-test-plan.md for the wiring
+Loopback tests against a real board. See docs/12-test-campaigns.md for the wiring
 and the phase ordering -- run them in order, do not skip ahead.
 
 STATUS: written from documentation, NEVER EXECUTED. Expect SCPI command
@@ -48,7 +48,7 @@ def test_h1_reports_expected_board(rp):
 
 def test_h1_dma_region_size(rp):
     """Report the reserved region. A 1 s sweep at decimation 2 needs 512 MB;
-    the factory default is 32 MB. See docs/05-hardware-notes.md."""
+    the factory default is 32 MB. See docs/04-board-reference.md."""
     size = int(rp.query("ACQ:AXI:SIZE?"))
     mb = size / 1024 ** 2
     print(f"\nreserved DMA region: {mb:.0f} MB")
@@ -138,7 +138,7 @@ def test_h3_emulated_sweep_matches_ground_truth(rp):
     fs_gen = rp.base_rate
     samples, truth = synthesise_dut_output(
         PLAN.difference, duration, fs=fs_gen, amplitude=0.5)
-    pytest.skip("requires Deep Memory Generation; see docs/04-test-plan.md H5")
+    pytest.skip("requires Deep Memory Generation; see docs/12-test-campaigns.md H5")
 
 
 # ==========================================================================
@@ -152,7 +152,7 @@ def test_h4_trigger_edges_recovered(rp):
     The intervals carry the time-to-wavelength calibration, so an error here
     propagates into every wavelength assignment.
     """
-    pytest.skip("requires Deep Memory Generation; see docs/04-test-plan.md H5")
+    pytest.skip("requires Deep Memory Generation; see docs/12-test-campaigns.md H5")
 
 
 # ==========================================================================
@@ -162,7 +162,7 @@ def test_h4_trigger_edges_recovered(rp):
 @pytest.mark.slow
 def test_h6_full_length_sweep_capture(rp):
     """1 s at decimation 2 on two channels = 477 MB. Requires the device-tree
-    change in docs/05-hardware-notes.md."""
+    change in docs/04-board-reference.md."""
     size_mb = int(rp.query("ACQ:AXI:SIZE?")) / 1024 ** 2
     if size_mb < 512:
         pytest.skip(f"needs a 512 MB region, board has {size_mb:.0f} MB")

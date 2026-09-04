@@ -4,7 +4,7 @@ SCPI transport for the Red Pitaya.
 *** VERIFIED AGAINST HARDWARE. Phase 1 complete, 2026-08-14. ***
 
 Every method here has been executed against a SIGNALlab 250-12 running OS 2.00
-build 37. See docs/07-phase1-loopback.md (task H1) and docs/05-results.md.
+build 37. See docs/12-test-campaigns.md (task H1) and docs/06-results.md.
 
 Two exceptions, both documented at their definitions:
   - acquire_deep_2ch: the SCPI read returns garbage. Superseded by

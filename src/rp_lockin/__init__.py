@@ -23,7 +23,7 @@ pipeline    THE DELIVERABLE PATH: one captured sweep in, amplitude against
             wavelength out. Joins demodulate, the trigger edges, the laser log
             and the mapping. Checked against the emulator's known truth.
 hardware    SCPI transport. VERIFIED against the board, Phase 1 complete
-            2026-08-14. See docs/07-phase1-loopback.md.
+            2026-08-14. See docs/12-test-campaigns.md.
 
 Start here
 ----------

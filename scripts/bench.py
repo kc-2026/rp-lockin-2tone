@@ -1676,7 +1676,7 @@ class Bench:
         if bw <= 0:
             return self.v_tau.set("")
         tau = 1.0 / (2.0 * math.pi * bw)
-        # ~1.9x the nominal bandwidth, measured. See 05-results.md; using the
+        # ~1.9x the nominal bandwidth, measured. See 06-results.md; using the
         # bandwidth itself puts sigma 46% low, in the optimistic direction.
         noise_gain = 1.88 * bw
         try:

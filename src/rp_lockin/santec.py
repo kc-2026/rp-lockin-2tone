@@ -15,7 +15,15 @@ stopped moving, so a wrong command string raises on timeout instead of passing
 silently. Do not copy that pattern to a command whose effect cannot be read
 back; there the silence would win.
 
-**NOT YET RUN AGAINST A LASER.** That is P1 in `08-phase2-hardware.md`.
+**NOT THE DRIVER THE BENCH USES, and effectively unexercised.**
+`scripts/tsl775.py` (`TSL775`) is what has hardware hours on it and what
+`_bench_ops` talks to; this class is what `pipeline.py` assumes. Their
+surfaces DIFFER -- `SantecTSL` has setters `TSL775` does not -- and writing
+against the wrong one shipped a bug on 2026-09-01 that the suite could not
+catch, because the test fake had been modelled on the wrong one too. A
+one-off `over_lan` session on 2026-09-01 did answer `*IDN?` and the
+`:READout:*` queries correctly, so the transport is sound. See Q35; they
+should converge.
 
 Two transports, because the laser offers GPIB, USB and LAN and which one is
 convenient is a bench question, not a design one:

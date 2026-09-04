@@ -17,7 +17,7 @@ Template:
 
 ---
 
-## HANDOFF / STATUS — updated 2026-09-01, read this first
+## HANDOFF / STATUS — updated 2026-09-04, read this first
 
 **There are no blockers.** The board works, the laser works, and the instrument
 runs end to end: drive on, capture armed, laser sweeps, 5001 trigger pulses on
@@ -35,7 +35,18 @@ optical amplitude-against-wavelength traces exist.
 
 **The working tool is `scripts/bench.py`.** Panel GUI, independent operations
 that compose into a sweep. `bench_gui.py` is the older tabbed one, kept for its
-Simulate path. Both go through `scripts/_bench_ops.py`.
+Simulate path. `scripts/dr_bench.py` is a separate detector-gain study. All
+three go through `scripts/_bench_ops.py`. **`README.md` documents every
+control**, panel by panel.
+
+**The detector on IN1 changed on 2026-09-03** — it is now a Thorlabs
+APD410-series unit on minimum gain, not the PDA05CF2 that most of the
+documentation still describes. **Read its label for the model suffix** (Q38):
+APD410A is InGaAs, APD410A2 is silicon, and that decides the SHG plan.
+
+**Three small things are open and cheap** — Q36 (one 0.400 V scope reading to
+confirm the output's peak-to-peak factor is linear), Q37 (two known labelling
+defects on the bench), Q38 (confirm the detector model).
 
 ### The four rules this bench runs by
 
@@ -59,15 +70,23 @@ Simulate path. Both go through `scripts/_bench_ops.py`.
 
 | Want | Go to |
 |---|---|
+| **How to run the bench** | **`README.md`** |
 | What each doc is for | `docs/00-index.md` |
 | What is connected, and what is not | `docs/08-the-bench.md` section 1 |
 | What to do next | `docs/09-whats-next.md` |
 | The deliverable path, in code | `src/rp_lockin/pipeline.py` |
-| Any measured number | `docs/05-results.md` |
-| Board and instrument traps | `docs/04-hardware-reference.md` |
+| Any measured number | `docs/06-results.md` |
+| Board traps | `docs/04-board-reference.md` |
+| **The lasers, detectors and RF chain** | **`docs/05-instruments.md`** |
+| **Every mistake this project has made** | **`docs/11-mistakes.md`** |
 | Anything undecided | `docs/10-open-questions.md` |
 | Agent ground rules and traps | `CLAUDE.md` |
-| **The TSL-775 laser, in full** | **`TSL775_HANDOFF.md`** |
+
+**`TSL775_HANDOFF.md` was never in this repository.** Four documents pointed at
+it and it did not exist — it lived in `Desktop\TSL-775 Test\`. Everything it
+held about the laser is now in **`docs/05-instruments.md` section 1**. Older
+log entries below still name it; they are history and keep the names they were
+written with.
 
 ---
 
@@ -138,8 +157,8 @@ on the board. It still lives in `/dev/shm`, so **it disappears on every reboot**
 
 **The laser has never answered over USB because USB is a hardware fault inside
 the instrument.** Not a driver problem, and not fixable on the host. Established
-2026-08-21 in a separate effort whose notes live in `TSL775_HANDOFF.md`, and
-confirmed on the new PC 2026-08-28.
+2026-08-21 in a separate effort; its notes are now folded into
+`docs/05-instruments.md` section 1. Confirmed on the new PC 2026-08-28.
 
 The evidence, so nobody re-debugs it: the FT232H enumerates correctly and the
 PC→chip half is provably healthy, but the instrument never replies — across 9
@@ -165,9 +184,9 @@ connection and hold it** — roughly one reconnect in four dies with
 **The LAN interface drops out entirely, and this recurs.** Symptom: no ping, no
 TCP. Recovery is to reapply the LAN settings on the front panel (Other →
 Communication → LAN). It happened again on 2026-08-28 and the front panel fixed
-it in one go. Run the §3.3 triage in `TSL775_HANDOFF.md` each time — but note
-its "no ARP entry" indicator is **vacuous in this topology**, because the laser
-is off-subnet and routed, so it would never have an ARP entry either way.
+it in one go. Note the inherited triage's "no ARP entry" indicator is
+**vacuous in this topology**, because the laser is off-subnet and routed, so it
+would never have an ARP entry either way. See `docs/05-instruments.md` §1.2.
 
 `santec.py` **already has a LAN transport** (`SantecTSL.over_lan`), and
 `p2_trigger_check.py` already takes `--lan`. Anything implying the driver is
@@ -189,7 +208,7 @@ serial-only is wrong.
 | Trigger interval | **200.0 µs → 5000 Hz** |
 
 **The electrical trigger has now been observed** — the item
-`TSL775_HANDOFF.md` §7.3 called its top priority — and it holds up:
+the original bring-up notes called its top priority — and it holds up:
 
 | P2 check | Result |
 |---|---|
@@ -3995,3 +4014,216 @@ older log entries, which keep the names they were written with.
 * A single-instance lock on the bench: one instrument with one connection slot
   and a GUI that can be launched twice is a trap still open.
 
+---
+
+## 2026-09-02 — Claude (Claude Code) — laser wavelength control, CW drive, a dB view
+
+**Goal:** whatever the bench threw up while Kevin used it.
+
+**Did:**
+
+* **The Laser panel shows and sets the wavelength**, and `Set power` and
+  `Set wavelength` were merged into one **Configure** button that applies both
+  and reads both back. Nothing sets one without caring about the other, and a
+  half-configured laser is a state worth not having.
+* **Explained the Read back / LD / shutter distinction on the panel**, and put
+  a confirm dialog on **LD ON**.
+* **Moved the Laser panel above the Drive panels.** Light comes before RF in
+  the order anybody actually works.
+* **`modulation = 0` now gives an unmodulated carrier (CW), not a refusal.**
+  Not a DC level — the AOM needs its 80 MHz and the amplifier is AC-coupled, so
+  DC would do nothing. CW costs about 3 dB more average RF power than depth-1
+  AM. The Demodulate panel's f1 button refuses on a CW drive, with a message
+  saying why, because there is no modulation for a lock-in to sit on.
+* **A dB view on the plot**, with a dB-range box. The interesting part of a
+  sinc is the part a linear axis flattens onto the zero line.
+
+**Learned:**
+
+* **A negative amplitude with a flat R is a phase rotation, not a signal.**
+  Kevin's trace went through zero and drew a smooth arch; R was flat at 134 mV
+  throughout. That is `A*cos(phase)` with the phase winding across the record,
+  and it comes from `amplitude()` projecting onto one fixed phase.
+* **The SHG warning about the AOM's own 2*f1 was removed** at Kevin's request
+  once the SHG path moved to a silicon detector — silicon cannot see 1550 nm,
+  so the confound never arrives and the warning was noise.
+
+**Next:** the detector gain study Kevin asked for.
+
+---
+
+## 2026-09-03 — Claude (Claude Code) — a gain-study bench, the output filter exposed, and what the voltages mean
+
+**Goal:** Kevin's dynamic-range study of the APD's gain knob; then the bench
+questions that came out of it.
+
+**Did:**
+
+* **`scripts/dr_bench.py`** — a separate GUI for the gain study, **explicitly
+  not part of the working bench** at Kevin's request. Per gain setting: N
+  sweeps, averaged, reduced to peak / floor / dynamic range. Waterfall by gain,
+  DR-against-gain, peak-and-floor-against-gain. dB toggle, y axis labelled in
+  detector gain, laser power set and recorded per point, CSV and npz export,
+  scrollable rail. It shares every instrument operation through `_bench_ops`.
+* **`ops.trace_dynamic_range`**, and the definition that makes it honest: the
+  **floor is the scatter of one wavelength ACROSS repeats**, not the off-peak
+  rms. That needs no idea where the signal is and no assumption that it ever
+  stops — which matters, because a sinc's tails never do. Verified against
+  known truth offline: **3.55 µV recovered from a true 3.57.**
+* **Exposed the lock-in's output lowpass** on the bench: a bandwidth box (blank
+  = derive it from the output rate) with a readout giving τ, the noise gain,
+  the settling cost and the wavelength resolution.
+* **A `max` button for the output rate**, and the reason it is not free.
+* **A structural limit: the post-filter wavelength resolution may never exceed
+  100 pm.** `run_map` refuses, rather than warning, because the failure is
+  invisible — an over-filtered trace is smooth, plausible, correctly mapped and
+  simply not resolving what it claims to. Nothing else in the bench pushes back
+  on narrowing the bandwidth; it is quieter *and* often settles faster.
+* **`carrier = 0` now gives a plain sine** at the modulation frequency — one
+  cycle in the table played at the frequency itself, so any whole number of
+  hertz is exact. The mirror of `modulation = 0`.
+* **The Sweep panel says whose points those are** — the laser's logged points
+  versus the lock-in's own output points, which are different numbers and were
+  being confused.
+* **`wheel_safe()` on every combobox.** `ttk.Combobox` has a class binding that
+  steps its value on the wheel, and the rail scrolls on the wheel too, so any
+  box the pointer crossed changed silently. That is how a run once ended up in
+  step mode. A test asserts the pass covers all of them.
+* Suite grew from 339 to **450 passed, 2 skipped**.
+
+**Learned — the measurement questions, and their answers:**
+
+* **The lock-in graphs display ZERO-TO-PEAK amplitude in volts at IN1**, of the
+  component at f_ref. Not RMS, not peak-to-peak. Confirmed three ways: the
+  normalisation in `dsp.py`, a pure-software test (10 / 134 / 400 mV in, the
+  same out to three decimals), and loopback against a scope.
+* **`SOUR:VOLT X` commands X volts PEAK-TO-PEAK.** A commanded 0.200 V read
+  70 mV RMS = 99 mV amplitude on the scope while the trace read 100 mV — 1%
+  agreement. **That closes the half of Q23 that mattered**: 1817.7 counts/V is
+  right and the 0.882 factor lives on the output side, so every absolute noise
+  figure in `06-results.md` stands. It also means every drive level has been
+  6 dB more conservative than the attenuator arithmetic assumed.
+* **Dynamic range is `20 log10(peak / floor)`**, correct for a voltage ratio.
+  Both terms are zero-to-peak amplitude volts, so the ratio is unit-free and
+  the whole Vpp-versus-amplitude question cancels out of every DR number.
+* **The output filter, measured:** −3 dB at 2059 Hz, ENBW 2087 Hz, **noise gain
+  4184–4763 Hz — about 1.9× the nominal 2250.** Decimation 6250 = [5,5,5,5,5,2].
+* **Settling is NOT monotonic in bandwidth** — 113 → 48 → 70 → 98 output points
+  across the range, because the transition width is floored at 0.10 × output
+  Nyquist. A test that assumed monotonicity was wrong and was rewritten.
+* **Wavelength resolution is `speed / (2 × bandwidth)`**, good to ~20% against
+  the real chain: 20 pm measured against 22 predicted at 2250 Hz / 100 nm/s.
+
+**Broke / still broken:**
+
+* **`dr_bench` shipped dead on arrival**, twice over in one commit: the worker
+  threads were constructed but never `.start()`ed, *and* `_pump` treated
+  `(kind, payload)` result tuples as `Job` objects, so the first result killed
+  the pump. Symptom: "connect shows nothing on log". Four regression tests fail
+  against the previous commit.
+* **`wait_until_at_start` blocked forever**, on my assumption that Configure
+  returns the laser to its start wavelength. It does not — it sat at 1600 nm
+  for 60 s. It now reports arrival rather than raising, and both callers warn
+  and continue.
+* **I reported two `bench.py` PIDs as currently holding the laser.** They had
+  exited six minutes earlier and `netstat` showed no connection. Retracted when
+  Kevin pointed out there were no bench windows open. **Check the timestamp on
+  evidence before describing it in the present tense.**
+* **I proposed a 50 Ω / Hi-Z divider** to explain a factor of two. Kevin
+  corrected it: the lock-in's input impedance is 10 MΩ. Withdrawn.
+* **Q36 is open:** the peak-to-peak finding is a single-point measurement. One
+  0.400 V scope reading — 140 mV RMS — would confirm the factor is a constant
+  0.5 and linear.
+* **Q37 is open:** the capture log line reports `swing()`, which is
+  peak-to-peak, next to zero-to-peak trace numbers with no units named; and
+  `run_demodulate` / `run_map` both hardcode `gain="LV"` rather than reading the
+  front end that is set.
+
+**Next:** actually run the gain study; the 0.400 V check; then SHG.
+
+---
+
+## 2026-09-04 — Claude (Claude Code) — documentation deep clean and a usage-first README
+
+**Goal:** Kevin: "do a deep deep clean of the docs ... restructure them into
+more sensible docs that fully show our process of getting to the current
+product ... don't lose any information, track down all mistakes and errors we
+made before and note those as well ... rewrite the readme so that it serves as
+instructions for the next person to USE the board."
+
+**Did — the restructure.** Twelve documents, no information dropped:
+
+| Was | Is |
+|---|---|
+| `04-hardware-reference.md` (38 KB, board + every instrument + chronology) | split into **`04-board-reference.md`** (the Red Pitaya only) and **`05-instruments.md`** (lasers, detectors, amplifier, AOM) |
+| `05-results.md` | `06-results.md` |
+| `11-pipeline.md` | `07-pipeline.md` |
+| `06-phase0-offline.md` + `07-phase1-loopback.md` | merged into **`12-test-campaigns.md`** |
+| — | **`11-mistakes.md`, new** |
+
+* **`11-mistakes.md` is the point of the exercise.** Every wrong turn this
+  project has taken, in six groups: wrong models of the hardware, measurement
+  errors, silent software bugs, changes made and reverted, process mistakes,
+  and the habits that came out of them. Each entry says what was believed,
+  **what it looked like**, and what settled it. Roughly fifty entries, drawn
+  out of the session log, the old docs' correction notices, and the git
+  history.
+* **`README.md` rewritten as a usage document.** Install, what to check before
+  connecting anything, how to start the bench, **a panel-by-panel reference for
+  every control**, a ten-step recipe for taking one sweep, the six things that
+  will bite you, how to run it with no hardware at all, and the key numbers.
+  It no longer duplicates the status report.
+* **`03-frequency-plan.md` rewritten.** It led with a correction banner over a
+  second half that still stated the superseded grid as fact — a document that
+  contradicted itself. Now the measured model is the document and both wrong
+  models are an appendix.
+* **`02-architecture.md` rewritten**, with the verified/unverified table moved
+  in and ADR-0004 (the resolution limit) and ADR-0005 (one CSV per sweep) added.
+* `00-index.md`, `01-overview.md`, `08`, `09`, `10` and `CLAUDE.md` swept for
+  stale claims and repointed.
+
+**Learned — the documentation errors found while doing it:**
+
+1. **`TSL775_HANDOFF.md` did not exist.** Four documents — `CLAUDE.md`,
+   `00-index.md`, `10-open-questions.md` and the HANDOFF block — pointed at it,
+   and `full_sweep_test.py` cites its section 6 for the sweep ordering. It
+   lived on the Desktop and was never vendored alongside the driver. Its
+   content is now in `05-instruments.md` section 1.
+2. **`04-hardware-reference.md` still stated the superseded 15258.789 Hz grid
+   as a hardware fact**, in direct contradiction of `03-frequency-plan.md`,
+   which had been corrected. Anyone reading 04 first would have believed it.
+3. **`02-architecture.md` said the largest single risk is the Santec serial
+   link, "which does not exist yet".** It exists and works.
+4. **`04`'s Safety section said the laser, amplifiers, AOMs and photodetector
+   are not connected.** They are. `CLAUDE.md` said the same in one place while
+   `08-the-bench.md` said the opposite.
+5. **`CLAUDE.md` claimed "no RF has ever left this board"** and told the reader
+   to follow the P-series order, which had been retired three days earlier.
+6. **The detector is an APD410-series unit and no document said so** — all of
+   them describe the PDA05CF2. Raised as **Q38**, and the model suffix matters:
+   APD410A is InGaAs, APD410A2 is silicon, and that decides whether it can see
+   the 775 nm SHG product at all. **Read the label.**
+7. **Q24 was recorded as still live in `CLAUDE.md`** after being answered on the
+   bench on 2026-08-28.
+8. **The session log had no entries for 2026-09-02 or 2026-09-03**, though
+   fourteen commits landed. Written above from the commits and the transcript.
+
+**Also:** `06-results.md` gained the 2026-09-03 measurements (the output
+filter, the wavelength resolution, Q23, what the graphs display, how DR is
+computed, the APD); `07-pipeline.md` gained the measured-edge-times section and
+the resolution refusal; **Q36, Q37 and Q38 raised.**
+
+**Broke / still broken:** nothing. Documentation only — no source file was
+touched, and the offline suite passes unchanged at 450.
+
+**Next:**
+
+* The 0.400 V scope reading (**Q36**), then update `constants.py`, close Q23
+  properly and correct the drive-level arithmetic.
+* Fix the two labelling defects (**Q37**) — `swing()` versus the trace units,
+  and the hardcoded `gain="LV"` in `run_demodulate` / `run_map`.
+* Confirm the detector model (**Q38**) and put its real specification into
+  `05-instruments.md` section 2.1.
+* Run the gain study. `dr_bench.py` is written and tested and has produced no
+  results yet.
+* A single-instance lock on the bench.

@@ -43,7 +43,7 @@ DMA_REGION_BASE = 0x20000000
 # capture from H6.2 onwards ran that way.
 #
 # Not to be confused with MAX_DMA_MB below. Enlarging the region to 512 MB to
-# buy decimation 2 was CONSIDERED AND REJECTED (docs/04-hardware-reference.md):
+# buy decimation 2 was CONSIDERED AND REJECTED (docs/04-board-reference.md):
 # the objection that motivated it -- needing to recover trigger intervals
 # exactly -- vanished when the wavelength axis moved to the laser's own log.
 # Do not start the move. `describe_capture_plan` used to recommend it by

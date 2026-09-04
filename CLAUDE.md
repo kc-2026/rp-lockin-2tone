@@ -7,13 +7,18 @@ but is not watching continuously.
 **Read in this order before doing anything:**
 
 1. This file.
-2. `docs/01-overview.md` — what is being built and why.
-3. **`SESSION_LOG.md` — its "HANDOFF / STATUS" block at the very top.**
+2. `README.md` — how the thing is actually operated. It is short.
+3. `docs/01-overview.md` — what is being built and why.
+4. **`SESSION_LOG.md` — its "HANDOFF / STATUS" block at the very top.**
    That is the current state, what is ready to run, and the judgement calls not
    to relitigate. **There are no blockers as of 2026-09-01** — the board and
    the laser both work and the instrument runs end to end. What is left is
    physics waiting on hardware. Read it before touching anything.
-4. Whatever doc covers the area you are about to touch.
+5. **`docs/11-mistakes.md` — every wrong turn this project has taken.**
+   Almost nothing here fails loudly; the characteristic failure is a
+   believable wrong answer. Several of those mistakes were made twice.
+6. Whatever doc covers the area you are about to touch. `docs/00-index.md`
+   says which is which.
 
 **At the end of every session, append to `SESSION_LOG.md`.** Multiple sessions
 will work on this. The log is the only continuity between them. Record what you
@@ -24,11 +29,19 @@ enough that a fresh agent can resume without re-deriving anything.
 
 ## The one-paragraph summary
 
-Two AOMs gate light, one at f1 = 5 MHz and one at f2 = 6 MHz, by amplitude
-modulating the 80 MHz acoustic drive each AOM needs. **The 80 MHz is the AOM's
-requirement, not the DUT's — the DUT only ever sees light varying in
-brightness.** The DUT mixes the two; a photodetector returns the
-intermodulation response at |f2 − f1| ≈ 991.821 kHz and nothing else.
+An AOM gates 1550 nm light by amplitude modulating the 80 MHz acoustic drive
+it needs. **The 80 MHz is the AOM's requirement, not the sample's — the sample
+only ever sees light varying in brightness.** A nonlinearity in the sample puts
+a component where neither beam alone can, a photodetector returns it, and
+software demodulation turns one laser sweep into an amplitude trace.
+
+**The frequency depends on which nonlinearity is being looked for**: |f2 - f1|
+for two-tone intermodulation, f1 on a silicon detector for SHG, f1+f2 or
+|f1-f2| for SFG. **The bench defaults are f1 = 915 kHz and f2 = 1225 kHz**,
+chosen to clear the 504.868 kHz switching-supply family in all four
+combinations. The original 5 MHz / 6 MHz / 991.821 kHz plan is what
+`plan_two_tone_grid()` still returns and what every Phase 1 result rests on;
+it is now needlessly constrained rather than wrong.
 
 **There are TWO Santec lasers, and this was only established on 2026-08-25.**
 A **fine sweeper** covers ~1 s / 5000 points, carries the trigger BNC, and
@@ -50,8 +63,14 @@ wavelength at trigger pulse `i`. With the trigger stepping in time that is
 wavelength against relative time from the first trigger, exactly as Kevin
 described; the times are simply reconstructed rather than read, as
 `first_edge + i × step`. Its trigger also starts the capture, so both share
-t = 0. `santec.py` reads the log; `wavelength.py` places it in
-time. **Neither has ever met a laser.**
+t = 0. `scripts/tsl775.py` is the driver that has actually run against the
+instrument; `wavelength.py` places the log in time and contains **no serial
+code at all**. `src/rp_lockin/santec.py` has still never met a laser (Q35).
+
+**The axis uses the MEASURED edge times, not a uniform grid** (Q29, fixed
+2026-08-28). The laser's sweep speed ripples +/-11% with a 0.41 nm period,
+which was putting up to 13.68 pm — 0.684 of a step — of error into the
+wavelength assignment.
 
 **Three traps to design against:**
 
@@ -64,8 +83,10 @@ time. **Neither has ever met a laser.**
   per trigger pulse — which no manual states — and it mattered only while the
   time step came from the trigger INTERVAL. `pipeline.reduce_sweep` takes the
   step from the trigger train's SPAN over (N−1) logged points, so nothing counts
-  pulses and the question stops being load-bearing. **Q24 still matters**:
-  the trigger must be periodic in TIME, not in wavelength.
+  pulses and the question stops being load-bearing. **Q24 is answered**
+  (2026-08-28): on the TSL-775, `:TRIG:OUTP:SETT` 0 means periodic in
+  WAVELENGTH, and at constant sweep speed that is also uniform in time —
+  which is why the measured edge times matter.
 - **A real trigger is a 25 µs PULSE, so every logged point makes TWO edges.**
   `find_trigger_edges` defaults to `polarity="both"`; anything deriving a step
   or counting pulses must pass `polarity="rising"` or it reads half the step and
@@ -89,32 +110,36 @@ Loopback phase only, for now. Within that:
 - **The laser's USB is a HARDWARE FAULT inside the instrument. Use LAN**
   (`10.101.0.197:5000`, bare CR, one held connection). Windows shows
   `CM_PROB_FAILED_INSTALL` on the USB node; ignore it, it is a red herring that
-  has already cost this project real time. Full evidence in `TSL775_HANDOFF.md`.
+  has already cost this project real time. Full evidence in
+  `docs/05-instruments.md` section 1.1.
 - **The laser's LAN interface drops out periodically** — it happened twice on
   2026-08-28. Recovery is to reapply the LAN settings on the front panel. That
   is Kevin's, not yours.
-- **As of 2026-08-28 the laser, its trigger BNC (on IN2) and the photodetector
-  on IN1 ARE connected**, but the DUT, amplifiers and AOMs are **not**. If
-  you believe a test needs those, stop and write the request into
+- **What is connected is `docs/08-the-bench.md` section 1, and that is the
+  authoritative list.** As of 2026-09-03: the laser, its trigger BNC on IN2,
+  ONE amplifier, ONE AOM and a detector on IN1. **Not connected:** the second
+  amplifier and second AOM, the silicon detector, the stepping laser, and any
+  crystal. If you believe a test needs those, stop and write the request into
   `SESSION_LOG.md` — do not improvise a way around it.
 - **Reads are always safe; writes to the laser are not.** `*IDN?` and the
   `:READout:*` queries cannot disturb anything. Do not start a sweep or change a
   laser setting without asking — the light goes somewhere.
 - **Leave outputs off when you finish.** `tests/hardware/conftest.py` does this
   automatically; preserve that behaviour.
-- **The Phase 2 planning gate is DISCHARGED as of 2026-08-28** -- its answers
-  are in `docs/09-whats-next.md`. **P1 and P2 are done; P3-P6 are not, and no
-  RF has ever left this board.** Follow the P-series order and its gates.
-- One item remains open: **nothing runs unattended** until Kevin says otherwise.
-  **Phase 1 is complete; what Phase 2 needs is in `docs/08-the-bench.md`.**
-  Do not start it unilaterally.
+- **The P1-P6 / U1-U12 framing is RETIRED** (2026-09-01). It was an
+  order-of-connection plan for a bench where nothing was plugged in, and that
+  job is done. What survives is the **control ordering**: the one-tone control
+  must run and come back clean before the two-tone measurement means anything,
+  because amplifier intermodulation lands at exactly the same frequency.
+  `docs/08-the-bench.md` has the appendix.
+- **Nothing runs unattended** until Kevin says otherwise (Q34).
 - **Do not "fix" the RF drive level.** Kevin tuned it by maximising the
   diffracted light with an unmodulated carrier, and that is correct here:
   the drive is depth-1 AM, so the envelope reaches zero every cycle and the AOM
   is switched fully on and off rather than held at a bias point. Three separate
   attenuator recommendations were made and all three were withdrawn. See
-  `docs/04-hardware-reference.md` — the reasoning is recorded because the mistake
-  is an easy one to repeat.
+  `docs/05-instruments.md` section 3.1 and `docs/11-mistakes.md` section 1.6 —
+  the reasoning is recorded because the mistake is an easy one to repeat.
 
 ### Verified versus unverified code
 
@@ -124,7 +149,7 @@ This distinction matters more than usual here.
 |---|---|
 | `src/rp_lockin/dsp.py` | **Trusted.** Covered by the offline suite. Do not change without re-running it. |
 | `planning.py`, `emulator.py` | **Trusted.** Same suite. |
-| `waveforms.py` — `make_am_table`, `plan_two_tone_grid` | **Trusted and hardware-verified.** Use these to drive the board. |
+| `waveforms.py` — `make_am_table`, `make_am_table_exact`, `plan_exact_am`, `plan_two_tone_grid`, `make_cw_table`, `make_sine_table` | **Trusted and hardware-verified.** Use these to drive the board. |
 | `waveforms.py` — `make_am_waveform`, `plan_two_tone` | **Sound arithmetic, WRONG hardware model.** Kept because their tests are worth having. Driving the board with them produces no output at all. |
 | `hardware.py` — SCPI transport, generator, `acquire`, `acquire_deep_fast` | **Verified against the board 2026-08-12.** |
 | `hardware.py` — `acquire_deep_2ch` | **The SCPI read is broken.** Arming is fine; the read returns garbage. Use `acquire_deep_fast`. |
@@ -137,15 +162,15 @@ This distinction matters more than usual here.
 | `scripts/_bench_ops.py` | Tk-free instrument operations shared by the bench buttons, its sequences and the P-scripts. **One implementation, so nothing can drift.** |
 | `scripts/tsl775.py` | Vendored TSL-775 driver, `write`/`query` only. **This is what the bench talks to**, not `santec.py`. |
 | `scripts/bench_gui.py` | The older tabbed GUI (Q14). Kept because it is the only path with a **Simulate** mode needing no hardware. |
+| `scripts/dr_bench.py` | Detector gain / dynamic-range study, deliberately separate from the working bench. Shares every instrument operation through `_bench_ops`. |
 
 `hardware.py` is deliberately isolated from the maths so a wrong command string
 produces a connection error rather than corrupted physics. **Keep it that way.**
 Do not move signal processing into the transport layer.
 
-**Phase 1 is complete, so H1 is history** — every method in `hardware.py` has run
-against the board. The live task is in the HANDOFF block at the top of
-`SESSION_LOG.md`; at the time of writing it is the Santec laser not answering
-over USB, and the Tier 1 work that needs no hardware at all.
+**Phase 1 is complete, so H1 is history** — every method in `hardware.py` has
+run against the board, and its campaign record is `docs/12-test-campaigns.md`.
+The live task is in the HANDOFF block at the top of `SESSION_LOG.md`.
 
 ### Driving hardware from a script
 
@@ -267,10 +292,11 @@ wrong answers rather than crashes:
   Nobody else uses the board.
 - The board's SCPI server must be running: web interface → Development → SCPI
   server → Run. Port 5000.
-- SSH access to the board is available for the device-tree change described in
-  `docs/04-hardware-reference.md`. Rebooting the board is permitted.
+- SSH access to the board is available; rebooting it is permitted. **Do not
+  start the device-tree memory move** — it was considered and rejected, and
+  `docs/04-board-reference.md` says why.
 - **OS version: 2.00, build 37** (Ubuntu 22.04.4, kernel 5.15.0-xilinx).
-  Recorded in `docs/04-hardware-reference.md`. It is in
+  Recorded in `docs/04-board-reference.md`. It is in
   `/opt/redpitaya/version.txt`, not `/etc/redpitaya_version`, which does not
   exist on this image.
 
@@ -307,6 +333,9 @@ traces exist.
 - **The PDA100A2 silicon detector is on the bench, not installed.** It is how
   SHG gets separated from the AOM's own second harmonic (Q30), because silicon
   cannot see 1550 at all.
+- **The detector on IN1 is now an APD410-series unit**, not the PDA05CF2 that
+  most of the documentation describes. **Read the label for the model suffix**
+  before relying on any spectral claim (Q38).
 
 Details in `docs/08-the-bench.md` (what is connected) and
 `docs/09-whats-next.md` (what to do next).
@@ -323,8 +352,14 @@ Details in `docs/08-the-bench.md` (what is connected) and
   from it, but a drive frequency landing there reads as a strong, clean, steady
   optical signal. **Every frequency the lock-in will ever sit on must clear it
   by several kHz — including sums and differences, not just the driven tones.**
-- **sigma = 3.57 uV per trace point at the ADC**, but the PDA05CF2 contributes
-  ~11 uV, so **SNR 10 needs ~120 uV**, not 36.
+- **sigma = 3.57 uV per trace point at the ADC**, but a photodetector
+  contributes ~11 uV, so **SNR 10 needs ~120 uV**, not 36.
+- **The board's absolute input scale is CONFIRMED** (Q23, 2026-09-03):
+  1817.7 counts/V is right, and the 0.882 factor lives on the OUTPUT side. And
+  **`SOUR:VOLT X` commands X volts PEAK-TO-PEAK**, so every drive level is
+  6 dB more conservative than the older arithmetic assumed.
+- **The lock-in graphs show ZERO-TO-PEAK amplitude in volts at IN1**, not RMS
+  and not peak-to-peak.
 
 ### Things that were true and are not
 

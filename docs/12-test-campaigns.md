@@ -1,4 +1,73 @@
-# Phase 1 — loopback testing
+# 12 — The test campaigns: how the instrument was proved
+
+**What this is:** the complete record of the two campaigns that took this
+project from nothing to a working instrument. Phase 0 built and proved
+everything that needed no hardware; Phase 1 proved the hardware path with
+cables from the board to itself. Both are **COMPLETE**.
+
+**Why it is still here.** It is the answer to "has anybody checked that?" —
+every claim in `04-board-reference.md` and every number in `06-results.md`
+traces back to a step in here. It is also the record of what was *not*
+checked, which matters more: two Phase 1 steps were deliberately skipped and
+two failed, and all four are written up as such rather than quietly rounded to
+"passed".
+
+**The phase framing is history.** It described how the work was sequenced in
+August 2026, not how anyone works now. Nothing in the live documents depends
+on it. What the bench is today is `08-the-bench.md`.
+
+---
+
+# Part 1 — Phase 0: offline development
+
+**Status: COMPLETE.** No hardware involved at any point.
+
+Phase 0 built everything that could be written and proved without a board, so
+that when hardware did arrive the only new variable was the hardware itself.
+That separation is why Phase 1 could attribute failures confidently — a wrong
+answer was either a bad SCPI command or a bad cable, never suspect maths.
+
+### What it covers
+
+| Area | In plain words | Module |
+|---|---|---|
+| Signal processing | Turn a raw recording into an amplitude trace — the lock-in maths | `dsp.py` |
+| Waveform construction | Build the drive signals the board will play | `waveforms.py` |
+| Capture planning | How long, how fast, how much memory, and how much pre-roll and tail a sweep needs | `planning.py` |
+| DUT emulator | Fake the experiment's physics, so the maths can be checked against a known answer | `emulator.py` |
+| Wavelength mapping | Turn a trace plus the laser's table into power against wavelength | `wavelength.py` |
+
+`wavelength.py` was written later, during Phase 1, but belongs here: it is
+offline code with no hardware dependency, and it has never seen a laser.
+
+### The test suite
+
+```bash
+pytest                      # no hardware. Must always pass. 450 as of 2026-09-04
+pytest -m "not slow"        # quick loop while iterating
+```
+
+Covers: demodulation accuracy, noise scaling, filter settling, streaming block
+equality, time-axis correctness, waveform commensurability, capture planning,
+emulator round-trip against ground truth, trigger edge recovery, the wavelength
+mapping, the laser/board clock measurement, the off-by-one-trigger guard, and
+the transport's output-disarm safety behaviour.
+
+**Do not delete a failing test to make the suite green.** Several exist because
+the corresponding bug was real and produced a plausible-looking wrong answer.
+They say so in their docstrings.
+
+### Why this phase mattered more than it looks
+
+Three of the bugs Phase 0 caught would have been nearly impossible to diagnose
+on hardware, because each produced a believable wrong answer rather than an
+error. They are written up in `11-mistakes.md`. The habit that caught them — build the ground truth separately,
+then check against it — is the same habit that caught the H3.3 noise floor being
+21% optimistic much later.
+
+---
+
+# Part 2 — Phase 1: loopback testing
 
 **Status: COMPLETE, 2026-08-14.** Every step passed, except two that were
 deliberately skipped and are marked as such (H6.1, and H5.2/H5.3).
@@ -15,19 +84,19 @@ decided it did not matter" are very different things to inherit:
   was later closed by H3.2.
 - **H7.4 failed, then was fixed** — outputs used to stay on after a crash.
 
-The numbers produced here are collected in `05-results.md`. What Phase 1 could
+The numbers produced here are collected in `06-results.md`. What Phase 1 could
 **not** reach is in `08-the-bench.md`.
 
 ---
 
-## How this was run
+### How this was run
 
 Phased, in order. Each step assumes the previous one passed — debugging H3 while
 H1 is broken wastes a lot of time.
 
 ---
 
-## The structural limit of loopback
+### The structural limit of loopback
 
 **You cannot produce |f2 − f1| by combining two Red Pitaya outputs.**
 
@@ -47,9 +116,9 @@ Together these cover everything except the DUT physics and the analog chain.
 
 ---
 
-## Phase 1 — loopback
+### Phase 1 — loopback
 
-### H1 — transport validation
+#### H1 — transport validation
 
 **Wiring:** none needed.
 
@@ -57,7 +126,7 @@ Together these cover everything except the DUT physics and the analog chain.
 been executed. Work through it method by method, confirming each SCPI command
 against the board's actual OS version. Every method carries a `VERIFY:` note.
 
-- [x] H1.1 Record the OS version into `docs/04-hardware-reference.md`.
+- [x] H1.1 Record the OS version into `docs/04-board-reference.md`.
       **Done 2026-08-12 — OS 2.00 build 37.**
 - [x] H1.2 Connect, `*IDN?`, confirm it is a 250-12 and not a 125-14. A 125-14
       would make every frequency in this project wrong, silently.
@@ -82,7 +151,7 @@ against the board's actual OS version. Every method carries a `VERIFY:` note.
 **Exit:** every method in `hardware.py` has been executed successfully at least
 once, and its `VERIFY:` note either removed or replaced with a confirmation.
 
-### H2 — transmit path
+#### H2 — transmit path
 
 **Wiring:** OUT1 → IN1.
 
@@ -113,7 +182,7 @@ once, and its `VERIFY:` note either removed or replaced with a confirmation.
       way to check it is recorded in `SESSION_LOG.md`. Do not reopen the phase
       scatter unless phase becomes a deliverable again.
 
-### H3 — receive path
+#### H3 — receive path
 
 **Wiring:** OUT1 → IN1.
 
@@ -175,7 +244,7 @@ once, and its `VERIFY:` note either removed or replaced with a confirmation.
       Also found a switching-supply spur family at 504.868 kHz, ~32 µV per line,
       harmless at its present frequency but a real hazard if it drifts, and
       **partly conducted** so cabling alone cannot remove it — see
-      `04-hardware-reference.md`.
+      `04-board-reference.md`.
 - [x] H3.4 Confirm the √bandwidth law holds on real data, not just synthetic:
       halving the bandwidth should drop the noise by √2. **Done 2026-08-12 —
       holds to 2–4% across a factor of 8 in bandwidth, on one real capture.**
@@ -197,14 +266,14 @@ once, and its `VERIFY:` note either removed or replaced with a confirmation.
       2250 Hz bandwidth, −124 dB by 3 kHz, −204 dB at 19 kHz). Still to do on
       the board.
 
-### H4 — trigger digitisation
+#### H4 — trigger digitisation
 
 **Wiring:** OUT2 → IN2 (H4.3 additionally needs OUT1 through a BNC tee).
 
 **All four steps PASS.** Read the scope note first — it changes which of them
 still matters.
 
-#### Scope reduced 2026-08-14 (Kevin)
+##### Scope reduced 2026-08-14 (Kevin)
 
 The wavelength axis now comes from the Santec laser's own serial report of
 wavelength against time, not from the intervals between trigger edges. The
@@ -224,7 +293,7 @@ What that changes:
   relative to the sweep. It is 0.0005 samples, so this is settled either way.
 - **The decimation-8 missed-edge problem largely dissolves.** Detecting one
   sweep-start edge is not the same task as recovering thousands of intervals
-  without losing any. See the decimation note in `04-hardware-reference.md`.
+  without losing any. See the decimation note in `04-board-reference.md`.
 
 **Confirmed 2026-08-14 (Kevin):** the Santec triggers at set **time** steps, so
 IN2 does carry a periodic pulse train — but **only the first edge is used**, to
@@ -248,7 +317,7 @@ looks entirely normal** — same shape, wrong labels. Arm before the sweep start
 and use pre-roll, then cross-check the pulse count in the record against the
 length of the laser's table.
 
-#### The steps, and what each found
+##### The steps, and what each found
 
 - [x] **H4.1 — play a known edge pattern via `make_trigger_sequence`, recover it
       with `find_trigger_edges`, and confirm intervals to within a sample or
@@ -312,7 +381,7 @@ length of the laser's table.
       settling H6.4 needs is 2.75 M samples at decimation 2, comfortably
       within the region.
 
-### H5 — long waveform generation
+#### H5 — long waveform generation
 
 The emulated-DUT test at full sweep length needs a waveform longer than the
 16384-sample arbitrary buffer, which means Deep Memory Generation.
@@ -332,18 +401,18 @@ The emulated-DUT test at full sweep length needs a waveform longer than the
       record the limitation. The physics validation still holds; only the
       duration is reduced.
 
-### H6 — full-length capture
+#### H6 — full-length capture
 
 **Wiring:** OUT1 → IN1, OUT2 → IN2.
 
 - [ ] H6.1 Enlarge the reserved DMA region to 512 MB, **based at `0x20000000`,
-      not at `0x1000000`** (`docs/04-hardware-reference.md`). The board has 1 GB but
+      not at `0x1000000`** (`docs/04-board-reference.md`). The board has 1 GB but
       Linux is capped to the lower half by `mem=512M`; basing the region in the
       upper half costs the OS nothing, whereas the original instruction ran a
       512 MB region from the 16 MB mark straight through Linux's own memory.
       Back up `dtraw.dts` first. Reboot. Confirm `ACQ:AXI:SIZE?`.
 - [x] **H6.2 PASSES 2026-08-14**, at decimation 8 rather than 2 — see the
-      decimation note in `04-hardware-reference.md`; decimation 2 does not fit
+      decimation note in `04-board-reference.md`; decimation 2 does not fit
       the 128 MiB region and the move to buy it was rejected.
       32,812,500 samples on each channel, exactly as requested, both
       carrying signal. **125.2 MiB, 97.8% of the 128 MiB region.**
@@ -449,7 +518,7 @@ The emulated-DUT test at full sweep length needs a waveform longer than the
       Counter-intuitively a *slower* trigger edge is easier to time here, since
       it puts more samples on the ramp.
 
-### H7 — robustness
+#### H7 — robustness
 
 - [x] **H7.1 PASSES 2026-08-14.** Twenty full-second two-channel captures
       at decimation 8, triggered with 45 ms pre-roll. **20/20 succeeded.**

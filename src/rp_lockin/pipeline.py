@@ -20,7 +20,7 @@ off the board, and is the only part that needs anything plugged in.
 WHERE THE TIME STEP COMES FROM, which is the one real design decision here
 -------------------------------------------------------------------------
 The laser's log is bare wavelengths -- `wavelength[i]` belongs to logged point
-i, with no timestamps (docs/04-hardware-reference.md). Placing it in time needs
+i, with no timestamps (docs/04-board-reference.md). Placing it in time needs
 one anchor and one step:
 
   * the anchor is the FIRST TRIGGER EDGE, located once. Never a count of

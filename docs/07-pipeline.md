@@ -1,8 +1,13 @@
-# 11 — The pipeline: one captured sweep in, a wavelength trace out
+# 07 — The pipeline: one captured sweep in, a wavelength trace out
 
 **This is the deliverable path.** Everything else in the project exists to feed
-it. Written 2026-08-25; `reduce_sweep` is verified against emulator truth,
-`measure_sweep` has **never run against a board**.
+it. Written 2026-08-25.
+
+`reduce_sweep` is verified against emulator truth **and has been run on real
+captures** — every optical sweep on the bench goes through it, via
+`_bench_ops.run_map`. `measure_sweep`, the hardware wrapper, has **never run
+against a board**: the bench arms and reads the capture itself and then calls
+`reduce_sweep` on the arrays.
 
 ```
 IN1 detector ─┐
@@ -29,7 +34,7 @@ component test could have seen, because they all live in the seams — see
 ## The one real design decision: where the time step comes from
 
 The laser's log is bare wavelengths. `wavelength[i]` belongs to logged point
-`i`, with **no timestamps** (`04-hardware-reference.md`). Placing it in time
+`i`, with **no timestamps** (`05-instruments.md`). Placing it in time
 needs one anchor and one step.
 
 **The anchor is the FIRST TRIGGER EDGE, located once.** Never a count of edges.
@@ -48,6 +53,29 @@ This is Kevin's scheme (2026-08-25) with one refinement. He proposed dividing
 the sweep *duration* by the number of logged wavelengths; measuring the span
 from the record costs nothing, because the trigger channel is captured anyway,
 and it survives a sweep that did not run exactly as long as configured.
+
+### The axis uses the MEASURED edge times, not a uniform grid
+
+**Fixed 2026-08-28 (Q29), and it was carrying real error before.**
+`reduce_sweep` runs with `use_edge_times=True`, falling back to a uniform grid
+only when the record does not hold one edge per logged row. Lost pulses are
+interpolated **by ordinal**, so a gap costs one estimated row rather than the
+whole measured axis.
+
+Why it matters: **the laser's sweep speed ripples by ±11%**, so the trigger
+train is not uniform in time. Measured — gap sd 5.87 µs on a 200 µs step, 2061
+of 5000 gaps more than 5 µs off the median, peak-to-peak 43.8 µs = 21.9%, and
+the ripple is periodic with a **0.41 nm period (~20.4 triggers, 4.1 ms)**.
+Integrated, that puts edges up to 157.7 µs — 0.79 of a step — away from a
+uniform grid.
+
+Re-reducing the real capture `data/sweep_001.npz` both ways, the two axes
+differ by up to **13.68 pm = 0.684 of a logged step** (rms 2.81 pm) on a 20 pm
+step. That difference is the error the uniform grid was carrying, against a
+laser whose own log is linear to 0.4 pm.
+
+The physical cause is not identified; a 0.41 nm period is suggestive of an
+etalon or of the grating drive.
 
 ### Three consequences worth knowing
 
@@ -134,7 +162,7 @@ Settling trims 113 output points, 22.6 ms. An 8 ms pre-roll leaves nothing, and
 
 **5. The front end was not per channel** — which made P2 impossible to run as
 specified. Fixed in `hardware.py` with `setup_channel()`; see
-`04-hardware-reference.md`.
+`04-board-reference.md`.
 
 ---
 
@@ -155,6 +183,28 @@ Read, in order:
    under this scheme, but they say something about the trigger path.
 4. **`n_before` / `n_after`.** Pre-roll points before the sweep are expected.
    Points after the table are expected too, bounded by the tail.
+
+---
+
+## The resolution refusal
+
+`_bench_ops.run_map` — the bench's entry to this path — **refuses a reduction
+whose filter smears wavelength past 100 pm** before it calls `reduce_sweep`:
+
+```
+resolution_nm = speed_nm_s / (2 x bandwidth)
+```
+
+The sweep speed is derived from the data when it is not passed: the median
+wavelength step divided by the nominal time step is a speed, and both are
+already in hand. So an old caller passing only `nominal_step` still gets the
+check rather than silently skipping it.
+
+Measured against the real filter chain at 100 nm/s, the formula is good to
+about 20%: 2250 Hz gives a **20 pm** impulse FWHM against 22 predicted, and
+1000 Hz gives 60 against 50. The limit is written against that.
+
+Why a refusal and not a warning: see ADR-0004 in `02-architecture.md`.
 
 ---
 

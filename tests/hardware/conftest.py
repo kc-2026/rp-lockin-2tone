@@ -7,7 +7,7 @@ anywhere:
     export RP_HOST=192.168.1.100
     pytest tests/hardware -m hardware
 
-Before running any of this, read docs/04-test-plan.md. In particular: the
+Before running any of this, read docs/12-test-campaigns.md. In particular: the
 loopback wiring must be in place, and the DUT must NOT be connected. Several
 tests drive outputs at full scale.
 """

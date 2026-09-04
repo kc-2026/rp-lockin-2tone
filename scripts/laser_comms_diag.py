@@ -23,7 +23,7 @@ instrument's firmware.
     hardware signal that cannot be sent over USB at all. On EOI the laser can
     never see a complete command. Set it to CR.
   * **The port will not open** -- driver or cable. See the VCP install sequence in
-    `docs/04-hardware-reference.md`.
+    `docs/04-board-reference.md`.
 
 Observed 2026-08-14: silence on all 18 serial combinations AND over D2XX, with
 the device enumerating cleanly as TSL-775 serial 2601S967 (0x2428:0116) and
